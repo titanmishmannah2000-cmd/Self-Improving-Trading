@@ -11,61 +11,52 @@
   },
   "services": {
     "forex": {
-      "source": {
-        "repo": "."
-      },
+      "source": { "repo": "." },
       "startCommand": "uv run python bots/forex/main.py",
       "variables": {
         "HERMES_BOT_NAME": "forex",
+        "PRICE_BACKEND": "aggregate",
         "DATA_VOLUME": "/data"
       },
       "volumes": [
-        {
-          "name": "forex-data",
-          "mountPath": "/data"
-        }
+        { "name": "forex-data", "mountPath": "/data" }
       ]
     },
     "gold": {
-      "source": {
-        "repo": "."
-      },
+      "source": { "repo": "." },
       "startCommand": "uv run python bots/gold/main.py",
       "variables": {
         "HERMES_BOT_NAME": "gold",
+        "PRICE_BACKEND": "aggregate",
         "DATA_VOLUME": "/data"
       },
       "volumes": [
-        {
-          "name": "gold-data",
-          "mountPath": "/data"
-        }
+        { "name": "gold-data", "mountPath": "/data" }
       ]
     },
     "crypto": {
-      "source": {
-        "repo": "."
-      },
+      "source": { "repo": "." },
       "startCommand": "uv run python bots/crypto/main.py",
       "variables": {
         "HERMES_BOT_NAME": "crypto",
+        "PRICE_BACKEND": "aggregate",
         "DATA_VOLUME": "/data"
       },
       "volumes": [
-        {
-          "name": "crypto-data",
-          "mountPath": "/data"
-        }
+        { "name": "crypto-data", "mountPath": "/data" }
       ]
     },
     "dashboard": {
-      "source": {
-        "repo": "."
-      },
+      "source": { "repo": "." },
       "startCommand": "uv run python -m dashboard.backend.main",
       "variables": {
-        "DATA_VOLUME": "/data"
-      }
+        "DATA_VOLUME": "/data",
+        "DASHBOARD_DB": "/data/dashboard.db",
+        "HERMES_STATE": "/data"
+      },
+      "volumes": [
+        { "name": "dashboard-data", "mountPath": "/data" }
+      ]
     }
   }
 }
