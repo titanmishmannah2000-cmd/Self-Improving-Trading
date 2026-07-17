@@ -26,6 +26,10 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
+# Ensure sibling modules (live_compat, audit_*, etc.) resolve whether this file
+# is run directly (python main.py) or imported as dashboard.backend.main.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
@@ -2511,6 +2515,33 @@ def audit_update_progress(finding_id: str, req: ProgressRequest):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
+else:
+    # Served via entrypoint.py (Railway single-image, HERMES_BOT_NAME=dashboard).
+    # Mount the built frontend (dashboard/frontend/dist) at / so the dashboard
+    # URL serves both the UI and the /api/* backend from one port.
+    def run() -> None:
+        import uvicorn
+        from fastapi.staticfiles import StaticFiles
+        from fastapi.responses import FileResponse
+
+        dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+        if dist.exists():
+            app.mount("/assets", StaticFiles(directory=str(dist / "assets")), name="assets")
+
+            @app.get("/{full_path:path}")
+            async def _spa(full_path: str):
+                # /api/* routes are registered above and match first, so this
+                # catch-all only ever sees non-asset UI paths → serve index.html.
+                from fastapi.responses import FileResponse as _FR
+                html = dist / "index.html"
+                if html.exists():
+                    return _FR(str(html))
+                return None  # type: ignore[return-value]
+
+        port = int(os.getenv("PORT", 8080))
+        uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 # ── Data cleanup: remove gold pair trades/hypotheses erroneously stored under forex bot ──
 try:
