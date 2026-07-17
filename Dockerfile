@@ -20,6 +20,7 @@ COPY pyproject.toml uv.lock README.md ./
 COPY hermes_core/ hermes_core/
 COPY bots/ bots/
 COPY dashboard/ dashboard/
+COPY entrypoint.py ./
 
 # Drop in the built frontend from stage 1 at the path the backend expects
 # (dashboard/backend/main.py → ../frontend/dist).
@@ -30,8 +31,8 @@ RUN uv sync --frozen --no-dev
 ENV HERMES_BOT_NAME=forex
 ENV PYTHONUNBUFFERED=1
 
-# Code is read-only; mount /data for persistent state (D2). The container's
-# start command is set per-service in railway.json (HERMES_BOT_NAME selects
-# which bot, or the dashboard entrypoint for the web service).
+# Code is read-only; mount /data for persistent state (D2). All services deploy
+# this SAME image; entrypoint.py dispatches on HERMES_BOT_NAME (set per service
+# in Railway) to run the right bot or the dashboard. [GUARD L62]
 ENTRYPOINT ["uv", "run", "python"]
-CMD ["bots/forex/main.py"]
+CMD ["entrypoint.py"]
