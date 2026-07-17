@@ -1,0 +1,49 @@
+# Runtime state — lives on /data volume, never committed
+data/*
+!data/**/.gitkeep
+
+# Runtime state — dashboard DB + bot JSONL logs; never committed
+state/*
+!state/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+
+# Tooling
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.mutmut-cache/
+htmlcov/
+.coverage
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+.env.*          # ignore real env files (keys)
+!.env.example   # ...but commit the placeholder template (single source of truth)
+*.pem
+
+# uv
+.python-version
+
+# Node frontend deps (installed at build via npm install, never committed)
+dashboard/frontend/node_modules/
+node_modules/
+
+# yfinance persistent cache (S19) — local Yahoo cookie/tz cache, never committed
+.cache/

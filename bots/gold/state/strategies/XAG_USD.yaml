@@ -1,0 +1,22 @@
+pair: XAG/USD
+strategy_type: rsi_momentum          # silver MUST be momentum, never mean_reversion (discipline D8 / lesson 4)
+entry:
+  indicator: rsi
+  direction: long
+  threshold: 55
+  bb_std_dev: 2.0
+  session_filter: "24h"
+stop_loss_pct: 1.5
+profit_target_pct: 3.0
+trailing_stop_pct: 0.0
+time_exit_cycles: 288
+position_size_r: 0.4
+atr_multiplier: 2.0
+atr_floor_pct: 0.3
+use_atr_floor: true
+adx_threshold: 20
+vol_threshold_pct: 1.0
+vol_max_pct: 5.0
+vol_min_pct: 0.2
+minimum_entry_quality: 6
+allow_bear_entries: false

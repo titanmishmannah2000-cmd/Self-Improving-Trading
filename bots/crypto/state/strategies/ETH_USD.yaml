@@ -1,0 +1,22 @@
+pair: ETH/USD
+strategy_type: mean_reversion
+entry:
+  indicator: rsi
+  direction: long
+  mr_entry_rsi: 30
+  bb_std_dev: 2.0
+  session_filter: 24h
+stop_loss_pct: 2.0
+profit_target_pct: 4.0
+trailing_stop_pct: 0.0
+time_exit_cycles: 288
+position_size_r: 0.2
+atr_multiplier: 2.0
+atr_floor_pct: 0.5
+use_atr_floor: true
+adx_threshold: 20
+vol_threshold_pct: 1.0
+vol_max_pct: 8.0
+vol_min_pct: 0.2
+minimum_entry_quality: 6
+allow_bear_entries: false

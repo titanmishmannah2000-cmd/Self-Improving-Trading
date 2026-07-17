@@ -1,0 +1,21 @@
+bot:
+  name: forex
+pairs:
+  - EUR/USD
+  - GBP/USD
+  - GBP/JPY
+  - AUD/USD
+goal:
+  target_return_30d: 5.0
+  max_drawdown: 10.0
+  min_sharpe: 1.0
+  failure_below: -10.0
+  reflection_every: 5          # USER OVERRIDE 2026-07-16: flat 5 (blueprint base cadence; v4 flat-10 retired)
+  one_variable_only: true
+  gemini_reflection: true
+  gemini_min_trades: 5
+global:
+  dashboard_url: ${DASHBOARD_API_URL}
+  discord_webhook: ${DISCORD_ALERTS_WEBHOOK}
+  llm_keys: {}
+  fmp_key: ${FMP_KEY}

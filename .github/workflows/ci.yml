@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: G-lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: G-except
+        run: uv run python tools/verify_no_bare_except.py
+
+      - name: G-rep
+        run: uv run pytest tests/test_no_duplication.py -q
+
+      - name: G-types
+        run: uv run mypy hermes_core/
+
+      - name: G-test
+        run: uv run pytest -q
+
+      - name: G-guard-tags
+        run: uv run python tools/verify_guard_tags.py
+
+      - name: G-contract
+        run: uv run python tools/verify_contracts.py
+
+      - name: G-blueprint
+        run: uv run python tools/regenerate_blueprint_sections.py
+
+      - name: G-audit
+        run: uv run pip-audit
+
+      - name: G-secret
+        run: uv run python tools/verify_no_secrets.py
+
+      # G-mutate: skipped until Session 3 (indicators/risk/exit modules exist)

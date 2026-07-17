@@ -1,0 +1,24 @@
+# Crypto bot — third Hermes trading bot (BTC/USD, ETH/USD).
+# Same schema as forex/gold: nested bot.name + top-level pairs + goal. Strategy
+# YAMLs per pair and a populated goal are still to be authored (build-out gap,
+# not wired live in S0-S18) — see S18 integration notes. VALID_BOTS includes
+# "crypto" (S16 fix) so the dashboard API accepts crypto pushes.
+bot:
+  name: crypto
+pairs:
+  - BTC/USD
+  - ETH/USD
+goal:
+  failure_below: -10.0
+  gemini_min_trades: 5
+  gemini_reflection: true
+  max_drawdown: 10.0
+  min_sharpe: 1.0
+  one_variable_only: true
+  reflection_every: 5
+  target_return_30d: 5.0
+global:
+  dashboard_url: ${DASHBOARD_API_URL}
+  discord_webhook: ${DISCORD_ALERTS_WEBHOOK}
+  fmp_key: ${FMP_KEY}
+  llm_keys: {}

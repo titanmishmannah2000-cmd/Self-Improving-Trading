@@ -1,0 +1,71 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile"
+  },
+  "deploy": {
+    "numReplicas": 1,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3
+  },
+  "services": {
+    "forex": {
+      "source": {
+        "repo": "."
+      },
+      "startCommand": "uv run python bots/forex/main.py",
+      "variables": {
+        "HERMES_BOT_NAME": "forex",
+        "DATA_VOLUME": "/data"
+      },
+      "volumes": [
+        {
+          "name": "forex-data",
+          "mountPath": "/data"
+        }
+      ]
+    },
+    "gold": {
+      "source": {
+        "repo": "."
+      },
+      "startCommand": "uv run python bots/gold/main.py",
+      "variables": {
+        "HERMES_BOT_NAME": "gold",
+        "DATA_VOLUME": "/data"
+      },
+      "volumes": [
+        {
+          "name": "gold-data",
+          "mountPath": "/data"
+        }
+      ]
+    },
+    "crypto": {
+      "source": {
+        "repo": "."
+      },
+      "startCommand": "uv run python bots/crypto/main.py",
+      "variables": {
+        "HERMES_BOT_NAME": "crypto",
+        "DATA_VOLUME": "/data"
+      },
+      "volumes": [
+        {
+          "name": "crypto-data",
+          "mountPath": "/data"
+        }
+      ]
+    },
+    "dashboard": {
+      "source": {
+        "repo": "."
+      },
+      "startCommand": "uv run python -m dashboard.backend.main",
+      "variables": {
+        "DATA_VOLUME": "/data"
+      }
+    }
+  }
+}
