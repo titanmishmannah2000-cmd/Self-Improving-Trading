@@ -310,6 +310,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
     # ── GET read endpoints ───────────────────────────────────────────────────
     def do_GET(self) -> None:
         path = self.path.split("?")[0]
+        # ── liveness/readiness probe (Railway healthcheckPath) ────────────────
+        # Confirms the process is up AND sqlite is reachable, not just the port.
+        # [GUARD L62]
+        if path == "/healthz" or path == "/healthz/":
+            try:
+                _c = get_conn()
+                try:
+                    _c.execute("SELECT 1")
+                finally:
+                    _c.close()
+                return self._send(200, {"status": "ok"})
+            except Exception as exc:  # DB unreachable -> unhealthy, fail the probe
+                return self._send(503, {"status": "unhealthy", "error": str(exc)})
         if path == "/api/overview" or path == "/api/overview/":
             return self._send(200, self._overview())
         if path.startswith("/api/trades/"):

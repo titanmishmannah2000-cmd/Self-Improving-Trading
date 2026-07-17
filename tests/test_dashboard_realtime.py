@@ -181,3 +181,24 @@ def test_wal_mode_and_concurrent_writes_do_not_lock(tmp_path, monkeypatch):
     for t in threads:
         t.join()
     assert not errors, f"concurrent writes raised: {errors}"
+
+
+def test_healthz_ok_when_db_reachable():
+    # [GUARD L62] Railway healthcheckPath=/healthz must return 200 + status ok
+    # when the process is up and sqlite answers.
+    c = m.test_client()
+    r = c.get("/healthz")
+    assert r.status_code == 200
+    assert r.json["status"] == "ok"
+
+
+def test_healthz_503_when_db_unreachable(monkeypatch):
+    # Prove the probe is REAL: build the client first (valid DB), then point the
+    # DB at an unopenable path so the probe's own SELECT fails -> 503, not a
+    # false "healthy".
+    c = m.test_client()
+    monkeypatch.setattr(m, "DB_PATH", "/nonexistent-dir/definitely/not/here.db")
+    r = c.get("/healthz")
+    assert r.status_code == 503
+    assert r.json["status"] == "unhealthy"
+

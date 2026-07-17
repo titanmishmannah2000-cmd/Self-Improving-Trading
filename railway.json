@@ -49,6 +49,10 @@
     "dashboard": {
       "source": { "repo": "." },
       "startCommand": "uv run python -m dashboard.backend.main",
+      "deploy": {
+        "healthcheckPath": "/healthz",
+        "healthcheckTimeout": 120
+      },
       "variables": {
         "DATA_VOLUME": "/data",
         "DASHBOARD_DB": "/data/dashboard.db",
