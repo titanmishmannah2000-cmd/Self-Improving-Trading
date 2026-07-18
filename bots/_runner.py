@@ -35,6 +35,14 @@ from pathlib import Path
 
 import httpx
 
+from datetime import datetime, timezone
+
+
+def _now_iso() -> str:
+    """UTC ISO timestamp for open-trade pushes (no external dep)."""
+    return datetime.now(timezone.utc).isoformat()
+
+
 from hermes_core.adapters import make_aggregator_fetch, make_default_fetch
 from hermes_core.config.loader import load_config, load_strategy_for_pair
 from hermes_core.engines.loop import run_cycle
@@ -61,7 +69,7 @@ def _get_client() -> httpx.Client | None:
     return _PUSH_CLIENT
 
 
-def _push_state(bot: str, cfg: dict, cycle: int) -> None:
+def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) -> None:
     """POST the bot's full decision-state to /api/ingest/{bot} (fail-soft) [Gap 1].
 
     This is what actually populates the dashboard's pair cards (regime /
@@ -129,6 +137,23 @@ def _push_state(bot: str, cfg: dict, cycle: int) -> None:
             strategies[p] = load_strategy_for_pair(p, bot)
         except Exception:
             continue
+    # Live open positions (persisted across cycles in run_bot) -> dashboard.
+    open_positions = (summary or {}).get("open_positions") or {}
+    recent_open_trades = [
+        {
+            "id": f"{bot}:{pair}:{int(time.time())}",
+            "bot": bot,
+            "pair": pair,
+            "entry_price": pos.get("entry_price"),
+            "size": pos.get("size"),
+            "entry_ts": _now_iso(),
+            "stop_loss_pct": pos.get("stop_loss_pct"),
+            "profit_target_pct": pos.get("profit_target_pct"),
+            "held_cycles": pos.get("held_cycles", 0),
+            "unrealised_pct": pos.get("unrealised_pct"),
+        }
+        for pair, pos in open_positions.items()
+    ]
     payload = {
         "strategies": strategies,
         "goal": cfg.get("goal"),
@@ -138,7 +163,8 @@ def _push_state(bot: str, cfg: dict, cycle: int) -> None:
         "discovered": discovered,
         "cortex": cortex,
         "flatlined_pairs": {},
-        "recent_open_trades": [],
+        "recent_open_trades": recent_open_trades,
+        "meta": {"oversold_pairs": (summary or {}).get("oversold_pairs", 0)},
     }
     with contextlib.suppress(Exception):
         client.post(
@@ -253,6 +279,17 @@ async def run_bot(bot_name: str) -> None:
 
     cycle = 0
     _stop = threading.Event()
+    # Positions + re-entry cooldowns MUST persist across cycles, or an entry is
+    # never carried to its exit and NO trade is ever recorded (the bot "never
+    # trades"). These live for the process lifetime; open_positions is also
+    # pushed to the dashboard each cycle so live positions are visible.
+    open_positions: dict = {}
+    reentry: dict = {}
+    # oversold_pairs from the previous cycle feeds momentum's multi-pair gate.
+    oversold_pairs = 0
+    # No volume source in the current aggregate feed -> momentum's vol_above
+    # gate stays False until a volume feed is wired (honest, not faked).
+    vol_above = False
     # Background GP discovery — fully decoupled from the heartbeat cycle.
     _disc = threading.Thread(target=_discovery_loop, args=(bot, pairs, _stop),
                              daemon=True)
@@ -268,12 +305,17 @@ async def run_bot(bot_name: str) -> None:
                 # + fresh loop, so the aggregate backend works under async. [L61]
                 try:
                     summary = await asyncio.to_thread(
-                        run_cycle, bot, cycle, fetch_fn=fetch_fn
+                        run_cycle, bot, cycle, fetch_fn=fetch_fn,
+                        open_positions=open_positions, reentry=reentry,
+                        oversold_pairs=oversold_pairs, vol_above=vol_above,
                     )
                 except Exception:  # noqa: BLE001 — one pair must not kill the bot
                     print(f"[hermes] {pair} cycle {cycle} errored",
                           file=sys.stderr, flush=True)
                     continue
+                # Carry the confluence count forward to the next cycle.
+                if isinstance(summary, dict):
+                    oversold_pairs = summary.get("oversold_pairs", oversold_pairs)
                 # Push the per-cycle price snapshot to the dashboard (real-time
                 # for FX/metals; crypto already streamed via on_tick between
                 # cycles). Off-thread so a slow dashboard can't stall the loop.
@@ -281,9 +323,10 @@ async def run_bot(bot_name: str) -> None:
                 if isinstance(prices, dict) and prices:
                     _push_prices_threaded(bot, prices)
                 # Push the bot's full decision-state (strategies/goal/heartbeat/
-                # trades/skips) so the dashboard's pair cards + overview populate.
-                # Fail-soft; a dead dashboard must never stall the bot. [Gap 1]
-                _push_state(bot, cfg, cycle)
+                # trades/skips/open positions) so the dashboard's pair cards +
+                # overview populate. Fail-soft; a dead dashboard must never
+                # stall the bot. [Gap 1]
+                _push_state(bot, cfg, cycle, summary)
             await asyncio.sleep(cycle_seconds)
     finally:
         _stop.set()

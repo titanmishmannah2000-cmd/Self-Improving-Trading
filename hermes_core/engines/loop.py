@@ -121,7 +121,10 @@ def write_heartbeat(
 
 def _log_skip(bot: str, pair: str, cycle: int, reason: str) -> None:
     SKIPS_PATH = _state_dir(bot) / "skips.jsonl"
-    row = {"ts": time.time(), "pair": pair, "cycle": cycle, "reason": reason}
+    # `reason_skipped` is the dashboard's DB column key; keep `reason` too for
+    # any consumer that read the legacy key.
+    row = {"ts": time.time(), "pair": pair, "cycle": cycle,
+           "reason": reason, "reason_skipped": reason}
     try:
         with open(SKIPS_PATH, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, default=str) + "\n")
@@ -222,6 +225,7 @@ def run_cycle(
             pairs=[],
         )
     summary = {"cycle": cycle, "entries": [], "exits": [], "skips": 0, "errors": 0, "prices": {}}
+    oversold_pairs = 0            # RSI-confluence count, accumulated across pairs this cycle
     # consecutive_failures is carried in (persists across cycles for the L24 breaker)
     try:
         cfg = load_config(bot)
@@ -322,6 +326,12 @@ def run_cycle(
         ensemble = (ensemble_fn(pair) if ensemble_fn else "neutral") or "neutral"
         atr = float(ind["atr"])
 
+        # RSI-confluence: count pairs currently oversold (feeds momentum's
+        # multi-pair gate). Computed as we scan so later pairs see earlier ones.
+        _thr = (strategy.get("entry") or {}).get("threshold", 50)
+        if ind["rsi"] <= _thr:
+            oversold_pairs += 1
+
         # --- entry evaluation ---------------------------------------------
         pos = open_positions.get(pair)
         if pos is None:
@@ -391,6 +401,12 @@ def run_cycle(
                     status=status, health=dict(health_registry),
                     chart_contexts=chart_contexts, regimes=regimes)
     summary["consecutive_failures"] = consecutive_failures
+    summary["oversold_pairs"] = oversold_pairs
+    # The caller persists these across cycles so entries are tracked to exit
+    # and trades actually record (without this, positions reset every cycle
+    # and no trade is ever logged).
+    summary["open_positions"] = open_positions
+    summary["reentry"] = reentry
     if push_fn is not None:
         try:
             push_fn(bot, summary)

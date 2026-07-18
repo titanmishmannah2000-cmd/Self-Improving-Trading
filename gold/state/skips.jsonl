@@ -6420,3 +6420,679 @@
 {"ts": 1784340017.2034795, "pair": "XAG/USD", "cycle": 78, "reason": "no_signal"}
 {"ts": 1784340017.228135, "pair": "XAU/USD", "cycle": 79, "reason": "no_signal"}
 {"ts": 1784340017.2439466, "pair": "XAG/USD", "cycle": 79, "reason": "no_signal"}
+{"ts": 1784340637.9692252, "pair": "XAU/USD", "cycle": 1, "reason": "no_signal"}
+{"ts": 1784340637.9779205, "pair": "XAG/USD", "cycle": 1, "reason": "no_signal"}
+{"ts": 1784340637.9907265, "pair": "XAU/USD", "cycle": 2, "reason": "no_signal"}
+{"ts": 1784340638.0006957, "pair": "XAG/USD", "cycle": 2, "reason": "no_signal"}
+{"ts": 1784340638.0197005, "pair": "XAU/USD", "cycle": 3, "reason": "no_signal"}
+{"ts": 1784340638.0296903, "pair": "XAG/USD", "cycle": 3, "reason": "no_signal"}
+{"ts": 1784340638.0535965, "pair": "XAU/USD", "cycle": 4, "reason": "no_signal"}
+{"ts": 1784340638.06503, "pair": "XAG/USD", "cycle": 4, "reason": "no_signal"}
+{"ts": 1784340638.0830052, "pair": "XAU/USD", "cycle": 5, "reason": "no_signal"}
+{"ts": 1784340638.092855, "pair": "XAG/USD", "cycle": 5, "reason": "no_signal"}
+{"ts": 1784340638.1111937, "pair": "XAU/USD", "cycle": 6, "reason": "no_signal"}
+{"ts": 1784340638.1201441, "pair": "XAG/USD", "cycle": 6, "reason": "no_signal"}
+{"ts": 1784340638.1376853, "pair": "XAU/USD", "cycle": 7, "reason": "no_signal"}
+{"ts": 1784340638.1492438, "pair": "XAG/USD", "cycle": 7, "reason": "no_signal"}
+{"ts": 1784340638.1599739, "pair": "XAU/USD", "cycle": 8, "reason": "no_signal"}
+{"ts": 1784340638.1680596, "pair": "XAG/USD", "cycle": 8, "reason": "no_signal"}
+{"ts": 1784340638.1750524, "pair": "XAU/USD", "cycle": 9, "reason": "no_signal"}
+{"ts": 1784340638.1800504, "pair": "XAG/USD", "cycle": 9, "reason": "no_signal"}
+{"ts": 1784340638.189159, "pair": "XAU/USD", "cycle": 10, "reason": "no_signal"}
+{"ts": 1784340638.1930985, "pair": "XAG/USD", "cycle": 10, "reason": "no_signal"}
+{"ts": 1784340638.2010756, "pair": "XAU/USD", "cycle": 11, "reason": "no_signal"}
+{"ts": 1784340638.208643, "pair": "XAG/USD", "cycle": 11, "reason": "no_signal"}
+{"ts": 1784340642.6793122, "pair": "XAU/USD", "cycle": 1, "reason": "no_signal"}
+{"ts": 1784340642.7804823, "pair": "XAG/USD", "cycle": 1, "reason": "no_signal"}
+{"ts": 1784340642.8199394, "pair": "XAU/USD", "cycle": 2, "reason": "no_signal"}
+{"ts": 1784340642.8301175, "pair": "XAG/USD", "cycle": 2, "reason": "no_signal"}
+{"ts": 1784340642.8550565, "pair": "XAU/USD", "cycle": 3, "reason": "no_signal"}
+{"ts": 1784340642.8636508, "pair": "XAG/USD", "cycle": 3, "reason": "no_signal"}
+{"ts": 1784340642.8827243, "pair": "XAU/USD", "cycle": 4, "reason": "no_signal"}
+{"ts": 1784340642.9001353, "pair": "XAG/USD", "cycle": 4, "reason": "no_signal"}
+{"ts": 1784340642.9196851, "pair": "XAU/USD", "cycle": 5, "reason": "no_signal"}
+{"ts": 1784340642.9346788, "pair": "XAG/USD", "cycle": 5, "reason": "no_signal"}
+{"ts": 1784340642.9506762, "pair": "XAU/USD", "cycle": 6, "reason": "no_signal"}
+{"ts": 1784340642.9606943, "pair": "XAG/USD", "cycle": 6, "reason": "no_signal"}
+{"ts": 1784340642.9747434, "pair": "XAU/USD", "cycle": 7, "reason": "no_signal"}
+{"ts": 1784340642.983328, "pair": "XAG/USD", "cycle": 7, "reason": "no_signal"}
+{"ts": 1784340642.9943285, "pair": "XAU/USD", "cycle": 8, "reason": "no_signal"}
+{"ts": 1784340643.0023232, "pair": "XAG/USD", "cycle": 8, "reason": "no_signal"}
+{"ts": 1784340643.0113206, "pair": "XAU/USD", "cycle": 9, "reason": "no_signal"}
+{"ts": 1784340643.0193284, "pair": "XAG/USD", "cycle": 9, "reason": "no_signal"}
+{"ts": 1784340643.031324, "pair": "XAU/USD", "cycle": 10, "reason": "no_signal"}
+{"ts": 1784340643.0393267, "pair": "XAG/USD", "cycle": 10, "reason": "no_signal"}
+{"ts": 1784340643.0503225, "pair": "XAU/USD", "cycle": 11, "reason": "no_signal"}
+{"ts": 1784340643.055325, "pair": "XAG/USD", "cycle": 11, "reason": "no_signal"}
+{"ts": 1784340643.0683324, "pair": "XAU/USD", "cycle": 12, "reason": "no_signal"}
+{"ts": 1784340643.0753222, "pair": "XAG/USD", "cycle": 12, "reason": "no_signal"}
+{"ts": 1784340643.0890248, "pair": "XAU/USD", "cycle": 13, "reason": "no_signal"}
+{"ts": 1784340643.0963225, "pair": "XAG/USD", "cycle": 13, "reason": "no_signal"}
+{"ts": 1784340643.1133223, "pair": "XAU/USD", "cycle": 14, "reason": "no_signal"}
+{"ts": 1784340643.1193297, "pair": "XAG/USD", "cycle": 14, "reason": "no_signal"}
+{"ts": 1784340643.1333647, "pair": "XAU/USD", "cycle": 15, "reason": "no_signal"}
+{"ts": 1784340643.14035, "pair": "XAG/USD", "cycle": 15, "reason": "no_signal"}
+{"ts": 1784340643.1543212, "pair": "XAU/USD", "cycle": 16, "reason": "no_signal"}
+{"ts": 1784340643.161352, "pair": "XAG/USD", "cycle": 16, "reason": "no_signal"}
+{"ts": 1784340643.1749294, "pair": "XAU/USD", "cycle": 17, "reason": "no_signal"}
+{"ts": 1784340643.182442, "pair": "XAG/USD", "cycle": 17, "reason": "no_signal"}
+{"ts": 1784340643.2038925, "pair": "XAU/USD", "cycle": 18, "reason": "no_signal"}
+{"ts": 1784340643.2174854, "pair": "XAG/USD", "cycle": 18, "reason": "no_signal"}
+{"ts": 1784340643.2398915, "pair": "XAU/USD", "cycle": 19, "reason": "no_signal"}
+{"ts": 1784340643.2549586, "pair": "XAG/USD", "cycle": 19, "reason": "no_signal"}
+{"ts": 1784340643.2733142, "pair": "XAU/USD", "cycle": 20, "reason": "no_signal"}
+{"ts": 1784340643.28496, "pair": "XAG/USD", "cycle": 20, "reason": "no_signal"}
+{"ts": 1784340643.303961, "pair": "XAU/USD", "cycle": 21, "reason": "no_signal"}
+{"ts": 1784340643.317966, "pair": "XAG/USD", "cycle": 21, "reason": "no_signal"}
+{"ts": 1784340643.3349655, "pair": "XAU/USD", "cycle": 22, "reason": "no_signal"}
+{"ts": 1784340643.3429575, "pair": "XAG/USD", "cycle": 22, "reason": "no_signal"}
+{"ts": 1784340643.3632257, "pair": "XAU/USD", "cycle": 23, "reason": "no_signal"}
+{"ts": 1784340643.3772361, "pair": "XAG/USD", "cycle": 23, "reason": "no_signal"}
+{"ts": 1784340643.3982315, "pair": "XAU/USD", "cycle": 24, "reason": "no_signal"}
+{"ts": 1784340643.407233, "pair": "XAG/USD", "cycle": 24, "reason": "no_signal"}
+{"ts": 1784340643.4302318, "pair": "XAU/USD", "cycle": 25, "reason": "no_signal"}
+{"ts": 1784340643.4462273, "pair": "XAG/USD", "cycle": 25, "reason": "no_signal"}
+{"ts": 1784340643.466225, "pair": "XAU/USD", "cycle": 26, "reason": "no_signal"}
+{"ts": 1784340643.4762316, "pair": "XAG/USD", "cycle": 26, "reason": "no_signal"}
+{"ts": 1784340643.4972363, "pair": "XAU/USD", "cycle": 27, "reason": "no_signal"}
+{"ts": 1784340643.5102267, "pair": "XAG/USD", "cycle": 27, "reason": "no_signal"}
+{"ts": 1784340643.5262249, "pair": "XAU/USD", "cycle": 28, "reason": "no_signal"}
+{"ts": 1784340643.5332243, "pair": "XAG/USD", "cycle": 28, "reason": "no_signal"}
+{"ts": 1784340643.552342, "pair": "XAU/USD", "cycle": 29, "reason": "no_signal"}
+{"ts": 1784340643.5614662, "pair": "XAG/USD", "cycle": 29, "reason": "no_signal"}
+{"ts": 1784340643.5731668, "pair": "XAU/USD", "cycle": 30, "reason": "no_signal"}
+{"ts": 1784340643.5801718, "pair": "XAG/USD", "cycle": 30, "reason": "no_signal"}
+{"ts": 1784340643.5942788, "pair": "XAU/USD", "cycle": 31, "reason": "no_signal"}
+{"ts": 1784340643.6030009, "pair": "XAG/USD", "cycle": 31, "reason": "no_signal"}
+{"ts": 1784340643.6223707, "pair": "XAU/USD", "cycle": 32, "reason": "no_signal"}
+{"ts": 1784340643.6323853, "pair": "XAG/USD", "cycle": 32, "reason": "no_signal"}
+{"ts": 1784340643.6503851, "pair": "XAU/USD", "cycle": 33, "reason": "no_signal"}
+{"ts": 1784340643.6578236, "pair": "XAG/USD", "cycle": 33, "reason": "no_signal"}
+{"ts": 1784340643.6769607, "pair": "XAU/USD", "cycle": 34, "reason": "no_signal"}
+{"ts": 1784340643.6879134, "pair": "XAG/USD", "cycle": 34, "reason": "no_signal"}
+{"ts": 1784340643.7008834, "pair": "XAU/USD", "cycle": 35, "reason": "no_signal"}
+{"ts": 1784340643.7104764, "pair": "XAG/USD", "cycle": 35, "reason": "no_signal"}
+{"ts": 1784340643.7304738, "pair": "XAU/USD", "cycle": 36, "reason": "no_signal"}
+{"ts": 1784340643.7396297, "pair": "XAG/USD", "cycle": 36, "reason": "no_signal"}
+{"ts": 1784340643.7553802, "pair": "XAU/USD", "cycle": 37, "reason": "no_signal"}
+{"ts": 1784340643.767701, "pair": "XAG/USD", "cycle": 37, "reason": "no_signal"}
+{"ts": 1784340643.7957184, "pair": "XAU/USD", "cycle": 38, "reason": "no_signal"}
+{"ts": 1784340643.8047156, "pair": "XAG/USD", "cycle": 38, "reason": "no_signal"}
+{"ts": 1784340643.8217225, "pair": "XAU/USD", "cycle": 39, "reason": "no_signal"}
+{"ts": 1784340643.8297184, "pair": "XAG/USD", "cycle": 39, "reason": "no_signal"}
+{"ts": 1784340643.8467963, "pair": "XAU/USD", "cycle": 40, "reason": "no_signal"}
+{"ts": 1784340643.8597178, "pair": "XAG/USD", "cycle": 40, "reason": "no_signal"}
+{"ts": 1784340643.881473, "pair": "XAU/USD", "cycle": 41, "reason": "no_signal"}
+{"ts": 1784340643.8955126, "pair": "XAG/USD", "cycle": 41, "reason": "no_signal"}
+{"ts": 1784340643.9154804, "pair": "XAU/USD", "cycle": 42, "reason": "no_signal"}
+{"ts": 1784340643.9274712, "pair": "XAG/USD", "cycle": 42, "reason": "no_signal"}
+{"ts": 1784340643.9514735, "pair": "XAU/USD", "cycle": 43, "reason": "no_signal"}
+{"ts": 1784340643.9624722, "pair": "XAG/USD", "cycle": 43, "reason": "no_signal"}
+{"ts": 1784340643.9801052, "pair": "XAU/USD", "cycle": 44, "reason": "no_signal"}
+{"ts": 1784340643.9901648, "pair": "XAG/USD", "cycle": 44, "reason": "no_signal"}
+{"ts": 1784340644.0103767, "pair": "XAU/USD", "cycle": 45, "reason": "no_signal"}
+{"ts": 1784340644.0208988, "pair": "XAG/USD", "cycle": 45, "reason": "no_signal"}
+{"ts": 1784340644.0430398, "pair": "XAU/USD", "cycle": 46, "reason": "no_signal"}
+{"ts": 1784340644.0519133, "pair": "XAG/USD", "cycle": 46, "reason": "no_signal"}
+{"ts": 1784340644.0680246, "pair": "XAU/USD", "cycle": 47, "reason": "no_signal"}
+{"ts": 1784340644.0859458, "pair": "XAG/USD", "cycle": 47, "reason": "no_signal"}
+{"ts": 1784340644.1059475, "pair": "XAU/USD", "cycle": 48, "reason": "no_signal"}
+{"ts": 1784340644.1161067, "pair": "XAG/USD", "cycle": 48, "reason": "no_signal"}
+{"ts": 1784340644.133785, "pair": "XAU/USD", "cycle": 49, "reason": "no_signal"}
+{"ts": 1784340644.1423225, "pair": "XAG/USD", "cycle": 49, "reason": "no_signal"}
+{"ts": 1784340644.1624625, "pair": "XAU/USD", "cycle": 50, "reason": "no_signal"}
+{"ts": 1784340644.1728048, "pair": "XAG/USD", "cycle": 50, "reason": "no_signal"}
+{"ts": 1784340644.1925845, "pair": "XAU/USD", "cycle": 51, "reason": "no_signal"}
+{"ts": 1784340644.2036886, "pair": "XAG/USD", "cycle": 51, "reason": "no_signal"}
+{"ts": 1784340644.2177253, "pair": "XAU/USD", "cycle": 52, "reason": "no_signal"}
+{"ts": 1784340644.2292864, "pair": "XAG/USD", "cycle": 52, "reason": "no_signal"}
+{"ts": 1784340644.239761, "pair": "XAU/USD", "cycle": 53, "reason": "no_signal"}
+{"ts": 1784340644.2488623, "pair": "XAG/USD", "cycle": 53, "reason": "no_signal"}
+{"ts": 1784340644.2623818, "pair": "XAU/USD", "cycle": 54, "reason": "no_signal"}
+{"ts": 1784340644.2732127, "pair": "XAG/USD", "cycle": 54, "reason": "no_signal"}
+{"ts": 1784340644.288765, "pair": "XAU/USD", "cycle": 55, "reason": "no_signal"}
+{"ts": 1784340644.2994587, "pair": "XAG/USD", "cycle": 55, "reason": "no_signal"}
+{"ts": 1784340644.3154714, "pair": "XAU/USD", "cycle": 56, "reason": "no_signal"}
+{"ts": 1784340644.325461, "pair": "XAG/USD", "cycle": 56, "reason": "no_signal"}
+{"ts": 1784340644.3448946, "pair": "XAU/USD", "cycle": 57, "reason": "no_signal"}
+{"ts": 1784340644.3564763, "pair": "XAG/USD", "cycle": 57, "reason": "no_signal"}
+{"ts": 1784340644.3765302, "pair": "XAU/USD", "cycle": 58, "reason": "no_signal"}
+{"ts": 1784340644.3864617, "pair": "XAG/USD", "cycle": 58, "reason": "no_signal"}
+{"ts": 1784340644.4080274, "pair": "XAU/USD", "cycle": 59, "reason": "no_signal"}
+{"ts": 1784340644.418033, "pair": "XAG/USD", "cycle": 59, "reason": "no_signal"}
+{"ts": 1784340644.4320426, "pair": "XAU/USD", "cycle": 60, "reason": "no_signal"}
+{"ts": 1784340644.4430287, "pair": "XAG/USD", "cycle": 60, "reason": "no_signal"}
+{"ts": 1784340644.460733, "pair": "XAU/USD", "cycle": 61, "reason": "no_signal"}
+{"ts": 1784340644.4687421, "pair": "XAG/USD", "cycle": 61, "reason": "no_signal"}
+{"ts": 1784340644.4823422, "pair": "XAU/USD", "cycle": 62, "reason": "no_signal"}
+{"ts": 1784340644.49143, "pair": "XAG/USD", "cycle": 62, "reason": "no_signal"}
+{"ts": 1784340644.5094802, "pair": "XAU/USD", "cycle": 63, "reason": "no_signal"}
+{"ts": 1784340644.5218034, "pair": "XAG/USD", "cycle": 63, "reason": "no_signal"}
+{"ts": 1784340644.5487976, "pair": "XAU/USD", "cycle": 64, "reason": "no_signal"}
+{"ts": 1784340644.5994124, "pair": "XAG/USD", "cycle": 64, "reason": "no_signal"}
+{"ts": 1784340644.6184156, "pair": "XAU/USD", "cycle": 65, "reason": "no_signal"}
+{"ts": 1784340644.6294162, "pair": "XAG/USD", "cycle": 65, "reason": "no_signal"}
+{"ts": 1784340644.6534135, "pair": "XAU/USD", "cycle": 66, "reason": "no_signal"}
+{"ts": 1784340644.6724114, "pair": "XAG/USD", "cycle": 66, "reason": "no_signal"}
+{"ts": 1784340644.6956782, "pair": "XAU/USD", "cycle": 67, "reason": "no_signal"}
+{"ts": 1784340644.7170317, "pair": "XAG/USD", "cycle": 67, "reason": "no_signal"}
+{"ts": 1784340644.735153, "pair": "XAU/USD", "cycle": 68, "reason": "no_signal"}
+{"ts": 1784340644.7460787, "pair": "XAG/USD", "cycle": 68, "reason": "no_signal"}
+{"ts": 1784340644.7616358, "pair": "XAU/USD", "cycle": 69, "reason": "no_signal"}
+{"ts": 1784340644.773784, "pair": "XAG/USD", "cycle": 69, "reason": "no_signal"}
+{"ts": 1784340644.790944, "pair": "XAU/USD", "cycle": 70, "reason": "no_signal"}
+{"ts": 1784340644.7969909, "pair": "XAG/USD", "cycle": 70, "reason": "no_signal"}
+{"ts": 1784340644.8099535, "pair": "XAU/USD", "cycle": 71, "reason": "no_signal"}
+{"ts": 1784340644.8169606, "pair": "XAG/USD", "cycle": 71, "reason": "no_signal"}
+{"ts": 1784340644.8302844, "pair": "XAU/USD", "cycle": 72, "reason": "no_signal"}
+{"ts": 1784340644.8381789, "pair": "XAG/USD", "cycle": 72, "reason": "no_signal"}
+{"ts": 1784340644.851214, "pair": "XAU/USD", "cycle": 73, "reason": "no_signal"}
+{"ts": 1784340644.8626027, "pair": "XAG/USD", "cycle": 73, "reason": "no_signal"}
+{"ts": 1784340644.8944604, "pair": "XAU/USD", "cycle": 74, "reason": "no_signal"}
+{"ts": 1784340644.9161394, "pair": "XAG/USD", "cycle": 74, "reason": "no_signal"}
+{"ts": 1784340644.9456592, "pair": "XAU/USD", "cycle": 75, "reason": "no_signal"}
+{"ts": 1784340644.9636903, "pair": "XAG/USD", "cycle": 75, "reason": "no_signal"}
+{"ts": 1784340644.997656, "pair": "XAU/USD", "cycle": 76, "reason": "no_signal"}
+{"ts": 1784340645.0238214, "pair": "XAG/USD", "cycle": 76, "reason": "no_signal"}
+{"ts": 1784340645.0588596, "pair": "XAU/USD", "cycle": 77, "reason": "no_signal"}
+{"ts": 1784340645.0808613, "pair": "XAG/USD", "cycle": 77, "reason": "no_signal"}
+{"ts": 1784340645.1148648, "pair": "XAU/USD", "cycle": 78, "reason": "no_signal"}
+{"ts": 1784340645.1358593, "pair": "XAG/USD", "cycle": 78, "reason": "no_signal"}
+{"ts": 1784340645.168742, "pair": "XAU/USD", "cycle": 79, "reason": "no_signal"}
+{"ts": 1784340645.179262, "pair": "XAG/USD", "cycle": 79, "reason": "no_signal"}
+{"ts": 1784340650.461162, "pair": "XAU/USD", "cycle": 1, "reason": "no_signal"}
+{"ts": 1784340650.4728518, "pair": "XAG/USD", "cycle": 1, "reason": "no_signal"}
+{"ts": 1784340650.4978485, "pair": "XAU/USD", "cycle": 2, "reason": "no_signal"}
+{"ts": 1784340650.5104396, "pair": "XAG/USD", "cycle": 2, "reason": "no_signal"}
+{"ts": 1784340650.535446, "pair": "XAU/USD", "cycle": 3, "reason": "no_signal"}
+{"ts": 1784340650.5474405, "pair": "XAG/USD", "cycle": 3, "reason": "no_signal"}
+{"ts": 1784340650.573771, "pair": "XAU/USD", "cycle": 4, "reason": "no_signal"}
+{"ts": 1784340650.5901012, "pair": "XAG/USD", "cycle": 4, "reason": "no_signal"}
+{"ts": 1784340650.6187768, "pair": "XAU/USD", "cycle": 5, "reason": "no_signal"}
+{"ts": 1784340650.6360362, "pair": "XAG/USD", "cycle": 5, "reason": "no_signal"}
+{"ts": 1784340650.6627238, "pair": "XAU/USD", "cycle": 6, "reason": "no_signal"}
+{"ts": 1784340650.673714, "pair": "XAG/USD", "cycle": 6, "reason": "no_signal"}
+{"ts": 1784340650.6897147, "pair": "XAU/USD", "cycle": 7, "reason": "no_signal"}
+{"ts": 1784340650.6987102, "pair": "XAG/USD", "cycle": 7, "reason": "no_signal"}
+{"ts": 1784340650.7127142, "pair": "XAU/USD", "cycle": 8, "reason": "no_signal"}
+{"ts": 1784340650.717714, "pair": "XAG/USD", "cycle": 8, "reason": "no_signal"}
+{"ts": 1784340650.730718, "pair": "XAU/USD", "cycle": 9, "reason": "no_signal"}
+{"ts": 1784340650.7387156, "pair": "XAG/USD", "cycle": 9, "reason": "no_signal"}
+{"ts": 1784340650.7567132, "pair": "XAU/USD", "cycle": 10, "reason": "no_signal"}
+{"ts": 1784340650.7647173, "pair": "XAG/USD", "cycle": 10, "reason": "no_signal"}
+{"ts": 1784340650.7801611, "pair": "XAU/USD", "cycle": 11, "reason": "no_signal"}
+{"ts": 1784340650.7927253, "pair": "XAG/USD", "cycle": 11, "reason": "no_signal"}
+{"ts": 1784340650.81868, "pair": "XAU/USD", "cycle": 12, "reason": "no_signal"}
+{"ts": 1784340650.8267164, "pair": "XAG/USD", "cycle": 12, "reason": "no_signal"}
+{"ts": 1784340650.844213, "pair": "XAU/USD", "cycle": 13, "reason": "no_signal"}
+{"ts": 1784340650.8542185, "pair": "XAG/USD", "cycle": 13, "reason": "no_signal"}
+{"ts": 1784340650.8662157, "pair": "XAU/USD", "cycle": 14, "reason": "no_signal"}
+{"ts": 1784340650.8772137, "pair": "XAG/USD", "cycle": 14, "reason": "no_signal"}
+{"ts": 1784340650.8882096, "pair": "XAU/USD", "cycle": 15, "reason": "no_signal"}
+{"ts": 1784340650.8962102, "pair": "XAG/USD", "cycle": 15, "reason": "no_signal"}
+{"ts": 1784340650.908205, "pair": "XAU/USD", "cycle": 16, "reason": "no_signal"}
+{"ts": 1784340650.918216, "pair": "XAG/USD", "cycle": 16, "reason": "no_signal"}
+{"ts": 1784340650.93029, "pair": "XAU/USD", "cycle": 17, "reason": "no_signal"}
+{"ts": 1784340650.9402149, "pair": "XAG/USD", "cycle": 17, "reason": "no_signal"}
+{"ts": 1784340650.9564426, "pair": "XAU/USD", "cycle": 18, "reason": "no_signal"}
+{"ts": 1784340650.9642076, "pair": "XAG/USD", "cycle": 18, "reason": "no_signal"}
+{"ts": 1784340650.9792151, "pair": "XAU/USD", "cycle": 19, "reason": "no_signal"}
+{"ts": 1784340650.989254, "pair": "XAG/USD", "cycle": 19, "reason": "no_signal"}
+{"ts": 1784340651.0162315, "pair": "XAU/USD", "cycle": 20, "reason": "no_signal"}
+{"ts": 1784340651.0347602, "pair": "XAG/USD", "cycle": 20, "reason": "no_signal"}
+{"ts": 1784340651.0602777, "pair": "XAU/USD", "cycle": 21, "reason": "no_signal"}
+{"ts": 1784340651.0792718, "pair": "XAG/USD", "cycle": 21, "reason": "no_signal"}
+{"ts": 1784340651.1132696, "pair": "XAU/USD", "cycle": 22, "reason": "no_signal"}
+{"ts": 1784340651.1311996, "pair": "XAG/USD", "cycle": 22, "reason": "no_signal"}
+{"ts": 1784340651.1610005, "pair": "XAU/USD", "cycle": 23, "reason": "no_signal"}
+{"ts": 1784340651.1786652, "pair": "XAG/USD", "cycle": 23, "reason": "no_signal"}
+{"ts": 1784340651.207691, "pair": "XAU/USD", "cycle": 24, "reason": "no_signal"}
+{"ts": 1784340651.2176542, "pair": "XAG/USD", "cycle": 24, "reason": "no_signal"}
+{"ts": 1784340651.2359614, "pair": "XAU/USD", "cycle": 25, "reason": "no_signal"}
+{"ts": 1784340651.241927, "pair": "XAG/USD", "cycle": 25, "reason": "no_signal"}
+{"ts": 1784340651.2539597, "pair": "XAU/USD", "cycle": 26, "reason": "no_signal"}
+{"ts": 1784340651.2610767, "pair": "XAG/USD", "cycle": 26, "reason": "no_signal"}
+{"ts": 1784340651.2749221, "pair": "XAU/USD", "cycle": 27, "reason": "no_signal"}
+{"ts": 1784340651.2849693, "pair": "XAG/USD", "cycle": 27, "reason": "no_signal"}
+{"ts": 1784340651.2986052, "pair": "XAU/USD", "cycle": 28, "reason": "no_signal"}
+{"ts": 1784340651.3079364, "pair": "XAG/USD", "cycle": 28, "reason": "no_signal"}
+{"ts": 1784340651.331926, "pair": "XAU/USD", "cycle": 29, "reason": "no_signal"}
+{"ts": 1784340651.3449378, "pair": "XAG/USD", "cycle": 29, "reason": "no_signal"}
+{"ts": 1784340651.3679404, "pair": "XAU/USD", "cycle": 30, "reason": "no_signal"}
+{"ts": 1784340651.380074, "pair": "XAG/USD", "cycle": 30, "reason": "no_signal"}
+{"ts": 1784340651.4082408, "pair": "XAU/USD", "cycle": 31, "reason": "no_signal"}
+{"ts": 1784340651.4231873, "pair": "XAG/USD", "cycle": 31, "reason": "no_signal"}
+{"ts": 1784340651.4475353, "pair": "XAU/USD", "cycle": 32, "reason": "no_signal"}
+{"ts": 1784340651.4621909, "pair": "XAG/USD", "cycle": 32, "reason": "no_signal"}
+{"ts": 1784340651.4949777, "pair": "XAU/USD", "cycle": 33, "reason": "no_signal"}
+{"ts": 1784340651.5123906, "pair": "XAG/USD", "cycle": 33, "reason": "no_signal"}
+{"ts": 1784340651.5458026, "pair": "XAU/USD", "cycle": 34, "reason": "no_signal"}
+{"ts": 1784340651.5685363, "pair": "XAG/USD", "cycle": 34, "reason": "no_signal"}
+{"ts": 1784340651.6313913, "pair": "XAU/USD", "cycle": 35, "reason": "no_signal"}
+{"ts": 1784340651.6473522, "pair": "XAG/USD", "cycle": 35, "reason": "no_signal"}
+{"ts": 1784340651.660252, "pair": "XAU/USD", "cycle": 36, "reason": "no_signal"}
+{"ts": 1784340651.668297, "pair": "XAG/USD", "cycle": 36, "reason": "no_signal"}
+{"ts": 1784340651.6815147, "pair": "XAU/USD", "cycle": 37, "reason": "no_signal"}
+{"ts": 1784340651.690251, "pair": "XAG/USD", "cycle": 37, "reason": "no_signal"}
+{"ts": 1784340651.7032611, "pair": "XAU/USD", "cycle": 38, "reason": "no_signal"}
+{"ts": 1784340651.7102532, "pair": "XAG/USD", "cycle": 38, "reason": "no_signal"}
+{"ts": 1784340651.7239141, "pair": "XAU/USD", "cycle": 39, "reason": "no_signal"}
+{"ts": 1784340651.7318518, "pair": "XAG/USD", "cycle": 39, "reason": "no_signal"}
+{"ts": 1784340651.7402487, "pair": "XAU/USD", "cycle": 40, "reason": "no_signal"}
+{"ts": 1784340651.7462478, "pair": "XAG/USD", "cycle": 40, "reason": "no_signal"}
+{"ts": 1784340651.7542462, "pair": "XAU/USD", "cycle": 41, "reason": "no_signal"}
+{"ts": 1784340651.7582464, "pair": "XAG/USD", "cycle": 41, "reason": "no_signal"}
+{"ts": 1784340651.7682505, "pair": "XAU/USD", "cycle": 42, "reason": "no_signal"}
+{"ts": 1784340651.773249, "pair": "XAG/USD", "cycle": 42, "reason": "no_signal"}
+{"ts": 1784340651.7860649, "pair": "XAU/USD", "cycle": 43, "reason": "no_signal"}
+{"ts": 1784340651.7956724, "pair": "XAG/USD", "cycle": 43, "reason": "no_signal"}
+{"ts": 1784340651.8117437, "pair": "XAU/USD", "cycle": 44, "reason": "no_signal"}
+{"ts": 1784340651.8306746, "pair": "XAG/USD", "cycle": 44, "reason": "no_signal"}
+{"ts": 1784340651.8526723, "pair": "XAU/USD", "cycle": 45, "reason": "no_signal"}
+{"ts": 1784340651.8612142, "pair": "XAG/USD", "cycle": 45, "reason": "no_signal"}
+{"ts": 1784340651.8772154, "pair": "XAU/USD", "cycle": 46, "reason": "no_signal"}
+{"ts": 1784340651.8862138, "pair": "XAG/USD", "cycle": 46, "reason": "no_signal"}
+{"ts": 1784340651.9082122, "pair": "XAU/USD", "cycle": 47, "reason": "no_signal"}
+{"ts": 1784340651.937216, "pair": "XAG/USD", "cycle": 47, "reason": "no_signal"}
+{"ts": 1784340651.9562128, "pair": "XAU/USD", "cycle": 48, "reason": "no_signal"}
+{"ts": 1784340651.9657505, "pair": "XAG/USD", "cycle": 48, "reason": "no_signal"}
+{"ts": 1784340651.9844952, "pair": "XAU/USD", "cycle": 49, "reason": "no_signal"}
+{"ts": 1784340652.002793, "pair": "XAG/USD", "cycle": 49, "reason": "no_signal"}
+{"ts": 1784340652.025492, "pair": "XAU/USD", "cycle": 50, "reason": "no_signal"}
+{"ts": 1784340652.0375152, "pair": "XAG/USD", "cycle": 50, "reason": "no_signal"}
+{"ts": 1784340652.0583827, "pair": "XAU/USD", "cycle": 51, "reason": "no_signal"}
+{"ts": 1784340652.067366, "pair": "XAG/USD", "cycle": 51, "reason": "no_signal"}
+{"ts": 1784340652.085529, "pair": "XAU/USD", "cycle": 52, "reason": "no_signal"}
+{"ts": 1784340652.091528, "pair": "XAG/USD", "cycle": 52, "reason": "no_signal"}
+{"ts": 1784340652.104789, "pair": "XAU/USD", "cycle": 53, "reason": "no_signal"}
+{"ts": 1784340652.1097221, "pair": "XAG/USD", "cycle": 53, "reason": "no_signal"}
+{"ts": 1784340652.1185424, "pair": "XAU/USD", "cycle": 54, "reason": "no_signal"}
+{"ts": 1784340652.1265326, "pair": "XAG/USD", "cycle": 54, "reason": "no_signal"}
+{"ts": 1784340652.1358318, "pair": "XAU/USD", "cycle": 55, "reason": "no_signal"}
+{"ts": 1784340652.1418445, "pair": "XAG/USD", "cycle": 55, "reason": "no_signal"}
+{"ts": 1784340652.1499345, "pair": "XAU/USD", "cycle": 56, "reason": "no_signal"}
+{"ts": 1784340652.1540148, "pair": "XAG/USD", "cycle": 56, "reason": "no_signal"}
+{"ts": 1784340652.1632826, "pair": "XAU/USD", "cycle": 57, "reason": "no_signal"}
+{"ts": 1784340652.169137, "pair": "XAG/USD", "cycle": 57, "reason": "no_signal"}
+{"ts": 1784340652.176299, "pair": "XAU/USD", "cycle": 58, "reason": "no_signal"}
+{"ts": 1784340652.1823883, "pair": "XAG/USD", "cycle": 58, "reason": "no_signal"}
+{"ts": 1784340652.1912813, "pair": "XAU/USD", "cycle": 59, "reason": "no_signal"}
+{"ts": 1784340652.1956694, "pair": "XAG/USD", "cycle": 59, "reason": "no_signal"}
+{"ts": 1784340652.206136, "pair": "XAU/USD", "cycle": 60, "reason": "no_signal"}
+{"ts": 1784340652.2114303, "pair": "XAG/USD", "cycle": 60, "reason": "no_signal"}
+{"ts": 1784340652.2206416, "pair": "XAU/USD", "cycle": 61, "reason": "no_signal"}
+{"ts": 1784340652.23063, "pair": "XAG/USD", "cycle": 61, "reason": "no_signal"}
+{"ts": 1784340652.2406452, "pair": "XAU/USD", "cycle": 62, "reason": "no_signal"}
+{"ts": 1784340652.2497025, "pair": "XAG/USD", "cycle": 62, "reason": "no_signal"}
+{"ts": 1784340652.2629573, "pair": "XAU/USD", "cycle": 63, "reason": "no_signal"}
+{"ts": 1784340652.271735, "pair": "XAG/USD", "cycle": 63, "reason": "no_signal"}
+{"ts": 1784340652.2863178, "pair": "XAU/USD", "cycle": 64, "reason": "no_signal"}
+{"ts": 1784340652.294116, "pair": "XAG/USD", "cycle": 64, "reason": "no_signal"}
+{"ts": 1784340652.3081717, "pair": "XAU/USD", "cycle": 65, "reason": "no_signal"}
+{"ts": 1784340652.3151631, "pair": "XAG/USD", "cycle": 65, "reason": "no_signal"}
+{"ts": 1784340652.3291702, "pair": "XAU/USD", "cycle": 66, "reason": "no_signal"}
+{"ts": 1784340652.336164, "pair": "XAG/USD", "cycle": 66, "reason": "no_signal"}
+{"ts": 1784340652.3532991, "pair": "XAU/USD", "cycle": 67, "reason": "no_signal"}
+{"ts": 1784340652.3649976, "pair": "XAG/USD", "cycle": 67, "reason": "no_signal"}
+{"ts": 1784340652.3908856, "pair": "XAU/USD", "cycle": 68, "reason": "no_signal"}
+{"ts": 1784340652.4020607, "pair": "XAG/USD", "cycle": 68, "reason": "no_signal"}
+{"ts": 1784340652.4226604, "pair": "XAU/USD", "cycle": 69, "reason": "no_signal"}
+{"ts": 1784340652.4340794, "pair": "XAG/USD", "cycle": 69, "reason": "no_signal"}
+{"ts": 1784340652.4546788, "pair": "XAU/USD", "cycle": 70, "reason": "no_signal"}
+{"ts": 1784340652.4681935, "pair": "XAG/USD", "cycle": 70, "reason": "no_signal"}
+{"ts": 1784340652.5005927, "pair": "XAU/USD", "cycle": 71, "reason": "no_signal"}
+{"ts": 1784340652.5201135, "pair": "XAG/USD", "cycle": 71, "reason": "no_signal"}
+{"ts": 1784340652.5452466, "pair": "XAU/USD", "cycle": 72, "reason": "no_signal"}
+{"ts": 1784340652.5585058, "pair": "XAG/USD", "cycle": 72, "reason": "no_signal"}
+{"ts": 1784340652.5709412, "pair": "XAU/USD", "cycle": 73, "reason": "no_signal"}
+{"ts": 1784340652.5769417, "pair": "XAG/USD", "cycle": 73, "reason": "no_signal"}
+{"ts": 1784340652.5859323, "pair": "XAU/USD", "cycle": 74, "reason": "no_signal"}
+{"ts": 1784340652.5909839, "pair": "XAG/USD", "cycle": 74, "reason": "no_signal"}
+{"ts": 1784340652.6010826, "pair": "XAU/USD", "cycle": 75, "reason": "no_signal"}
+{"ts": 1784340652.6060743, "pair": "XAG/USD", "cycle": 75, "reason": "no_signal"}
+{"ts": 1784340652.6140702, "pair": "XAU/USD", "cycle": 76, "reason": "no_signal"}
+{"ts": 1784340652.6201687, "pair": "XAG/USD", "cycle": 76, "reason": "no_signal"}
+{"ts": 1784340652.6290703, "pair": "XAU/USD", "cycle": 77, "reason": "no_signal"}
+{"ts": 1784340652.6340714, "pair": "XAG/USD", "cycle": 77, "reason": "no_signal"}
+{"ts": 1784340652.6452317, "pair": "XAU/USD", "cycle": 78, "reason": "no_signal"}
+{"ts": 1784340652.6500196, "pair": "XAG/USD", "cycle": 78, "reason": "no_signal"}
+{"ts": 1784340652.6576133, "pair": "XAU/USD", "cycle": 79, "reason": "no_signal"}
+{"ts": 1784340652.6630585, "pair": "XAG/USD", "cycle": 79, "reason": "no_signal"}
+{"ts": 1784393928.639152, "pair": "XAU/USD", "cycle": 1, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.6517746, "pair": "XAG/USD", "cycle": 1, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.6557777, "pair": "XAU/USD", "cycle": 2, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.657775, "pair": "XAG/USD", "cycle": 2, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.6647723, "pair": "XAU/USD", "cycle": 3, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.6669118, "pair": "XAG/USD", "cycle": 3, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.6717775, "pair": "XAU/USD", "cycle": 4, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.6737754, "pair": "XAG/USD", "cycle": 4, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.680774, "pair": "XAU/USD", "cycle": 5, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.6827788, "pair": "XAG/USD", "cycle": 5, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.6867762, "pair": "XAU/USD", "cycle": 6, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.6887748, "pair": "XAG/USD", "cycle": 6, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.6937811, "pair": "XAU/USD", "cycle": 7, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.698742, "pair": "XAG/USD", "cycle": 7, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.7027748, "pair": "XAU/USD", "cycle": 8, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.7048311, "pair": "XAG/USD", "cycle": 8, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.7090178, "pair": "XAU/USD", "cycle": 9, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.7137747, "pair": "XAG/USD", "cycle": 9, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.717778, "pair": "XAU/USD", "cycle": 10, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.7207768, "pair": "XAG/USD", "cycle": 10, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.7247763, "pair": "XAU/USD", "cycle": 11, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393928.7267458, "pair": "XAG/USD", "cycle": 11, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.2548146, "pair": "XAU/USD", "cycle": 1, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.2568152, "pair": "XAG/USD", "cycle": 1, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.2638261, "pair": "XAU/USD", "cycle": 2, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.265821, "pair": "XAG/USD", "cycle": 2, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.2708197, "pair": "XAU/USD", "cycle": 3, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.2738202, "pair": "XAG/USD", "cycle": 3, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.2798235, "pair": "XAU/USD", "cycle": 4, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.2828205, "pair": "XAG/USD", "cycle": 4, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.2868192, "pair": "XAU/USD", "cycle": 5, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.2898185, "pair": "XAG/USD", "cycle": 5, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.2948232, "pair": "XAU/USD", "cycle": 6, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.2988217, "pair": "XAG/USD", "cycle": 6, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.3048155, "pair": "XAU/USD", "cycle": 7, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.3068147, "pair": "XAG/USD", "cycle": 7, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.313845, "pair": "XAU/USD", "cycle": 8, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.3168476, "pair": "XAG/USD", "cycle": 8, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.3208508, "pair": "XAU/USD", "cycle": 9, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.3238504, "pair": "XAG/USD", "cycle": 9, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.3298619, "pair": "XAU/USD", "cycle": 10, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.3328147, "pair": "XAG/USD", "cycle": 10, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.3378158, "pair": "XAU/USD", "cycle": 11, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.3398151, "pair": "XAG/USD", "cycle": 11, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.3468218, "pair": "XAU/USD", "cycle": 12, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.3498476, "pair": "XAG/USD", "cycle": 12, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.3541915, "pair": "XAU/USD", "cycle": 13, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.3561914, "pair": "XAG/USD", "cycle": 13, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.363269, "pair": "XAU/USD", "cycle": 14, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.3662639, "pair": "XAG/USD", "cycle": 14, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.3722646, "pair": "XAU/USD", "cycle": 15, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.3742635, "pair": "XAG/USD", "cycle": 15, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.3812683, "pair": "XAU/USD", "cycle": 16, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.3842666, "pair": "XAG/USD", "cycle": 16, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.3882663, "pair": "XAU/USD", "cycle": 17, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.3912675, "pair": "XAG/USD", "cycle": 17, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.398271, "pair": "XAU/USD", "cycle": 18, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.4012682, "pair": "XAG/USD", "cycle": 18, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.4062688, "pair": "XAU/USD", "cycle": 19, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.4092677, "pair": "XAG/USD", "cycle": 19, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.415268, "pair": "XAU/USD", "cycle": 20, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.4184182, "pair": "XAG/USD", "cycle": 20, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.4232676, "pair": "XAU/USD", "cycle": 21, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.4262695, "pair": "XAG/USD", "cycle": 21, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.433269, "pair": "XAU/USD", "cycle": 22, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.4352677, "pair": "XAG/USD", "cycle": 22, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.4402678, "pair": "XAU/USD", "cycle": 23, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.4432704, "pair": "XAG/USD", "cycle": 23, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.4493961, "pair": "XAU/USD", "cycle": 24, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.451268, "pair": "XAG/USD", "cycle": 24, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.4563873, "pair": "XAU/USD", "cycle": 25, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.458768, "pair": "XAG/USD", "cycle": 25, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.465387, "pair": "XAU/USD", "cycle": 26, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.4673865, "pair": "XAG/USD", "cycle": 26, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.472387, "pair": "XAU/USD", "cycle": 27, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.4743938, "pair": "XAG/USD", "cycle": 27, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.482389, "pair": "XAU/USD", "cycle": 28, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.4853868, "pair": "XAG/USD", "cycle": 28, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.490387, "pair": "XAU/USD", "cycle": 29, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.4933922, "pair": "XAG/USD", "cycle": 29, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.499388, "pair": "XAU/USD", "cycle": 30, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.502485, "pair": "XAG/USD", "cycle": 30, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.5063863, "pair": "XAU/USD", "cycle": 31, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.509387, "pair": "XAG/USD", "cycle": 31, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.5163915, "pair": "XAU/USD", "cycle": 32, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.5183866, "pair": "XAG/USD", "cycle": 32, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.5233867, "pair": "XAU/USD", "cycle": 33, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.5256257, "pair": "XAG/USD", "cycle": 33, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.5323827, "pair": "XAU/USD", "cycle": 34, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.5345354, "pair": "XAG/USD", "cycle": 34, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.539383, "pair": "XAU/USD", "cycle": 35, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.5413823, "pair": "XAG/USD", "cycle": 35, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.548385, "pair": "XAU/USD", "cycle": 36, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.5513837, "pair": "XAG/USD", "cycle": 36, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.5563838, "pair": "XAU/USD", "cycle": 37, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.5593908, "pair": "XAG/USD", "cycle": 37, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.5654845, "pair": "XAU/USD", "cycle": 38, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.5684834, "pair": "XAG/USD", "cycle": 38, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.5724835, "pair": "XAU/USD", "cycle": 39, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.5744848, "pair": "XAG/USD", "cycle": 39, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.5815196, "pair": "XAU/USD", "cycle": 40, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.5845194, "pair": "XAG/USD", "cycle": 40, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.5886545, "pair": "XAU/USD", "cycle": 41, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.5905173, "pair": "XAG/USD", "cycle": 41, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.5984852, "pair": "XAU/USD", "cycle": 42, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6015196, "pair": "XAG/USD", "cycle": 42, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6055217, "pair": "XAU/USD", "cycle": 43, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6075208, "pair": "XAG/USD", "cycle": 43, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6145165, "pair": "XAU/USD", "cycle": 44, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6175182, "pair": "XAG/USD", "cycle": 44, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.621522, "pair": "XAU/USD", "cycle": 45, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6235216, "pair": "XAG/USD", "cycle": 45, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6305172, "pair": "XAU/USD", "cycle": 46, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.633842, "pair": "XAG/USD", "cycle": 46, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6386483, "pair": "XAU/USD", "cycle": 47, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6405182, "pair": "XAG/USD", "cycle": 47, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6475153, "pair": "XAU/USD", "cycle": 48, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6495178, "pair": "XAG/USD", "cycle": 48, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6545198, "pair": "XAU/USD", "cycle": 49, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6565182, "pair": "XAG/USD", "cycle": 49, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6624923, "pair": "XAU/USD", "cycle": 50, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6656332, "pair": "XAG/USD", "cycle": 50, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6706307, "pair": "XAU/USD", "cycle": 51, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6726308, "pair": "XAG/USD", "cycle": 51, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6787326, "pair": "XAU/USD", "cycle": 52, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6816301, "pair": "XAG/USD", "cycle": 52, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6866963, "pair": "XAU/USD", "cycle": 53, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.688695, "pair": "XAG/USD", "cycle": 53, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6946697, "pair": "XAU/USD", "cycle": 54, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.6986623, "pair": "XAG/USD", "cycle": 54, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.7046611, "pair": "XAU/USD", "cycle": 55, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.7072294, "pair": "XAG/USD", "cycle": 55, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.7140234, "pair": "XAU/USD", "cycle": 56, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.7173681, "pair": "XAG/USD", "cycle": 56, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.7213671, "pair": "XAU/USD", "cycle": 57, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.723936, "pair": "XAG/USD", "cycle": 57, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.7304268, "pair": "XAU/USD", "cycle": 58, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.7334116, "pair": "XAG/USD", "cycle": 58, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.7383795, "pair": "XAU/USD", "cycle": 59, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.7403789, "pair": "XAG/USD", "cycle": 59, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.7473078, "pair": "XAU/USD", "cycle": 60, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.7503066, "pair": "XAG/USD", "cycle": 60, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.7553117, "pair": "XAU/USD", "cycle": 61, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.7573082, "pair": "XAG/USD", "cycle": 61, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.7648745, "pair": "XAU/USD", "cycle": 62, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.7668846, "pair": "XAG/USD", "cycle": 62, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.7719111, "pair": "XAU/USD", "cycle": 63, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.7749157, "pair": "XAG/USD", "cycle": 63, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.7814515, "pair": "XAU/USD", "cycle": 64, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.7851558, "pair": "XAG/USD", "cycle": 64, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.7891624, "pair": "XAU/USD", "cycle": 65, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.792272, "pair": "XAG/USD", "cycle": 65, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.799163, "pair": "XAU/USD", "cycle": 66, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.8021622, "pair": "XAG/USD", "cycle": 66, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.8071625, "pair": "XAU/USD", "cycle": 67, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.8101673, "pair": "XAG/USD", "cycle": 67, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.816164, "pair": "XAU/USD", "cycle": 68, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.8192427, "pair": "XAG/USD", "cycle": 68, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.8241618, "pair": "XAU/USD", "cycle": 69, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.82917, "pair": "XAG/USD", "cycle": 69, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.834162, "pair": "XAU/USD", "cycle": 70, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.8361623, "pair": "XAG/USD", "cycle": 70, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.8411624, "pair": "XAU/USD", "cycle": 71, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.8451843, "pair": "XAG/USD", "cycle": 71, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.8511617, "pair": "XAU/USD", "cycle": 72, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.8537452, "pair": "XAG/USD", "cycle": 72, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.8577492, "pair": "XAU/USD", "cycle": 73, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.8628263, "pair": "XAG/USD", "cycle": 73, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.8677495, "pair": "XAU/USD", "cycle": 74, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.869749, "pair": "XAG/USD", "cycle": 74, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.874749, "pair": "XAU/USD", "cycle": 75, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.8787634, "pair": "XAG/USD", "cycle": 75, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.8847494, "pair": "XAU/USD", "cycle": 76, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.887644, "pair": "XAG/USD", "cycle": 76, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.8926015, "pair": "XAU/USD", "cycle": 77, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.8966072, "pair": "XAG/USD", "cycle": 77, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.9016078, "pair": "XAU/USD", "cycle": 78, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.9046092, "pair": "XAG/USD", "cycle": 78, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.9087763, "pair": "XAU/USD", "cycle": 79, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393930.9136093, "pair": "XAG/USD", "cycle": 79, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.3056333, "pair": "XAU/USD", "cycle": 1, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.3077867, "pair": "XAG/USD", "cycle": 1, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.313668, "pair": "XAU/USD", "cycle": 2, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.3156688, "pair": "XAG/USD", "cycle": 2, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.3196654, "pair": "XAU/USD", "cycle": 3, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.3216662, "pair": "XAG/USD", "cycle": 3, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.3266695, "pair": "XAU/USD", "cycle": 4, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.3306637, "pair": "XAG/USD", "cycle": 4, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.334666, "pair": "XAU/USD", "cycle": 5, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.336667, "pair": "XAG/USD", "cycle": 5, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.3406653, "pair": "XAU/USD", "cycle": 6, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.343675, "pair": "XAG/USD", "cycle": 6, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.3496668, "pair": "XAU/USD", "cycle": 7, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.3527963, "pair": "XAG/USD", "cycle": 7, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.3568022, "pair": "XAU/USD", "cycle": 8, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.359772, "pair": "XAG/USD", "cycle": 8, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.365799, "pair": "XAU/USD", "cycle": 9, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.3688014, "pair": "XAG/USD", "cycle": 9, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.372803, "pair": "XAU/USD", "cycle": 10, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.375291, "pair": "XAG/USD", "cycle": 10, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.3818038, "pair": "XAU/USD", "cycle": 11, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.3838007, "pair": "XAG/USD", "cycle": 11, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.3888028, "pair": "XAU/USD", "cycle": 12, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.3908024, "pair": "XAG/USD", "cycle": 12, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.3979461, "pair": "XAU/USD", "cycle": 13, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.400801, "pair": "XAG/USD", "cycle": 13, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.4048035, "pair": "XAU/USD", "cycle": 14, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.4087698, "pair": "XAG/USD", "cycle": 14, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.4157665, "pair": "XAU/USD", "cycle": 15, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.4187665, "pair": "XAG/USD", "cycle": 15, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.4227653, "pair": "XAU/USD", "cycle": 16, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.4257705, "pair": "XAG/USD", "cycle": 16, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.4327657, "pair": "XAU/USD", "cycle": 17, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.4357657, "pair": "XAG/USD", "cycle": 17, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.4397655, "pair": "XAU/USD", "cycle": 18, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.4441068, "pair": "XAG/USD", "cycle": 18, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.4507656, "pair": "XAU/USD", "cycle": 19, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.453766, "pair": "XAG/USD", "cycle": 19, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.4577658, "pair": "XAU/USD", "cycle": 20, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.4624355, "pair": "XAG/USD", "cycle": 20, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.467361, "pair": "XAU/USD", "cycle": 21, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.4704416, "pair": "XAG/USD", "cycle": 21, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.4753804, "pair": "XAU/USD", "cycle": 22, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.480368, "pair": "XAG/USD", "cycle": 22, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.4864242, "pair": "XAU/USD", "cycle": 23, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.4890993, "pair": "XAG/USD", "cycle": 23, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.4953403, "pair": "XAU/USD", "cycle": 24, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.49911, "pair": "XAG/USD", "cycle": 24, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.5031075, "pair": "XAU/USD", "cycle": 25, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.5061085, "pair": "XAG/USD", "cycle": 25, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.5111132, "pair": "XAU/USD", "cycle": 26, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.515109, "pair": "XAG/USD", "cycle": 26, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.5201097, "pair": "XAU/USD", "cycle": 27, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.522108, "pair": "XAG/USD", "cycle": 27, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.5272057, "pair": "XAU/USD", "cycle": 28, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.5311108, "pair": "XAG/USD", "cycle": 28, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.5361102, "pair": "XAU/USD", "cycle": 29, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.5382788, "pair": "XAG/USD", "cycle": 29, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.5431116, "pair": "XAU/USD", "cycle": 30, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.5471132, "pair": "XAG/USD", "cycle": 30, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.5521104, "pair": "XAU/USD", "cycle": 31, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.5551105, "pair": "XAG/USD", "cycle": 31, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.5601132, "pair": "XAU/USD", "cycle": 32, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.564111, "pair": "XAG/USD", "cycle": 32, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.56911, "pair": "XAU/USD", "cycle": 33, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.5711095, "pair": "XAG/USD", "cycle": 33, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.57611, "pair": "XAU/USD", "cycle": 34, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.5811124, "pair": "XAG/USD", "cycle": 34, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.5851097, "pair": "XAU/USD", "cycle": 35, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.58811, "pair": "XAG/USD", "cycle": 35, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.592058, "pair": "XAU/USD", "cycle": 36, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.5970602, "pair": "XAG/USD", "cycle": 36, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.602056, "pair": "XAU/USD", "cycle": 37, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.6040554, "pair": "XAG/USD", "cycle": 37, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.6090589, "pair": "XAU/USD", "cycle": 38, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.6140573, "pair": "XAG/USD", "cycle": 38, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.6180556, "pair": "XAU/USD", "cycle": 39, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.6210558, "pair": "XAG/USD", "cycle": 39, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.6260893, "pair": "XAU/USD", "cycle": 40, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.6320586, "pair": "XAG/USD", "cycle": 40, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.6370566, "pair": "XAU/USD", "cycle": 41, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.6400566, "pair": "XAG/USD", "cycle": 41, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.6470585, "pair": "XAU/USD", "cycle": 42, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.650056, "pair": "XAG/USD", "cycle": 42, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.6540554, "pair": "XAU/USD", "cycle": 43, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.6570554, "pair": "XAG/USD", "cycle": 43, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.6633117, "pair": "XAU/USD", "cycle": 44, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.6663063, "pair": "XAG/USD", "cycle": 44, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.6703057, "pair": "XAU/USD", "cycle": 45, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.6733067, "pair": "XAG/USD", "cycle": 45, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.6793127, "pair": "XAU/USD", "cycle": 46, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.682307, "pair": "XAG/USD", "cycle": 46, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.6863062, "pair": "XAU/USD", "cycle": 47, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.6894438, "pair": "XAG/USD", "cycle": 47, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.694471, "pair": "XAU/USD", "cycle": 48, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.6984503, "pair": "XAG/USD", "cycle": 48, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.7034853, "pair": "XAU/USD", "cycle": 49, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.7054853, "pair": "XAG/USD", "cycle": 49, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.7114944, "pair": "XAU/USD", "cycle": 50, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.7154806, "pair": "XAG/USD", "cycle": 50, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.719486, "pair": "XAU/USD", "cycle": 51, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.7214863, "pair": "XAG/USD", "cycle": 51, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.7274637, "pair": "XAU/USD", "cycle": 52, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.7314813, "pair": "XAG/USD", "cycle": 52, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.736484, "pair": "XAU/USD", "cycle": 53, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.7384868, "pair": "XAG/USD", "cycle": 53, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.7443287, "pair": "XAU/USD", "cycle": 54, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.7484815, "pair": "XAG/USD", "cycle": 54, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.7534826, "pair": "XAU/USD", "cycle": 55, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.755488, "pair": "XAG/USD", "cycle": 55, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.7614703, "pair": "XAU/USD", "cycle": 56, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.7645524, "pair": "XAG/USD", "cycle": 56, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.7694857, "pair": "XAU/USD", "cycle": 57, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.7714877, "pair": "XAG/USD", "cycle": 57, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.7765377, "pair": "XAU/USD", "cycle": 58, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.781489, "pair": "XAG/USD", "cycle": 58, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.7854874, "pair": "XAU/USD", "cycle": 59, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.7876806, "pair": "XAG/USD", "cycle": 59, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.7924945, "pair": "XAU/USD", "cycle": 60, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.7974966, "pair": "XAG/USD", "cycle": 60, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.801498, "pair": "XAU/USD", "cycle": 61, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.8045015, "pair": "XAG/USD", "cycle": 61, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.808501, "pair": "XAU/USD", "cycle": 62, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.8134887, "pair": "XAG/USD", "cycle": 62, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.8184988, "pair": "XAU/USD", "cycle": 63, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.8205013, "pair": "XAG/USD", "cycle": 63, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.824497, "pair": "XAU/USD", "cycle": 64, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.829465, "pair": "XAG/USD", "cycle": 64, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.8344615, "pair": "XAU/USD", "cycle": 65, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.836461, "pair": "XAG/USD", "cycle": 65, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.8404608, "pair": "XAU/USD", "cycle": 66, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.8445225, "pair": "XAG/USD", "cycle": 66, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.8504617, "pair": "XAU/USD", "cycle": 67, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.8524613, "pair": "XAG/USD", "cycle": 67, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.8574617, "pair": "XAU/USD", "cycle": 68, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.8609946, "pair": "XAG/USD", "cycle": 68, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.866498, "pair": "XAU/USD", "cycle": 69, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.8694959, "pair": "XAG/USD", "cycle": 69, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.8734984, "pair": "XAU/USD", "cycle": 70, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.8765106, "pair": "XAG/USD", "cycle": 70, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.8834999, "pair": "XAU/USD", "cycle": 71, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.8854997, "pair": "XAG/USD", "cycle": 71, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.8904996, "pair": "XAU/USD", "cycle": 72, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.8934681, "pair": "XAG/USD", "cycle": 72, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.9014957, "pair": "XAU/USD", "cycle": 73, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.9034994, "pair": "XAG/USD", "cycle": 73, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.9076126, "pair": "XAU/USD", "cycle": 74, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.9124804, "pair": "XAG/USD", "cycle": 74, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.9174647, "pair": "XAU/USD", "cycle": 75, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.9194646, "pair": "XAG/USD", "cycle": 75, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.924496, "pair": "XAU/USD", "cycle": 76, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.9295018, "pair": "XAG/USD", "cycle": 76, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.934498, "pair": "XAU/USD", "cycle": 77, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.936653, "pair": "XAG/USD", "cycle": 77, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.9404979, "pair": "XAU/USD", "cycle": 78, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.9444742, "pair": "XAG/USD", "cycle": 78, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.9504986, "pair": "XAU/USD", "cycle": 79, "reason": "no_signal", "reason_skipped": "no_signal"}
+{"ts": 1784393932.9534962, "pair": "XAG/USD", "cycle": 79, "reason": "no_signal", "reason_skipped": "no_signal"}
