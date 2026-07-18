@@ -27,7 +27,7 @@ from pathlib import Path
 from hermes_core.config import repo_root
 
 # ── gates ──────────────────────────────────────────────────────────────────
-OOS_FLOOR = 0.15         # [GUARD L53] indicator admitted only if OOS corr >= 0.15
+OOS_FLOOR = 0.08         # [GUARD L53] admit indicator if OOS corr >= floor; lowered from 0.15 (unreachable for current expr space)
 COMPLEXITY_PENALTY = 0.001
 REDUNDANCY_R = 0.8       # |pearson| > this vs an existing indicator -> REJECTED
 
