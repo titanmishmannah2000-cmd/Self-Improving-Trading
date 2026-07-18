@@ -474,6 +474,9 @@ class PriceAggregator:
             # stream not warm yet -> fall through to sources (none cover crypto)
 
         prices, any_up = await self._poll(pair)
+        if pair in ("XAU/USD", "XAG/USD"):  # TEMP DIAG
+            print(f"[DIAG _fetch_async {pair}] prices={prices} any_up={any_up}",
+                  file=__import__("sys").stderr, flush=True)
         if not prices:
             # [GUARD L61] all sources down -> fail soft, serve last-good if fresh
             return self._last_good.get(pair)
