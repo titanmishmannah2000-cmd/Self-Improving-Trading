@@ -36,7 +36,7 @@ from pathlib import Path
 import httpx
 
 from hermes_core.adapters import make_aggregator_fetch, make_default_fetch
-from hermes_core.config.loader import load_config
+from hermes_core.config.loader import load_config, load_strategy_for_pair
 from hermes_core.engines.loop import run_cycle
 from hermes_core.env import get_env, load_env
 
@@ -102,8 +102,16 @@ def _push_state(bot: str, cfg: dict, cycle: int) -> None:
         except Exception:
             pass
         return out
+    # Build a real per-pair strategy dict (the dashboard's overview calls
+    # .keys() on strategy_json, so it MUST be a mapping, not a list).
+    strategies = {}
+    for p in (cfg.get("pairs") or []):
+        try:
+            strategies[p] = load_strategy_for_pair(p, bot)
+        except Exception:
+            continue
     payload = {
-        "strategies": cfg.get("strategies") or cfg.get("pairs"),  # strategies map if present
+        "strategies": strategies,
         "goal": cfg.get("goal"),
         "heartbeat": heartbeat,
         "recent_trades": _read_jsonl("trades.jsonl"),
