@@ -138,8 +138,20 @@ async def seed_history(pair: str, max_candles: int = 300) -> list:
     Returns a list of Candle dicts, oldest-first, capped at ``max_candles``.
     Returns [] if the feed is unavailable (fail-soft).
     """
+    return await seed_history_interval(pair, interval="5m", period="60d",
+                                        max_candles=max_candles)
+
+
+async def seed_history_interval(pair: str, interval: str = "5m", period: str = "2y",
+                                 max_candles: int = 500) -> list:
+    """Return up to ``max_candles`` candles for ``pair`` at an arbitrary
+    ``interval``/``period`` (e.g. interval="1d", period="2y" for the GP
+    discovery regime). The GP discovery engine requires longer-horizon daily
+    history to find predictive structure (5m/next-candle "almost never clear,
+    by design" — see genetic_discovery.run_genetic_discovery). Fail-soft: [].
+    """
     symbol = _to_symbol(pair)
-    df = await _download(symbol, period="60d", interval="5m")
+    df = await _download(symbol, period=period, interval=interval)
     if df is None or len(df) == 0:
         return []
     tail = df.tail(max_candles)
@@ -186,3 +198,11 @@ def fetch_sync(pair: str, force: bool = False) -> dict | None:
 def seed_history_sync(pair: str, max_candles: int = 300) -> list:
     """Synchronous wrapper around :func:`seed_history` for the sync trade loop."""
     return _run(seed_history(pair, max_candles=max_candles))
+
+
+def seed_history_interval_sync(pair: str, interval: str = "1d", period: str = "2y",
+                               max_candles: int = 500) -> list:
+    """Synchronous wrapper around :func:`seed_history_interval` (long-horizon
+    history fetch used by GP discovery)."""
+    return _run(seed_history_interval(pair, interval=interval, period=period,
+                                       max_candles=max_candles))

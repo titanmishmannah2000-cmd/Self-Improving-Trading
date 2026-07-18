@@ -296,6 +296,74 @@ def _compute_signal_stats(signal: list[float], prices: list[float], horizon: int
     return win_rate, round(cum, 2)
 
 
+# ── Sharpe gate (ported from the older hermes_trading discovery engine) ─────
+# The older engine admitted a candidate if (corr >= MIN_CORR) OR
+# (sharpe >= MIN_SHARPE) — a risk-adjusted bar that catches low-corr but
+# tradeable signals the pure-correlation gate misses. We keep BOTH bars here.
+MIN_CORR = 0.05
+MIN_SHARPE = 1.0
+N_FOLDS = 5
+
+
+def _sharpe(signal: list[float], prices: list[float], horizon: int = 1) -> float:
+    """Annualised-ish Sharpe of trading in the signal's direction.
+
+    Direction at step i = sign of slope of the signal; per-step return =
+    direction * forward_return; Sharpe = mean/std of those per-step returns
+    (std floored to avoid div-by-zero). Ported from the older engine's fitness.
+    """
+    fwd = _forward_returns(prices, horizon)
+    sig = signal[:len(fwd) + 1]
+    if len(sig) < 11:
+        return 0.0
+    rets = []
+    for i in range(1, len(sig)):
+        s_dir = 1 if sig[i] > sig[i - 1] else (-1 if sig[i] < sig[i - 1] else 0)
+        if s_dir == 0:
+            continue
+        rets.append(s_dir * fwd[i - 1])
+    if len(rets) < 5:
+        return 0.0
+    mean = sum(rets) / len(rets)
+    var = sum((r - mean) ** 2 for r in rets) / len(rets)
+    if var <= 1e-9:
+        return 0.0
+    return mean / math.sqrt(var) * math.sqrt(252.0)   # annualise like the old engine
+
+
+def _honest_oos(signal: list[float], prices: list[float], horizon: int = 1,
+                n_folds: int = N_FOLDS):
+    """Honest out-of-sample correlation via N_FOLDS walk-forward splits.
+
+    Returns (median_corr, frac_folds_passing) where a fold "passes" if its
+    held-out |corr| >= MIN_CORR. The old engine used a single 80/20 split;
+    this extends it to k-fold so a candidate must hold up across multiple
+    disjoint hold-outs, not just one lucky split.
+    """
+    n = min(len(signal), len(prices) - horizon)
+    if n < n_folds * 15:
+        return 0.0, 0.0
+    fold = n // n_folds
+    corrs = []
+    passing = 0
+    for k in range(n_folds):
+        a = k * fold
+        b = a + fold
+        if b > n:
+            b = n
+        if b - a < 15:
+            continue
+        c = abs(_pearson(signal[a:b], _forward_returns(prices, horizon)[a:b]))
+        corrs.append(c)
+        if c >= MIN_CORR:
+            passing += 1
+    if not corrs:
+        return 0.0, 0.0
+    corrs.sort()
+    med = corrs[len(corrs) // 2]
+    return med, passing / len(corrs)
+
+
 # ── GP tree operators (ported from the older discovery engine) ─────────────
 def _get_nodes(expr):
     """All subtree objects in the expression tree (for crossover/mutation)."""
@@ -498,7 +566,7 @@ def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
                 "complexity": _complexity(expr),
                 "nodes": _complexity(expr),
                 "horizon": horizon,
-                "interval": "5m",
+                "interval": "1d",                     # GP discovery runs on daily bars
                 "source": "genetic",
                 "ts": datetime.now(timezone.utc).isoformat(),
             }

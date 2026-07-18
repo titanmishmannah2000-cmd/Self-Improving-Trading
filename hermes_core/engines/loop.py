@@ -170,7 +170,7 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None) -> N
     heartbeat cycle. The heavy work runs in a thread with a hard timeout; if it
     stalls, the cycle proceeds and the next attempt retries. Fail-soft.
     """
-    from hermes_core.adapters import seed_history
+    from hermes_core.adapters.price import seed_history_interval_sync
     from hermes_core.engines.genetic import load_discovered_indicators
     now = time.time()
     key = (bot, pair)
@@ -181,11 +181,18 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None) -> N
         return
 
     def _work() -> None:
-        hist = seed_history(pair, max_candles=300)
+        # GP discovery runs on the OLD engine's working regime: 2y of DAILY
+        # bars with a 60-candle forward horizon. The old genetic_discovery.py
+        # is explicit that 5m/next-candle "almost never clear, by design" —
+        # only the daily/long-horizon objective produces predictive structure.
+        # We keep the live trade loop on 5m; discovery uses daily history.
+        from hermes_core.adapters import seed_history_interval_sync
+        hist = seed_history_interval_sync(pair, interval="1d", period="2y",
+                                          max_candles=500)
         series = [c["price"] for c in (hist or [])] or (prices or [])
-        if len(series) < 40:
+        if len(series) < 200:
             return
-        gp_discover(pair, series)
+        gp_discover(pair, series, horizon=60, generations=40, pop_size=40)
 
     # Bound the work so a slow network/price API can't stall the trade loop.
     # Discovery now runs in its own background thread, so a generous cap is safe.
