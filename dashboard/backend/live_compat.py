@@ -24,7 +24,18 @@ All reads are fail-soft: missing files -> empty/[] , never a 500.
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
+
+
+def _utcnow() -> str:
+    """ISO-8601 UTC timestamp used as the default price-store ts.
+
+    The live bots POST {"prices": {...}} WITHOUT a ts field, so the
+    compat price route falls back to this. (Was referenced but never
+    defined -> NameError -> HTTP 500 on every price push. FIXED.)
+    """
+    return datetime.now(timezone.utc).isoformat()
 
 # ----------------------------------------------------------------------------
 # Locate the bots' state directories.

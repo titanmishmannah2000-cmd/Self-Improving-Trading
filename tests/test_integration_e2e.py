@@ -19,9 +19,10 @@ Scope:
     in-process) and read back — proving the dashboard tabs populate and that
     bot identity is isolated by the composite PK (bot,id) -> forex trades
     never appear under gold/crypto.
-  * Discord alert: the codebase has NO webhook call (bot-alerts is a placeholder
-    per the S16 audit), so test_discord_alert is xfail with an explicit gap note
-    rather than faked green.
+  * Discord alert: the codebase HAS a webhook call (hermes_core/notify/discord.py),
+    so test_discord_alert proves (a) run_cycle fires alert_fn on a real trade
+    close and (b) the webhook POST path sends a Discord message (network-free
+    via a mocked urlopen). Not faked green.
 """
 
 from __future__ import annotations
@@ -29,9 +30,9 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 import urllib.error
 import urllib.request
-from http.server import ThreadingHTTPServer
 
 import pytest
 
@@ -107,16 +108,47 @@ class _Feed:
 # ---- live S16 dashboard harness ------------------------------------------------
 @pytest.fixture()
 def live_api(tmp_path):
+    import socket
+
+    import uvicorn
+
     db = tmp_path / "dash.db"
     state = tmp_path / "state"
     state.mkdir(parents=True, exist_ok=True)
     dash.DB_PATH = str(db)
     dash.STATE_DIR = str(state)
     dash.INGEST_TOKEN = "s18-token"
-    srv = ThreadingHTTPServer(("127.0.0.1", 8741), dash.make_app())
-    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    # init_db() at import time ran against the DEFAULT path; re-init against the
+    # tmp path so the fresh DB has the full schema. NB: the migration ALTERs in
+    # main.py only run at import time, so a post-import DB (this fixture, or any
+    # runtime DB_PATH change) would miss cortex_json/flatlined_json — re-apply
+    # them here to mirror production. See audit note: migrations should live in
+    # init_db() itself.
+    dash.init_db()
+    import sqlite3 as _sqlite3
+
+    _conn = _sqlite3.connect(str(db))
+    for _col in ("discovered_json", "cortex_json", "flatlined_json", "open_trades_json"):
+        try:
+            _conn.execute(f"ALTER TABLE latest_state ADD COLUMN {_col} TEXT DEFAULT '{{}}'")
+            _conn.commit()
+        except _sqlite3.OperationalError:
+            pass
+    _conn.close()
+
+    # Serve the REAL FastAPI app over HTTP (proves the genuine bot->ingest
+    # path). Pick a free port per-run so parallel tests never clash.
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    config = uvicorn.Config(dash.app, host="127.0.0.1", port=port, log_level="warning")
+    srv = uvicorn.Server(config)
+    t = threading.Thread(target=srv.run, daemon=True)
     t.start()
-    base = "http://127.0.0.1:8741"
+    deadline = time.time() + 10
+    while not srv.started and time.time() < deadline:
+        time.sleep(0.05)
+    base = f"http://127.0.0.1:{port}"
 
     def req(method, path, body=None, token=dash.INGEST_TOKEN):
         data = json.dumps(body).encode() if body is not None else None
@@ -133,8 +165,7 @@ def live_api(tmp_path):
             return e.code, json.loads(e.read().decode())
 
     yield req
-    srv.shutdown()
-    srv.server_close()
+    srv.should_exit = True
 
 
 # ---- guard-log capture ---------------------------------------------------------
@@ -166,17 +197,27 @@ def _run_bot(bot, live_api, cycles=80):
     for cycle in range(1, cycles):
         s = run_cycle(
             bot, cycle, fetch_fn=feed,
-            push_fn=lambda b, s, c=cycle: live_api("POST", f"/api/ingest/{b}", {
-                "id": f"t{c}", "pair": cfg["pairs"][0],
-                "pnl_pct": 1.0 if s.get("exits") else 0.0,
-            }),
+            push_fn=lambda b, s: None,  # we push real trades below, not the raw summary
             now_fn=lambda c=cycle: c * 3600.0,
             chart_context_fn=lambda p: "",
             ensemble_fn=lambda p: "neutral",
             open_positions=open_positions, reentry=reentry,
             consecutive_failures=0,
         )
-        completed += len(s.get("exits") or [])
+        # Build REAL closed-trade records from this cycle's exits and push them
+        # through the genuine ingest contract (recent_trades:[...]).
+        exits = s.get("exits") or []
+        if exits:
+            recs = []
+            for pair, reason in exits:
+                recs.append({
+                    "id": f"t{cycle}-{pair}", "pair": pair,
+                    "exit_reason": reason, "pnl_pct": 1.0,
+                    "entry_price": 1.0, "exit_price": 1.01,
+                    "entry_ts": (cycle - 1) * 60, "exit_ts": cycle * 60,
+                })
+            live_api("POST", f"/api/ingest/{bot}", {"recent_trades": recs})
+        completed += len(exits)
     return completed
 
 
@@ -232,7 +273,7 @@ def test_bot_separation_dashboard(live_api):
     """Forex trades never appear under gold/crypto (composite PK isolation)."""
     for bot, pair in (("forex", "EUR/USD"), ("gold", "XAU/USD"), ("crypto", "BTC/USD")):
         live_api("POST", f"/api/ingest/{bot}",
-                 {"id": "SHARED", "pair": pair, "pnl_pct": 1.1})
+                 {"recent_trades": [{"id": "SHARED", "pair": pair, "pnl_pct": 1.1}]})
     fx = live_api("GET", "/api/trades/forex")[1]
     gd = live_api("GET", "/api/trades/gold")[1]
     cr = live_api("GET", "/api/trades/crypto")[1]

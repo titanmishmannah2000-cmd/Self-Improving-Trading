@@ -1,0 +1,1 @@
+{"version": 3, "suppressions": {}, "allocation": {"EUR/USD": {"mean_reversion": 30, "rsi_momentum": 30, "gp_ensemble": 40}}, "priority_discovery": ["XAU/USD"], "rollback_candidates": [], "decisions": [{"ts": "2026-07-15T10:00:00", "text": "Promoted dxy_corr to production"}]}

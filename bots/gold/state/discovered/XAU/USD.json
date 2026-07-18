@@ -1,0 +1,1 @@
+[{"name": "dxy_corr", "expr_str": "corr(close,dxy,20)", "fitness": 0.91, "win_rate": 0.68, "total_pnl": 7.8, "uses": ["dxy"], "discovered_at": "2026-07-14", "source": "gp"}]

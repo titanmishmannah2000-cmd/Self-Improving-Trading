@@ -678,6 +678,12 @@ def bot_trades(bot_name: str, pair: Optional[str] = None, limit: int = 5000):
     return [row_to_trade(r) for r in rows]
 
 
+@app.get("/api/trades/{bot_name}")
+def api_bot_trades(bot_name: str, pair: Optional[str] = None, limit: int = 5000):
+    """Per-bot trade read-back (used by dashboard tabs + S18 isolation test)."""
+    return bot_trades(bot_name, pair=pair, limit=limit)
+
+
 # ───────────────────── Alerts ─────────────────────
 
 ALERT_RULES = {

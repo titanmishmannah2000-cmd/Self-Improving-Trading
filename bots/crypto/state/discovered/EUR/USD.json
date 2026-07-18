@@ -1,0 +1,1 @@
+[{"name": "rsi_14", "expr_str": "ta.rsi(close,14)", "fitness": 0.82, "win_rate": 0.61, "total_pnl": 4.3, "uses": ["volume"], "discovered_at": "2026-07-15", "source": "gp"}, {"name": "mom_5", "expr_str": "mom(close,5)", "fitness": 0.7, "win_rate": 0.55, "total_pnl": 2.1, "uses": [], "discovered_at": "2026-07-16", "source": "seed"}]
