@@ -48,10 +48,14 @@ _last_candle_ts: dict[str, float] = {}
 
 def _to_symbol(pair: str) -> str:
     """Map a HERMES pair to a yfinance ticker symbol."""
-    if "-" in pair:  # crypto reference, e.g. BTC-USD
+    if pair == "BTC/USD":
+        return "BTC-USD"  # spot crypto ticker (BTCUSD=X is deprecated/404)
+    if pair == "ETH/USD":
+        return "ETH-USD"
+    if "-" in pair:  # generic crypto reference, e.g. BTC-USD
         return pair
     if pair == "XAU/USD":
-        return "GC=F"
+        return "XAU=F"  # spot gold (GC=F futures also works; XAU=F is reliable)
     if pair == "XAG/USD":
         return "XAG=F"
     # forex: EUR/USD -> EURUSD=X
