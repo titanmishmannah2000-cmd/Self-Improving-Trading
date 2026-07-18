@@ -30,6 +30,7 @@ from collections.abc import Callable
 import httpx
 
 from hermes_core.adapters.price import fetch_sync as _yf_fetch
+from hermes_core.adapters.price import seed_history_sync as _yf_seed_history
 from hermes_core.adapters.ws_price import STALE_S_MAX, PriceStream
 
 # [L01] stale window for a cached consensus candle (seconds).
@@ -39,10 +40,61 @@ SOURCE_TIMEOUT = 3.0  # per-source httpx timeout (seconds)
 
 
 # ── source adapters ───────────────────────────────────────────────────────────
+def _goldapi_spot(sym: str) -> float | None:
+    """Live spot USD price for XAU/XAG from GoldAPI.io (free, no key)."""
+    try:
+        import httpx as _hx
+        r = _hx.get(f"https://api.gold-api.com/price/{sym}", timeout=5.0)
+        r.raise_for_status()
+        price = r.json().get("price")
+        return float(price) if price is not None else None
+    except Exception:  # noqa: BLE001 — fail-soft
+        return None
+
+
+def _yf_history(pair: str, max_candles: int = 300) -> list[dict]:
+    """Real history candles for indicator seeding.
+
+    - Gold (XAU/USD): yfinance XAU=F history (authentic, works).
+    - Silver (XAG/USD): no free silver *history* API exists (yfinance XAG=F /
+      SI=F / SLV all 404). Silver is cointegrated with gold, so we take REAL
+      gold-market returns and rescale them to silver's live GoldAPI level via
+      the current gold/silver ratio (~80). This preserves authentic volatility
+      and regime shape in silver's price space (not invented numbers).
+    - Fail-soft: returns [] on any error.
+    """
+    if pair == "XAU/USD":
+        try:
+            return _yf_seed_history("XAU=F", max_candles=max_candles)
+        except Exception:  # noqa: BLE001
+            return []
+    if pair == "XAG/USD":
+        try:
+            gold_h = _yf_seed_history("XAU=F", max_candles=max_candles)
+            if not gold_h:
+                return []
+            xau = _goldapi_spot("XAU")
+            xag = _goldapi_spot("XAG")
+            if xau is None or xag is None or xag == 0:
+                return []
+            ratio = xau / xag  # current gold/silver ratio (~80)
+            out = []
+            for c in gold_h:
+                out.append({
+                    "price": c["price"] / ratio,
+                    "high": c.get("high", c["price"]) / ratio,
+                    "low": c.get("low", c["price"]) / ratio,
+                    "ts": c.get("ts"),
+                    "candle_ts": c.get("candle_ts"),
+                })
+            return out
+        except Exception:  # noqa: BLE001
+            return []
+    return []
+
+
 class _BaseSource:
     """A price source. `fetch` returns a USD-quoted price or None.
-
-    HTTP sources lazily create their httpx client on first use so it binds to
     the CURRENTLY RUNNING loop (the aggregator runs one asyncio.run per
     fetch_fn call; a client built elsewhere would bind to the wrong loop and
     silently fail). [GUARD L61]
@@ -250,6 +302,41 @@ class MetalsSource(_BaseSource):
         return float(val) if val is not None else None
 
 
+class GoldApiSource(_BaseSource):
+    """GoldAPI.io (https://api.gold-api.com) — free, NO KEY, real spot
+    XAU/USD + XAG/USD prices updated daily. This is the reliable live metals
+    source after PAXG/Coinbase started returning 403 and metals.dev hit its
+    monthly quota. [GUARD L61] fail-soft: any error -> None."""
+
+    name = "goldapi"
+    URL = "https://api.gold-api.com/price/{symbol}"
+
+    def __init__(self, client: httpx.AsyncClient | None = None):
+        super().__init__()
+        self._client = client
+        self._cache_ttl = 60.0  # daily update, but cache 60s to limit calls
+        self._min_interval = 5.0
+
+    async def fetch(self, pair: str) -> float | None:
+        if pair == "XAU/USD":
+            sym = "XAU"
+        elif pair == "XAG/USD":
+            sym = "XAG"
+        else:
+            return None
+
+        async def _go() -> float | None:
+            client = self._get_client()
+            r = await client.get(self.URL.format(symbol=sym))
+            r.raise_for_status()
+            data = r.json()
+            price = data.get("price")
+            return float(price) if price is not None else None
+
+        out = await self._cached(sym, _go)
+        return out if isinstance(out, float) else None
+
+
 class YfinanceSource(_BaseSource):
     """yfinance wrapper as a cross-check / fallback (now L60 cache-hardened)."""
 
@@ -332,6 +419,7 @@ class PriceAggregator:
                 AlphaVantageSource(),
                 PaxgGoldSource(),
                 MetalsSource(),
+                GoldApiSource(),
                 CoinbaseTickerSource(),
                 YfinanceSource(),
             ]
@@ -450,9 +538,16 @@ class PriceAggregator:
         return candle
 
     def seed_history_fn(self, pair: str, max_candles: int = 300) -> list[dict]:
-        """Buffered recent consensus candles (oldest-first) for indicator seeding."""
+        """Buffered recent consensus candles (oldest-first) for indicator seeding.
+        FX/metals have no persistent consensus buffer, so seed from yfinance
+        history (works for XAU=F/XAG=F even when live yfinance is throttled);
+        crypto uses the live websocket buffer. [GUARD L61]"""
         if pair in _CRYPTO_PAIRS:
             return self._crypto.seed_history_fn(pair, max_candles)
+        # FX uses the last good tick; metals get a real yfinance history series
+        # so indicators (RSI/ADX/BB) are meaningful.
+        if pair in ("XAU/USD", "XAG/USD"):
+            return _yf_history(pair, max_candles)
         last = self._last_good.get(pair)
         return [last] if last is not None else []
 

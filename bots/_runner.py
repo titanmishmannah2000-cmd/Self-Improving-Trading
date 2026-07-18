@@ -308,7 +308,7 @@ async def run_bot(bot_name: str) -> None:
                         run_cycle, bot, cycle, fetch_fn=fetch_fn,
                         open_positions=open_positions, reentry=reentry,
                         oversold_pairs=oversold_pairs, vol_above=vol_above,
-                        history_fn=seed_history,
+                        history_fn=getattr(aggregator, "seed_history_fn", seed_history),
                     )
                 except Exception:  # noqa: BLE001 — one pair must not kill the bot
                     print(f"[hermes] {pair} cycle {cycle} errored",
