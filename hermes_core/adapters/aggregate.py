@@ -316,7 +316,7 @@ class GoldApiSource(_BaseSource):
         super().__init__()
         self._client = client
         self._cache_ttl = 60.0  # daily update, but cache 60s to limit calls
-        self._min_interval = 5.0
+        self._min_interval = 1.0  # GoldAPI handles rapid calls (verified 24/24)
 
     async def fetch(self, pair: str) -> float | None:
         if pair == "XAU/USD":
@@ -327,12 +327,22 @@ class GoldApiSource(_BaseSource):
             return None
 
         async def _go() -> float | None:
-            client = self._get_client()
-            r = await client.get(self.URL.format(symbol=sym))
-            r.raise_for_status()
-            data = r.json()
-            price = data.get("price")
-            return float(price) if price is not None else None
+            # GoldAPI is reliable, but a cold-start TLS handshake in a fresh
+            # container can occasionally fail the first attempt. Retry a couple
+            # of times so metals don't flicker no_candle on container restart.
+            last_err: Exception | None = None
+            for _attempt in range(3):
+                try:
+                    client = self._get_client()
+                    r = await client.get(self.URL.format(symbol=sym))
+                    r.raise_for_status()
+                    data = r.json()
+                    price = data.get("price")
+                    if price is not None:
+                        return float(price)
+                except Exception as _e:  # noqa: BLE001 — fail-soft; [GUARD L61]
+                    last_err = _e
+            return None
 
         out = await self._cached(sym, _go)
         return out if isinstance(out, float) else None
