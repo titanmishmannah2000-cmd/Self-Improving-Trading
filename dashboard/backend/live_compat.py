@@ -104,66 +104,50 @@ def _read_jsonl(path: Path) -> list[dict]:
 # ----------------------------------------------------------------------------
 
 def _build_discovered(bot: str) -> dict:
-    sdir = _bot_state_dir(bot)
+    # Read from latest_state (SQLite) — the only cross-service channel. The bot
+    # pushes discovered as {"EUR/USD":[...], ...}; reshape to the tab schema.
     pairs: dict[str, list] = {}
-    deg: dict = {}
-    if sdir:
-        disc_dir = sdir / "discovered"
-        if disc_dir.exists():
-            # rglob catches both flat (EUR_USD.json) and nested (EUR/USD.json)
-            # naming the live bots use. Derive pair name from the relative path.
-            for f in sorted(disc_dir.rglob("*.json")):
-                rel = f.relative_to(disc_dir).with_suffix("")
-                pair_name = str(rel).replace(os.sep, "/")
-                try:
-                    data = json.loads(f.read_text(encoding="utf-8"))
-                except Exception:
-                    continue
-                inds = data if isinstance(data, list) else data.get("indicators", [])
-                if not isinstance(inds, list):
-                    continue
-                enriched = []
-                for ind in inds:
-                    if not isinstance(ind, dict):
-                        continue
-                    es = ind.get("expr_str", ind.get("expr", ""))
-                    enriched.append({
-                        "name": ind.get("name", "?"),
-                        "expr": es[:80],
-                        "fitness": round(float(ind.get("fitness", 0) or 0), 4),
-                        "win_rate": float(ind.get("win_rate", 0) or 0),
-                        "total_pnl": round(float(ind.get("total_pnl", 0) or 0), 4),
-                        "uses": [k for k in ["volume", "dxy", "vix", "tnx", "spx", "oil", "gold", "btc", "fvx", "eem"] if k in es],
-                        "discovered_at": ind.get("discovered_at", "unknown"),
-                        "source": ind.get("source", "seed"),
-                    })
-                if enriched:
-                    pairs[pair_name] = enriched
-        deg_file = sdir / "discovered" / "_live_deg.json"
-        if deg_file.exists():
-            try:
-                deg = json.loads(deg_file.read_text(encoding="utf-8"))
-            except Exception:
-                deg = {}
+    try:
+        from dashboard.backend.main import get_conn
+        conn = get_conn()
+        row = conn.execute(
+            "SELECT discovered_json FROM latest_state WHERE bot=?", (bot,)
+        ).fetchone()
+        conn.close()
+        if row and row["discovered_json"]:
+            raw = json.loads(row["discovered_json"])
+            if isinstance(raw, dict):
+                for pair, inds in raw.items():
+                    if isinstance(inds, list):
+                        pairs[pair] = inds
+    except Exception:
+        pass
     ensemble = {}
     for pair, inds in pairs.items():
         if not inds:
             ensemble[pair] = {"status": "no_indicators", "signal": 0}
             continue
-        tw = sum((i["fitness"] * i["win_rate"]) for i in inds if i["fitness"] > 0)
-        bw = sum((i["fitness"] * i["win_rate"]) for i in inds if i.get("win_rate", 0.5) > 0.5)
+        def _f(i, k):
+            try:
+                return float(i.get(k, 0) or 0)
+            except Exception:
+                return 0.0
+        tw = sum((_f(i, "fitness") * _f(i, "win_rate")) for i in inds if _f(i, "fitness") > 0)
+        bw = sum((_f(i, "fitness") * _f(i, "win_rate")) for i in inds if _f(i, "win_rate") > 0.5)
         signal = ((bw - (tw - bw)) / max(tw, 0.001))
         ensemble[pair] = {
             "signal": round(signal, 3),
             "num_indicators": len(inds),
-            "multi_dim": sum(1 for i in inds if i["uses"]),
-            "best_fitness": max((i["fitness"] for i in inds), default=0),
-            "best_wr": max((i["win_rate"] for i in inds), default=0),
+            "multi_dim": sum(1 for i in inds if any(
+                k in str(i.get("expr", "")) for k in
+                ["volume", "dxy", "vix", "tnx", "spx", "oil", "gold", "btc", "fvx", "eem"])),
+            "best_fitness": max((_f(i, "fitness") for i in inds), default=0),
+            "best_wr": max((_f(i, "win_rate") for i in inds), default=0),
         }
     return {
         "pairs": pairs,
         "ensemble": ensemble,
-        "degradation": deg,
+        "degradation": {},
         "total_indicators": sum(len(v) for v in pairs.values()),
         "total_pairs": len(pairs),
     }
@@ -174,41 +158,22 @@ def _build_discovered(bot: str) -> dict:
 # ----------------------------------------------------------------------------
 
 def _build_cortex(bot: str) -> dict:
-    sdir = _bot_state_dir(bot)
-    exile = {}
-    tracker = {}
-    policy = {}
-    if sdir:
-        cortex_dir = sdir / "cortex"
-        if cortex_dir.exists():
-            exile = _read_json(cortex_dir / "indicator_exile.json") or {}
-            tracker = _read_json(cortex_dir / "indicator_tracker.json") or {}
-            policy = _read_json(cortex_dir / "policy.json") or {}
-            if not isinstance(exile, dict):
-                exile = {}
-            if not isinstance(tracker, dict):
-                tracker = {}
-            if not isinstance(policy, dict):
-                policy = {}
-    exiled_names = list(exile.keys())
-    summary = {
-        "entries_total": len(tracker),
-        "entries_open": 0,
-        "exiled_indicators": len(exiled_names),
-        "indicators_tracked": len(tracker),
-        "by_entry_type": {},
-        "by_pair": {},
-        "version": policy.get("version", "?"),
-    }
-    return {
-        bot: {
-            "summary": summary,
-            "exiled": exiled_names,
-            "indicators": tracker,
-            "policy": policy,
-            "exile_detail": exile,
-        }
-    }
+    # Read from latest_state (SQLite). The bot pushes cortex as
+    # {bot:{summary,exiled,indicators,policy,exile_detail}} (the exile file).
+    try:
+        from dashboard.backend.main import get_conn
+        conn = get_conn()
+        row = conn.execute(
+            "SELECT cortex_json FROM latest_state WHERE bot=?", (bot,)
+        ).fetchone()
+        conn.close()
+        if row and row["cortex_json"]:
+            raw = json.loads(row["cortex_json"])
+            if isinstance(raw, dict) and raw.get(bot):
+                return {bot: raw[bot]}
+    except Exception:
+        pass
+    return {bot: {"summary": {}, "exiled": [], "indicators": {}, "policy": {}, "exile_detail": {}}}
 
 
 # ----------------------------------------------------------------------------
@@ -216,11 +181,19 @@ def _build_cortex(bot: str) -> dict:
 # ----------------------------------------------------------------------------
 
 def _build_heartbeat(bot: str) -> dict:
-    sdir = _bot_state_dir(bot)
-    if sdir:
-        hb = _read_json(sdir / f"heartbeat_{bot}.json") or _read_json(sdir / "heartbeat.json")
-        if hb:
-            return hb
+    # Read from latest_state (SQLite) — the only cross-service channel (each
+    # Railway service has its own /data volume, so file reads were stale).
+    try:
+        from dashboard.backend.main import get_conn
+        conn = get_conn()
+        row = conn.execute(
+            "SELECT heartbeat_json FROM latest_state WHERE bot=?", (bot,)
+        ).fetchone()
+        conn.close()
+        if row and row["heartbeat_json"]:
+            return json.loads(row["heartbeat_json"])
+    except Exception:
+        pass
     return {}
 
 

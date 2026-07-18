@@ -75,19 +75,33 @@ def _push_state(bot: str, cfg: dict, cycle: int) -> None:
     client = _get_client()
     if client is None:
         return
+    # Real runtime state lives where the loop writes it (HERMES_STATE_ROOT
+    # volume, per-bot) — heartbeat/trades/skips below.
     sdir = Path(get_env("HERMES_STATE_ROOT", str(Path(__file__).resolve().parents[2]))) / bot / "state"
-    try:
-        discovered = json.loads((sdir / "discovered.json").read_text(encoding="utf-8")) if (sdir / "discovered.json").exists() else {}
-    except Exception:
-        discovered = {}
-    try:
-        cortex = json.loads((sdir / "cortex.json").read_text(encoding="utf-8")) if (sdir / "cortex.json").exists() else {}
-    except Exception:
-        cortex = {}
     try:
         heartbeat = json.loads((sdir / "heartbeat.json").read_text(encoding="utf-8")) if (sdir / "heartbeat.json").exists() else {}
     except Exception:
         heartbeat = {}
+    # Discovered + cortex are written by the genetic/cortex engines under
+    # repo_root()/state/{discovered,cortex}/ (NOT under the per-bot dir), so
+    # read them from there and shape them for the dashboard's tab schema.
+    rr = Path(__file__).resolve().parents[2]  # repo root (/app on Railway)
+    discovered: dict = {}
+    ddir = rr / "state" / "discovered"
+    if ddir.exists():
+        for f in ddir.glob("*.json"):
+            pair = f.stem.replace("_", "/")
+            try:
+                discovered[pair] = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+    cortex: dict = {}
+    cfile = rr / "state" / "cortex" / "indicator_exile.json"
+    if cfile.exists():
+        try:
+            cortex[bot] = json.loads(cfile.read_text(encoding="utf-8"))
+        except Exception:
+            cortex = {}
     # recent trades / skips from the jsonl the loop appends
     def _read_jsonl(name: str, limit: int = 200):
         p = sdir / name
