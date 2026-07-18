@@ -83,10 +83,13 @@ def _push_state(bot: str, cfg: dict, cycle: int) -> None:
     except Exception:
         heartbeat = {}
     # Discovered + cortex are written by the genetic/cortex engines under
-    # repo_root()/state/{discovered,cortex}/ (NOT under the per-bot dir), so
-    # read them from there. /api/discovered expects a flat {pair:[inds]} map
+    # repo_root()/state/{discovered,cortex}/. Use the SAME repo_root() the
+    # engines use (from hermes_core.config) so the read path matches the write
+    # path even under a non-editable install (where __file__ parents[2] !=
+    # the package root). /api/discovered expects a flat {pair:[inds]} map
     # (it iterates discovered_json.items() directly), so keep it flat here.
-    rr = Path(__file__).resolve().parents[2]  # repo root (/app on Railway)
+    from hermes_core.config import repo_root
+    rr = repo_root()
     discovered_pairs: dict = {}
     ddir = rr / "state" / "discovered"
     if ddir.exists():
