@@ -199,8 +199,10 @@ def _discovery_loop(bot: str, pairs: list[str], stop: threading.Event) -> None:
     """Background periodic GP discovery (decoupled from the heartbeat cycle).
 
     Runs _maybe_discover for each pair on its own interval so a slow price API
-    or heavy GP evolution can NEVER stall the trade loop. Fully fail-soft.
+    or heavy GP evolution can NEVER stall the trade loop. Fully fail-soft but
+    logs results so discovery activity is observable in the bot's stdout.
     """
+    from hermes_core.engines.genetic import load_discovered_indicators
     interval = max(int(get_env("DISCOVERY_INTERVAL_S", "3600")), 60)
     # Run an immediate first pass shortly after startup, then every `interval`.
     while not stop.is_set():
@@ -210,7 +212,12 @@ def _discovery_loop(bot: str, pairs: list[str], stop: threading.Event) -> None:
             try:
                 from hermes_core.engines.loop import _maybe_discover
                 _maybe_discover(bot, pair)
-            except Exception:  # noqa: BLE001 — never let discovery kill the bot
+                n = len(load_discovered_indicators(pair))
+                print(f"[hermes][discovery] {bot}/{pair}: discovered={n}",
+                      flush=True)
+            except Exception as exc:  # noqa: BLE001 — never let discovery kill the bot
+                print(f"[hermes][discovery] {bot}/{pair}: ERROR {exc!r}",
+                      file=sys.stderr, flush=True)
                 continue
         stop.wait(interval)
 
