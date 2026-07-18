@@ -195,6 +195,26 @@ def _push_prices_threaded(bot: str, prices: dict[str, float]) -> None:
     threading.Thread(target=_push_prices, args=(bot, prices), daemon=True).start()
 
 
+def _discovery_loop(bot: str, pairs: list[str], stop: threading.Event) -> None:
+    """Background periodic GP discovery (decoupled from the heartbeat cycle).
+
+    Runs _maybe_discover for each pair on its own interval so a slow price API
+    or heavy GP evolution can NEVER stall the trade loop. Fully fail-soft.
+    """
+    interval = max(int(get_env("DISCOVERY_INTERVAL_S", "3600")), 60)
+    # Run an immediate first pass shortly after startup, then every `interval`.
+    while not stop.is_set():
+        for pair in pairs:
+            if stop.is_set():
+                return
+            try:
+                from hermes_core.engines.loop import _maybe_discover
+                _maybe_discover(bot, pair)
+            except Exception:  # noqa: BLE001 — never let discovery kill the bot
+                continue
+        stop.wait(interval)
+
+
 async def run_bot(bot_name: str) -> None:
     load_env()  # apply .env (fail-soft) before anything reads keys
     # Bot-name resolution precedence: CLI override (argv[1]) > explicit call arg
@@ -220,6 +240,11 @@ async def run_bot(bot_name: str) -> None:
             await aggregator.connect()
 
     cycle = 0
+    _stop = threading.Event()
+    # Background GP discovery — fully decoupled from the heartbeat cycle.
+    _disc = threading.Thread(target=_discovery_loop, args=(bot, pairs, _stop),
+                             daemon=True)
+    _disc.start()
     try:
         while True:
             cycle += 1
@@ -249,6 +274,7 @@ async def run_bot(bot_name: str) -> None:
                 _push_state(bot, cfg, cycle)
             await asyncio.sleep(cycle_seconds)
     finally:
+        _stop.set()
         if aggregator is not None:
             with contextlib.suppress(Exception):
                 await aggregator.aclose()

@@ -176,10 +176,11 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None) -> N
         gp_discover(pair, series)
 
     # Bound the work so a slow network/price API can't stall the trade loop.
+    # Discovery now runs in its own background thread, so a generous cap is safe.
     try:
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=1) as ex:
-            ex.submit(_work).result(timeout=12)
+            ex.submit(_work).result(timeout=60)
     except Exception:
         return
     _DISCOVERY_LAST[key] = time.time()
@@ -284,17 +285,9 @@ def run_cycle(
         health_registry["indicators"] = True
         regimes[pair] = ind.get("regime", "range")  # 'trend'|'range' for dashboard
 
-        # --- throttled GP discovery (fail-soft; never breaks the loop) ------
-        # Evolve + admit indicators for this pair into state/discovered/{pair}.json.
-        # Throttled per (bot, pair) by DISCOVERY_INTERVAL_S so it runs ~hourly
-        # (or on first run when no discovered file exists yet).
-        try:
-            _maybe_discover(bot, pair, prices)
-        except Exception:  # noqa: BLE001
-            health_registry["discovery"] = False
-            traceback.print_exc()
-        else:
-            health_registry["discovery"] = True
+        # NOTE: GP discovery is intentionally NOT called here. It is a slow,
+        # network-backed, periodic job (see _runner._discovery_loop) that runs
+        # on its own scheduler so it can never stall the heartbeat cycle.
 
         # --- load strategy + param-range gate (L40) -------------------------
         try:
