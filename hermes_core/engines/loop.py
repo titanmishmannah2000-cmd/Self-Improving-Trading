@@ -186,11 +186,15 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None) -> N
         # is explicit that 5m/next-candle "almost never clear, by design" —
         # only the daily/long-horizon objective produces predictive structure.
         # We keep the live trade loop on 5m; discovery uses daily history.
-        from hermes_core.adapters import seed_history_interval_sync
+        import logging as _logging
+        _log = _logging.getLogger("hermes.discovery")
+        from hermes_core.adapters.price import seed_history_interval_sync
         hist = seed_history_interval_sync(pair, interval="1d", period="2y",
                                           max_candles=500)
         series = [c["price"] for c in (hist or [])] or (prices or [])
+        _log.info("[discovery] %s: fetched %d daily candles for GP", pair, len(series))
         if len(series) < 200:
+            _log.warning("[discovery] %s: <200 daily candles, GP skipped", pair)
             return
         gp_discover(pair, series, horizon=60, generations=40, pop_size=40)
 
@@ -200,7 +204,10 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None) -> N
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=1) as ex:
             ex.submit(_work).result(timeout=60)
-    except Exception:
+    except Exception as _exc:  # surface the real reason instead of silent drop
+        import logging as _logging
+        _logging.getLogger("hermes.discovery").warning(
+            "[discovery] %s/%s: error -> %s", bot, pair, _exc)
         return
     _DISCOVERY_LAST[key] = time.time()
 
