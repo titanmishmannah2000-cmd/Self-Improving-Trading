@@ -539,8 +539,14 @@ class PriceAggregator:
         except Exception:  # noqa: BLE001 — fail-soft; [GUARD L61]
             return self._last_good.get(pair)
         if candle is None:
+            if pair == "XAG/USD":  # TEMP DIAG
+                print(f"[DIAG fetch_fn XAG] candle=None, last_good={self._last_good.get('XAG/USD') is not None}",
+                      file=__import__("sys").stderr, flush=True)
             return None
         if (time.time() - float(candle.get("ts", 0))) > self.stale_s:
+            if pair == "XAG/USD":  # TEMP DIAG
+                print(f"[DIAG fetch_fn XAG] stale reject ts={candle.get('ts')}",
+                      file=__import__("sys").stderr, flush=True)
             return None  # [L01] stale
         return candle
 
