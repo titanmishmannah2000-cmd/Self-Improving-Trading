@@ -332,9 +332,6 @@ class GoldApiSource(_BaseSource):
             r.raise_for_status()
             data = r.json()
             price = data.get("price")
-            if price is not None:  # TEMP DIAG
-                print(f"[DIAG goldapi {sym}] OK price={price}",
-                      file=__import__("sys").stderr, flush=True)
             return float(price) if price is not None else None
 
         out = await self._cached(sym, _go)
@@ -349,6 +346,12 @@ class YfinanceSource(_BaseSource):
     _min_interval = 1.0
 
     async def fetch(self, pair: str) -> float | None:
+        # yfinance live gold/silver (XAU=F/XAG=F) returns stale + inconsistent
+        # values (e.g. 915 alongside 4004) that pollute the live consensus.
+        # GoldAPI.io is the authoritative free live source for metals; yfinance
+        # is still used for metals HISTORY seeding (seed_history_fn -> _yf_history).
+        if pair in ("XAU/USD", "XAG/USD"):
+            return None
         # yfinance is async under the hood; calling its sync wrapper from inside
         # our aggregator's asyncio.run nests event loops -> "coroutine never
         # awaited". Run it in a worker thread with its own loop. [GUARD L61]
@@ -474,9 +477,6 @@ class PriceAggregator:
             # stream not warm yet -> fall through to sources (none cover crypto)
 
         prices, any_up = await self._poll(pair)
-        if pair in ("XAU/USD", "XAG/USD"):  # TEMP DIAG
-            print(f"[DIAG _fetch_async {pair}] prices={prices} any_up={any_up}",
-                  file=__import__("sys").stderr, flush=True)
         if not prices:
             # [GUARD L61] all sources down -> fail soft, serve last-good if fresh
             return self._last_good.get(pair)
@@ -536,10 +536,7 @@ class PriceAggregator:
             # first fetch, so each loop gets clients bound to IT (no cross-loop
             # reuse, no shared-client races). [GUARD L61]
             candle = asyncio.run(self._fetch_async(pair))
-        except Exception as _e:  # noqa: BLE001 — fail-soft; [GUARD L61]
-            if pair in ("XAU/USD", "XAG/USD"):  # TEMP DIAG
-                print(f"[DIAG fetch_fn {pair}] EXC {type(_e).__name__}: {str(_e)[:120]}",
-                      file=__import__("sys").stderr, flush=True)
+        except Exception:  # noqa: BLE001 — fail-soft; [GUARD L61]
             return self._last_good.get(pair)
         if candle is None:
             return None
