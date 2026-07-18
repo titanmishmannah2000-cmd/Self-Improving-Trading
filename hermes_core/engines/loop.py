@@ -203,6 +203,7 @@ def run_cycle(
     reentry: dict | None = None,
     oversold_pairs: int = 0,
     vol_above: bool = False,
+    history_fn: Callable[[str], object] | None = None,
     consecutive_failures: int = 0,
     alert_fn: Callable[[str, str, str, float], object] | None = None,
 ) -> dict:
@@ -270,11 +271,20 @@ def run_cycle(
         last_price = price
         summary["prices"][pair] = price  # live price snapshot for dashboard push
 
-        # seeded price history for indicators (fail-soft)
+        # seeded price history for indicators (fail-soft).
+        # Prefer history_fn (real multi-candle series via the adapters'
+        # seed_history, which pulls a genuine series for FX/metals). The
+        # aggregate fetch_fn(":history") only returns the last tick for
+        # FX/metals, which makes indicators degenerate -> bot can't trade.
+        # Fall back to fetch_fn(":history"), then a single price.
         try:
-            prices = [c["price"] for c in (fetch_fn(pair + ":history") or [])]
+            if history_fn is not None:
+                hist = history_fn(pair)
+            else:
+                hist = fetch_fn(pair + ":history")
+            prices = [c["price"] for c in (hist or [])]
         except Exception:  # noqa: BLE001
-            prices = [price]
+            prices = []
         if not prices:
             prices = [price]
         try:

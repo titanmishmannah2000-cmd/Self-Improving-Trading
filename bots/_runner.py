@@ -43,7 +43,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-from hermes_core.adapters import make_aggregator_fetch, make_default_fetch
+from hermes_core.adapters import make_aggregator_fetch, make_default_fetch, seed_history
 from hermes_core.config.loader import load_config, load_strategy_for_pair
 from hermes_core.engines.loop import run_cycle
 from hermes_core.env import get_env, load_env
@@ -308,6 +308,7 @@ async def run_bot(bot_name: str) -> None:
                         run_cycle, bot, cycle, fetch_fn=fetch_fn,
                         open_positions=open_positions, reentry=reentry,
                         oversold_pairs=oversold_pairs, vol_above=vol_above,
+                        history_fn=seed_history,
                     )
                 except Exception:  # noqa: BLE001 — one pair must not kill the bot
                     print(f"[hermes] {pair} cycle {cycle} errored",
