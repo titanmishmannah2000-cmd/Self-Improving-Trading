@@ -153,7 +153,10 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None) -> N
     Runs when no discovered file exists yet, or at most once per
     DISCOVERY_INTERVAL_S of wall-clock per (bot, pair). Persists admitted
     indicators to state/discovered/{pair}.json (read by the dashboard).
-    Fail-soft: any error is swallowed by the caller.
+
+    CRITICAL: discovery does network + GP evolution and must NEVER block the
+    heartbeat cycle. The heavy work runs in a thread with a hard timeout; if it
+    stalls, the cycle proceeds and the next attempt retries. Fail-soft.
     """
     from hermes_core.adapters import seed_history
     from hermes_core.engines.genetic import load_discovered_indicators
@@ -162,21 +165,24 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None) -> N
     if key in _DISCOVERY_LAST and (now - _DISCOVERY_LAST[key]) < DISCOVERY_INTERVAL_S:
         return
     if load_discovered_indicators(pair):
-        # already discovered recently enough; just refresh the throttle timer
-        _DISCOVERY_LAST[key] = now
+        _DISCOVERY_LAST[key] = now  # fresh enough; refresh throttle only
         return
-    # Fetch price history via the dedicated seed_history API (the generic
-    # fetch_fn(":history") suffix returns nothing for the default backend).
-    if not prices or len(prices) < 40:
-        try:
-            hist = seed_history(pair, max_candles=300)
-            prices = [c["price"] for c in (hist or [])]
-        except Exception:
-            prices = []
-    if len(prices or []) < 40:
+
+    def _work() -> None:
+        hist = seed_history(pair, max_candles=300)
+        series = [c["price"] for c in (hist or [])] or (prices or [])
+        if len(series) < 40:
+            return
+        gp_discover(pair, series)
+
+    # Bound the work so a slow network/price API can't stall the trade loop.
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_work).result(timeout=12)
+    except Exception:
         return
-    gp_discover(pair, prices)
-    _DISCOVERY_LAST[key] = now
+    _DISCOVERY_LAST[key] = time.time()
 
 
 def run_cycle(
