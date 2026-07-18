@@ -332,6 +332,9 @@ class GoldApiSource(_BaseSource):
             r.raise_for_status()
             data = r.json()
             price = data.get("price")
+            if price is not None:  # TEMP DIAG
+                print(f"[DIAG goldapi {sym}] OK price={price}",
+                      file=__import__("sys").stderr, flush=True)
             return float(price) if price is not None else None
 
         out = await self._cached(sym, _go)
