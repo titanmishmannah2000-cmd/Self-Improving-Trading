@@ -333,7 +333,12 @@ class GoldApiSource(_BaseSource):
             price = data.get("price")
             return float(price) if price is not None else None
 
-        out = await self._cached(sym, _go)
+        try:
+            out = await self._cached(sym, _go)
+        except Exception as _e:  # TEMP DIAG
+            print(f"[DIAG goldapi {sym}] {type(_e).__name__}: {str(_e)[:120]}",
+                  file=__import__("sys").stderr, flush=True)
+            out = None
         return out if isinstance(out, float) else None
 
 
