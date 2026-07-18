@@ -112,14 +112,15 @@ class _BaseSource:
     _min_interval: float = 1.0
 
     def __init__(self) -> None:
-        self._client: httpx.AsyncClient | None = None
         self._cache: dict[str, tuple[float, object]] = {}
         self._last_call_ts: float = 0.0
 
     def _get_client(self) -> httpx.AsyncClient:
-        if self._client is None:
-            self._client = httpx.AsyncClient(timeout=SOURCE_TIMEOUT)
-        return self._client
+        # The aggregator runs a FRESH asyncio loop per fetch_fn call
+        # (asyncio.run), so a cached client would be bound to a CLOSED loop
+        # -> "Event loop is closed" on later cycles. Create a fresh client
+        # each call so it binds to the current loop. [GUARD L61]
+        return httpx.AsyncClient(timeout=SOURCE_TIMEOUT)
 
     async def _cached(self, key: str, fetcher: Callable[[], object]) -> object:
         """Return a cached value if fresh; else call `fetcher`, cache + space it.
@@ -327,25 +328,13 @@ class GoldApiSource(_BaseSource):
 
         async def _go() -> float | None:
             client = self._get_client()
-            try:  # TEMP DIAG
-                r = await client.get(self.URL.format(symbol=sym))
-                print(f"[DIAG goldapi {sym}] status={r.status_code} body={r.text[:120]}",
-                      file=__import__("sys").stderr, flush=True)
-                r.raise_for_status()
-                data = r.json()
-                price = data.get("price")
-                return float(price) if price is not None else None
-            except Exception as _e:  # TEMP DIAG
-                print(f"[DIAG goldapi {sym}] ERR {type(_e).__name__}: {str(_e)[:120]}",
-                      file=__import__("sys").stderr, flush=True)
-                raise
+            r = await client.get(self.URL.format(symbol=sym))
+            r.raise_for_status()
+            data = r.json()
+            price = data.get("price")
+            return float(price) if price is not None else None
 
-        try:
-            out = await self._cached(sym, _go)
-        except Exception as _e:  # TEMP DIAG
-            print(f"[DIAG goldapi {sym}] {type(_e).__name__}: {str(_e)[:120]}",
-                  file=__import__("sys").stderr, flush=True)
-            out = None
+        out = await self._cached(sym, _go)
         return out if isinstance(out, float) else None
 
 
