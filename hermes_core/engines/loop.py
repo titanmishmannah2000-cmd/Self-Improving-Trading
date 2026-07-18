@@ -147,7 +147,7 @@ def _discovered_indicator_ids(bot: str, pair: str) -> list[str]:
         return []
 
 
-def _maybe_discover(bot: str, pair: str, prices: list[float]) -> None:
+def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None) -> None:
     """Throttled GP discovery for one pair.
 
     Runs when no discovered file exists yet, or at most once per
@@ -155,6 +155,7 @@ def _maybe_discover(bot: str, pair: str, prices: list[float]) -> None:
     indicators to state/discovered/{pair}.json (read by the dashboard).
     Fail-soft: any error is swallowed by the caller.
     """
+    from hermes_core.adapters import seed_history
     from hermes_core.engines.genetic import load_discovered_indicators
     now = time.time()
     key = (bot, pair)
@@ -164,7 +165,15 @@ def _maybe_discover(bot: str, pair: str, prices: list[float]) -> None:
         # already discovered recently enough; just refresh the throttle timer
         _DISCOVERY_LAST[key] = now
         return
-    if len(prices) < 40:
+    # Fetch price history via the dedicated seed_history API (the generic
+    # fetch_fn(":history") suffix returns nothing for the default backend).
+    if not prices or len(prices) < 40:
+        try:
+            hist = seed_history(pair, max_candles=300)
+            prices = [c["price"] for c in (hist or [])]
+        except Exception:
+            prices = []
+    if len(prices or []) < 40:
         return
     gp_discover(pair, prices)
     _DISCOVERY_LAST[key] = now
