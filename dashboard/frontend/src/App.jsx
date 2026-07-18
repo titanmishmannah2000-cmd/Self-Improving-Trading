@@ -15,7 +15,7 @@ const DiscoveredView = lazy(() => import("./DiscoveredView.jsx"));
 const AuditView = lazy(() => import("./AuditView.jsx"));
 const CortexView = lazy(() => import("./CortexView.jsx"));
 
-const TAB_KEYS = ["live", "activity", "reports", "discovered", "cortex", "audit", "alerts"];
+const TAB_KEYS = ["live", "activity", "reports", "discovered", "cortex", "audit", "alerts", "heartbeat", "flatline"];
 
 // ───────────────────────────── Config ─────────────────────────────
 const POLL_MS = 15000;
@@ -1353,6 +1353,71 @@ function VersionView({ perVersion }) {
   );
 }
 
+// ───────────────────────── Heartbeat + Flatline (restored from original) ─────────────────────────
+
+function useJson(url) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    let dead = false;
+    fetch(url).then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+      .then(d => { if (!dead) { setData(d); setError(null); } })
+      .catch(e => { if (!dead) setError(e.message); });
+    return () => { dead = true; };
+  }, [url]);
+  return { data, error };
+}
+
+function HeartbeatView({ apiBase }) {
+  const bots = ["forex", "gold", "crypto"];
+  return (
+    <div className="heartbeat-view">
+      <div className="dc-label">Heartbeat — last-sent bot state (signal, regime, cycle)</div>
+      <div className="hb-grid">
+        {bots.map(bot => {
+          const { data, error } = useJson(`${apiBase}/api/heartbeat/${bot}`);
+          return (
+            <div className="hb-card" key={bot}>
+              <div className="hb-bot">{bot}</div>
+              {error && <div className="detail-muted">error: {error}</div>}
+              {!error && !data && <div className="detail-muted">loading…</div>}
+              {data && (
+                <pre className="hb-json">{JSON.stringify(data, null, 2)}</pre>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function FlatlineView({ apiBase }) {
+  const bots = ["forex", "gold", "crypto"];
+  return (
+    <div className="flatline-view">
+      <div className="dc-label">Flatline — pairs the bot stopped trading (stale signal / no entries)</div>
+      {bots.map(bot => {
+        const { data, error } = useJson(`${apiBase}/api/flatline/${bot}`);
+        return (
+          <div className="fl-bot" key={bot}>
+            <div className="fl-bot-head">{bot}</div>
+            {error && <div className="detail-muted">error: {error}</div>}
+            {!error && !data && <div className="detail-muted">loading…</div>}
+            {data && (data.length === 0
+              ? <div className="detail-muted">no flatlined pairs</div>
+              : <ul className="fl-log">
+                  {data.slice(-50).reverse().map((row, i) => (
+                    <li key={i}>{JSON.stringify(row)}</li>
+                  ))}
+                </ul>)}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ───────────────────────────── App ─────────────────────────────
 
 export default function App() {
@@ -1515,7 +1580,7 @@ export default function App() {
         </div>
         <div className="app-status">
           <div className="view-toggle" role="tablist" aria-label="Dashboard sections">
-            {["live","activity","reports","discovered","cortex","audit","alerts"].map((tab) => {
+            {["live","activity","reports","discovered","cortex","audit","alerts","heartbeat","flatline"].map((tab) => {
               const label = tab.charAt(0).toUpperCase() + tab.slice(1);
               const isActive = view === tab;
               return (
@@ -1677,6 +1742,12 @@ export default function App() {
       </div>
       <div className={`tab-panel ${view === "audit" ? "tab-active" : "tab-hidden"}`}>
         <Suspense fallback={<SkeletonCard />}><AuditView apiBase={API_BASE} isActive={view === "audit"} /></Suspense>
+      </div>
+      <div className={`tab-panel ${view === "heartbeat" ? "tab-active" : "tab-hidden"}`}>
+        <HeartbeatView apiBase={API_BASE} />
+      </div>
+      <div className={`tab-panel ${view === "flatline" ? "tab-active" : "tab-hidden"}`}>
+        <FlatlineView apiBase={API_BASE} />
       </div>
       {view === "alerts" ? (
         <AlertsView alerts={alerts} dismiss={dismiss} />

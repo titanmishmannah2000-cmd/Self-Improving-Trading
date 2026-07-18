@@ -213,57 +213,23 @@ def _build_heartbeat(bot: str) -> dict:
     return {}
 
 
-# ----------------------------------------------------------------------------
-# /api/price/{bot}  POST {prices:{pair:price}}  /  GET -> {pair:{price,ts}}
-# Prices are persisted to a jsonl so the dashboard survives restarts and the
-# live-pipeline contract (bots push prices here) is honoured.
-# ----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# /api/flatline/{bot}  ->  list of flatline events (from flatline_log.jsonl)
+# Faithful to the original dashboard backend, which read these state files.
+# ---------------------------------------------------------------------------
 
-_PRICE_LOCK = None  # set by register()
-
-def _price_store_path(bot: str) -> Path:
-    sdir = _bot_state_dir(bot) or (Path("/tmp") / "hermes_prices")
-    sdir.mkdir(parents=True, exist_ok=True)
-    return sdir / f"live_prices_{bot}.json"
-
-
-def _post_price(bot: str, payload: dict) -> dict:
-    prices = payload.get("prices") or {}
-    if not isinstance(prices, dict):
-        return {"status": "ignored", "reason": "no prices"}
-    ts = payload.get("ts") or _utcnow()
-    store = {}
-    for pair, price in prices.items():
-        try:
-            store[pair] = {"price": float(price), "ts": ts}
-        except (TypeError, ValueError):
-            continue
-    path = _price_store_path(bot)
-    try:
-        path.write_text(json.dumps(store), encoding="utf-8")
-    except Exception:
-        pass
-    return {"status": "received", "bot": bot, "count": len(store)}
+def _build_flatline(bot: str) -> list[dict]:
+    sdir = _bot_state_dir(bot)
+    if sdir:
+        f = sdir / "flatline_log.jsonl"
+        if f.exists():
+            return _read_jsonl(f)
+    return []
 
 
-def _get_price(bot: str) -> dict:
-    path = _price_store_path(bot)
-    data = _read_json(path)
-    return data if isinstance(data, dict) else {}
-
-
-# ----------------------------------------------------------------------------
-# helpers reused from main
-# ----------------------------------------------------------------------------
-
-def _utcnow() -> str:
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).isoformat()
-
-
-# ----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Registration — must run BEFORE base routes are defined so these win.
-# ----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 def register(app, ingest_token_getter, valid_bots):
     """Register compat routes on the FastAPI app.
@@ -277,6 +243,36 @@ def register(app, ingest_token_getter, valid_bots):
         tok = ingest_token_getter()
         if tok and request.headers.get("X-Ingest-Token", "") != tok:
             raise HTTPException(401, "Invalid or missing ingest token")
+
+    _PRICE_LOCK = None  # unused placeholder for parity with prior layout
+
+    def _price_store_path(bot: str) -> Path:
+        sdir = _bot_state_dir(bot) or (Path("/tmp") / "hermes_prices")
+        sdir.mkdir(parents=True, exist_ok=True)
+        return sdir / f"live_prices_{bot}.json"
+
+    def _post_price(bot: str, payload: dict) -> dict:
+        prices = payload.get("prices") or {}
+        if not isinstance(prices, dict):
+            return {"status": "ignored", "reason": "no prices"}
+        ts = payload.get("ts") or _utcnow()
+        store = {}
+        for pair, price in prices.items():
+            try:
+                store[pair] = {"price": float(price), "ts": ts}
+            except (TypeError, ValueError):
+                continue
+        path = _price_store_path(bot)
+        try:
+            path.write_text(json.dumps(store), encoding="utf-8")
+        except Exception:
+            pass
+        return {"status": "received", "bot": bot, "count": len(store)}
+
+    def _get_price(bot: str) -> dict:
+        path = _price_store_path(bot)
+        data = _read_json(path)
+        return data if isinstance(data, dict) else {}
 
     @app.get("/api/discovered")
     def compat_discovered():
@@ -311,6 +307,12 @@ def register(app, ingest_token_getter, valid_bots):
         if bot_name not in valid_bots:
             return {}
         return _build_heartbeat(bot_name)
+
+    @app.get("/api/flatline/{bot_name}")
+    def compat_flatline(bot_name: str):
+        if bot_name not in valid_bots:
+            return []
+        return _build_flatline(bot_name)
 
     @app.post("/api/price/{bot_name}")
     async def compat_price_post(bot_name: str, request: Request):

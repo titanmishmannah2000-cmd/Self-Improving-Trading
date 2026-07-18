@@ -994,6 +994,16 @@ body {
 .tab-panel { display: block; }
 .tab-hidden { display: none; }
 
+/* ───────── Heartbeat + Flatline (restored) ───────── */
+.heartbeat-view, .flatline-view { padding: 18px 0; }
+.hb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 10px; }
+.hb-card, .fl-bot { background: var(--panel, #161a22); border: 1px solid var(--border, #262b36); border-radius: 12px; padding: 14px; }
+.hb-bot, .fl-bot-head { font-weight: 700; font-size: 14px; margin-bottom: 8px; color: var(--accent, #8ab4ff); text-transform: capitalize; }
+.hb-json, .fl-log { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; color: var(--ghost-strong, #a8afbd); margin: 0; max-height: 360px; overflow: auto; }
+.fl-log { list-style: none; padding: 0; }
+.fl-log li { padding: 4px 0; border-bottom: 1px solid var(--border, #262b36); }
+.fl-bot { margin-bottom: 14px; }
+
 /* ───────── Pair card trade indicator ───────── */
 
 .pair-card-in-trade {
