@@ -380,24 +380,57 @@ def test_rebuild():
 
 @app.get("/api/spark")
 def spark(pair: str, bars: int = 30):
-    """Return last N closing prices for a pair sparkline. Data from yfinance."""
+    """Return last N closing prices for a pair sparkline.
+
+    Primary source: yfinance. Fallback: the bot's own rolling live-price
+    history (pushed each cycle via the heartbeat) — this covers pairs whose
+    yfinance ticker is unreliable (e.g. gold XAU/USD, silver XAG/USD).
+    """
+    # Fallback helper: pull the bot's rolling price history for this pair.
+    bot_for_pair = None
+    for _b in VALID_BOTS:
+        try:
+            row = get_conn().execute(
+                "SELECT heartbeat_json FROM latest_state WHERE bot=?", (_b,)
+            ).fetchone()
+            if row and row["heartbeat_json"]:
+                hb = json.loads(row["heartbeat_json"])
+                ph = hb.get("price_history", {}) or {}
+                if pair in ph and len(ph[pair]) >= 2:
+                    bot_for_pair = _b
+                    break
+        except Exception:
+            continue
     ticker = PAIR_TICKERS.get(pair)
-    if not ticker:
-        raise HTTPException(404, f"Unknown pair '{pair}'")
-    try:
-        import yfinance as yf
-        import warnings
-        warnings.filterwarnings("ignore")
-        df = yf.download(ticker, period="3d", interval="5m", progress=False, auto_adjust=True)
-        if df is None or len(df) == 0:
-            return {"prices": []}
-        if hasattr(df.columns, "levels"):
-            df.columns = df.columns.get_level_values(0)
-        df = df.dropna(subset=["Close"])
-        prices = df["Close"].tail(bars).tolist()
-        return {"pair": pair, "prices": [round(p, 5) for p in prices]}
-    except Exception as e:
-        return {"pair": pair, "prices": [], "error": str(e)}
+    if ticker:
+        try:
+            import yfinance as yf
+            import warnings
+            warnings.filterwarnings("ignore")
+            df = yf.download(ticker, period="3d", interval="5m", progress=False, auto_adjust=True)
+            if df is not None and len(df) > 0:
+                if hasattr(df.columns, "levels"):
+                    df.columns = df.columns.get_level_values(0)
+                df = df.dropna(subset=["Close"])
+                prices = df["Close"].tail(bars).tolist()
+                if len(prices) >= 2:
+                    return {"pair": pair, "prices": [round(p, 5) for p in prices]}
+        except Exception:
+            pass
+    # Fallback to the bot's rolling live-price history.
+    if bot_for_pair:
+        try:
+            row = get_conn().execute(
+                "SELECT heartbeat_json FROM latest_state WHERE bot=?", (bot_for_pair,)
+            ).fetchone()
+            if row and row["heartbeat_json"]:
+                hb = json.loads(row["heartbeat_json"])
+                ph = (hb.get("price_history", {}) or {}).get(pair, [])
+                if len(ph) >= 2:
+                    return {"pair": pair, "prices": [round(float(p), 5) for p in ph[-bars:]]}
+        except Exception:
+            pass
+    return {"pair": pair, "prices": []}
 
 
 @app.post("/api/ingest/{bot_name}")
@@ -639,6 +672,8 @@ def overview():
             "strategy": strategy,
             "goal": json.loads(state_row["goal_json"]) if state_row and state_row["goal_json"] else None,
             "heartbeat": heartbeat,
+            "prices": heartbeat.get("prices", {}) if isinstance(heartbeat, dict) else {},
+            "price_history": heartbeat.get("price_history", {}) if isinstance(heartbeat, dict) else {},
             "_received_at": state_row["received_at"] if state_row else None,
             "recent_trades": [row_to_trade(r) for r in reversed(trades)],
             "recent_open_trades": open_trades,

@@ -179,8 +179,11 @@ function fmtPct(n) {
 
 function fmtPrice(n, pair) {
   if (n === null || n === undefined) return "—";
+  // Metals + USDT pairs are large numbers -> show 2 decimals with thousands sep.
+  if (pair?.includes("XAU") || pair?.includes("XAG") || pair?.includes("USDT"))
+    return `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   if (pair?.includes("JPY")) return Number(n).toFixed(3);
-  if (pair?.includes("/USDT")) return `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  if (pair?.includes("/USD")) return `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   return Number(n).toFixed(5);
 }
 
@@ -338,7 +341,7 @@ function FilterChain({ strategy_type, lastSkip }) {
 
 // ───────────────────────── Pair card ─────────────────────────
 
-function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPaused }) {
+function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPaused, livePrice }) {
   const meta = PAIR_META[pair] || {};
   const trades = data?.trades || [];
   const openTrade = trades.find((t) => t.exit_reason == null || t.exit_reason === undefined || t.exit_reason === "");
@@ -423,6 +426,8 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
       <div className="pc-indicators">
         <span className="pc-ind-label">Regime</span>
         <span className="pc-ind-val" style={{ color: regimeColor(regime) }}>{regime || "—"}</span>
+        <span className="pc-ind-label">Price</span>
+        <span className="pc-ind-val pc-price">{livePrice !== undefined && livePrice !== null ? fmtPrice(livePrice, pair) : "—"}</span>
       </div>
 
       <FilterChain strategy_type={strategy} lastSkip={!openTrade ? lastSkip : null} />
@@ -1543,9 +1548,13 @@ export default function App() {
 
   const pairData = {};
   const liveRegimes = {};
+  const livePrices = {};
   for (const bot of Object.values(overview?.bots || {})) {
     const regimes = bot?.live_indicators?.regimes || bot?.heartbeat?.regimes || {};
     Object.assign(liveRegimes, regimes);
+    // Per-pair live price snapshot (bot pushes this each cycle via heartbeat).
+    const prices = bot?.prices || bot?.heartbeat?.prices || {};
+    Object.assign(livePrices, prices);
       }
       const marketClosed = Object.values(overview?.bots || {}).some(
         (bot) => bot?.live_indicators?.market_closed || bot?.heartbeat?.market_closed
@@ -1649,6 +1658,7 @@ export default function App() {
                   data={pairData[pair]}
                   strategy={strategyParams?.pairs?.[pair]?.strategy_type || "rsi_momentum"}
                   regime={liveRegimes[pair] || "—"}
+                  livePrice={livePrices[pair]}
                   onSelect={handleSelectPair}
                   isSelected={selectedPair === pair}
                   botPaused={botStatus.forex === "paused"}
@@ -1670,6 +1680,7 @@ export default function App() {
                   data={pairData[pair]}
                   strategy={strategyParams?.pairs?.[pair]?.strategy_type || "rsi_momentum"}
                   regime={liveRegimes[pair] || "—"}
+                  livePrice={livePrices[pair]}
                   onSelect={handleSelectPair}
                   isSelected={selectedPair === pair}
                   botPaused={botStatus.gold === "paused"}
@@ -1691,6 +1702,7 @@ export default function App() {
                   data={pairData[pair]}
                   strategy={strategyParams?.pairs?.[pair]?.strategy_type || "rsi_momentum"}
                   regime={liveRegimes[pair] || "—"}
+                  livePrice={livePrices[pair]}
                   onSelect={handleSelectPair}
                   isSelected={selectedPair === pair}
                   botPaused={botStatus.crypto === "paused"}

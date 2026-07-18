@@ -91,6 +91,8 @@ def write_heartbeat(
     chart_contexts: dict | None = None,
     market_closed: bool = False,
     regimes: dict | None = None,
+    prices: dict | None = None,
+    price_history: dict | None = None,
 ) -> dict:
     """Emit heartbeat.json with the documented keys (blueprint loop.py:1774/4433).
 
@@ -109,6 +111,13 @@ def write_heartbeat(
         "chart_contexts": chart_contexts or {},
         "market_closed": market_closed,
         "regimes": regimes or {},
+        # Per-pair live price snapshot — surfaced to the dashboard so pair
+        # cards can show the current quote (e.g. gold $4019.30) instead of "—".
+        "prices": prices or {},
+        # Rolling recent price history (last N ticks) per pair — backs the
+        # dashboard sparkline for pairs whose yfinance ticker is unreliable
+        # (e.g. gold/silver), so the card still shows a live mini-chart.
+        "price_history": price_history or {},
     }
     try:
         with open(HEARTBEAT_PATH, "w", encoding="utf-8") as fh:
@@ -226,6 +235,9 @@ def run_cycle(
             pairs=[],
         )
     summary = {"cycle": cycle, "entries": [], "exits": [], "skips": 0, "errors": 0, "prices": {}}
+    # Rolling price history for the sparkline (last N ticks per pair). Persisted
+    # by the caller across cycles so the card chart is continuous, not per-cycle.
+    price_history = dict(getattr(run_cycle, "_price_history", {}) or {})
     oversold_pairs = 0            # RSI-confluence count, accumulated across pairs this cycle
     # consecutive_failures is carried in (persists across cycles for the L24 breaker)
     try:
@@ -270,6 +282,11 @@ def run_cycle(
         price = float(candle["price"])
         last_price = price
         summary["prices"][pair] = price  # live price snapshot for dashboard push
+        # Append to rolling history for the sparkline (cap at 60 ticks).
+        ph = price_history.setdefault(pair, [])
+        ph.append(price)
+        if len(ph) > 60:
+            del ph[: len(ph) - 60]
 
         # seeded price history for indicators (fail-soft).
         # Prefer history_fn (real multi-candle series via the adapters'
@@ -409,7 +426,9 @@ def run_cycle(
     status = "ok" if consecutive_failures == 0 else "degraded"
     write_heartbeat(bot, cycle, consecutive_failures, last_price,
                     status=status, health=dict(health_registry),
-                    chart_contexts=chart_contexts, regimes=regimes)
+                    chart_contexts=chart_contexts, regimes=regimes,
+                    prices=summary.get("prices") or {},
+                    price_history=price_history)
     summary["consecutive_failures"] = consecutive_failures
     summary["oversold_pairs"] = oversold_pairs
     # The caller persists these across cycles so entries are tracked to exit
@@ -422,6 +441,8 @@ def run_cycle(
             push_fn(bot, summary)
         except Exception:  # noqa: BLE001
             traceback.print_exc()
+    # Persist rolling price history across cycles (continuous sparkline).
+    run_cycle._price_history = {p: price_history.get(p, []) for p in set(price_history) | set(getattr(run_cycle, "_price_history", {}) or {})}
     if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
         # [GUARD L24] circuit open: caller should pause; reset the counter so a
         # single pause doesn't permanently lock the breaker closed.

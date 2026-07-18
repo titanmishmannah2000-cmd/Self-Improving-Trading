@@ -1259,6 +1259,11 @@ body {
   font-size: 11px;
 }
 
+.pc-price {
+  color: var(--amber);
+  font-size: 12px;
+}
+
 /* ───────── Lower grid tabs ───────── */
 
 .lower-grid {
