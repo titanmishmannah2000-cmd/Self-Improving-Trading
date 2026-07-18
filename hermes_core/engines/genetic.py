@@ -2,13 +2,29 @@
 
 Evolves small symbolic indicator expressions over price/volume features,
 scores each by fitness = |corr(signal, forward_return)| - 0.001*complexity,
-and admits only those that survive an OOS-first check (>= OOS_FLOOR) AND pass
-the novelty + redundancy gates. Discovered indicators persist to
-state/discovered/{pair}.json so they survive a restart.
+and admits only those that survive real out-of-sample checks:
+
+  * genuine OOS correlation on a held-out split (NOT the in-sample bug the
+    earlier version had),
+  * a permutation null-test (reject candidates that only "work" by luck —
+    p >= 0.05 means the correlation is indistinguishable from label-shuffle
+    noise),
+  * the novelty + redundancy gates.
+
+Discovered indicators persist to state/discovered/{pair}.json so they survive
+a restart.
+
+Real GP search (ported from the older hermes_trading.genetic_discovery):
+  * population of expression trees, elitist survival (top 10%), crossover +
+    mutation, depth cap, complexity penalty,
+  * richer primitive set (rolling window ops: sma/ema/roc/min/max/stdev/mom),
+  * optional multi-candle horizon objective (cumulative forward return over H
+    candles) which the old engine proved captures serial structure that a
+    single next-candle return cannot.
 
 Hard isolation (D8): the feature/operator set contains ONLY market-data
-primitives (price, returns, simple moving averages, RSI, volatility). There is
-NO path to crypto-specific signals (fear-&-greed, on-chain, BTC feeds) — none
+primitives (price, returns, moving averages, RSI, volatility, momentum). There
+is NO path to crypto-specific signals (fear-&-greed, on-chain, BTC feeds) — none
 are imported, referenced, or reachable from this module's dependency chain.
 
 Functions (blueprint Phase 13 build target):
@@ -19,9 +35,12 @@ Functions (blueprint Phase 13 build target):
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 import random
+import statistics
+from datetime import datetime, timezone
 from pathlib import Path
 
 from hermes_core.config import repo_root
@@ -30,16 +49,43 @@ from hermes_core.config import repo_root
 OOS_FLOOR = 0.08         # [GUARD L53] admit indicator if OOS corr >= floor; lowered from 0.15 (unreachable for current expr space)
 COMPLEXITY_PENALTY = 0.001
 REDUNDANCY_R = 0.8       # |pearson| > this vs an existing indicator -> REJECTED
+PERM_PVALUE_FLOOR = 0.05  # reject candidates whose OOS corr is not better than shuffled-label noise
 
 DISCOVERED_DIR = repo_root() / "state" / "discovered"
 
 # Safe primitive feature set (D8: market-data only, no crypto feeds).
-# Each feature fn maps a price window -> scalar. Tree depth is bounded.
-FEATURES = ("price", "ret", "sma5", "sma20", "rsi", "vol")
+# Each feature fn maps a price window -> scalar. Rolling-window operators give
+# the GP genuine expressive power (ported from the older discovery engine).
+FEATURES = (
+    "price", "ret", "sma5", "sma10", "sma20", "sma50",
+    "rsi", "vol", "roc20", "mom10", "min20", "max20", "stdev20", "ema20",
+)
 OPERATORS = ("add", "sub", "mul", "div")
 
 
 # ── safe expression primitives (no eval) ───────────────────────────────────
+def _wilder_rsi(win: list[float], period: int = 14) -> float:
+    if len(win) < period + 1:
+        return 50.0
+    deltas = [win[i] - win[i - 1] for i in range(1, len(win))]
+    gains = sum(d for d in deltas[-period:] if d > 0) / period
+    losses = sum(-d for d in deltas[-period:] if d < 0) / period
+    if losses == 0:
+        return 100.0
+    rs = gains / losses
+    return 100.0 - (100.0 / (1.0 + rs))
+
+
+def _ema(values: list[float], smoothing: float = 2) -> float:
+    if len(values) < 2:
+        return values[-1] if values else 0.0
+    k = smoothing / (len(values) + 1)
+    ema = values[0]
+    for v in values[1:]:
+        ema = v * k + ema * (1 - k)
+    return ema
+
+
 def _feature(name: str, win: list[float]) -> float:
     if not win:
         return 0.0
@@ -51,8 +97,14 @@ def _feature(name: str, win: list[float]) -> float:
     if name == "sma5":
         s = win[-5:]
         return sum(s) / len(s)
+    if name == "sma10":
+        s = win[-10:]
+        return sum(s) / len(s)
     if name == "sma20":
         s = win[-20:]
+        return sum(s) / len(s)
+    if name == "sma50":
+        s = win[-50:]
         return sum(s) / len(s)
     if name == "rsi":
         return _wilder_rsi(win)
@@ -61,19 +113,20 @@ def _feature(name: str, win: list[float]) -> float:
             return 0.0
         trs = [abs(win[i] - win[i - 1]) for i in range(1, len(win))]
         return (sum(trs[-14:]) / 14) / last * 100.0 if last else 0.0
+    if name == "roc20":
+        return (win[-1] / win[-21] - 1.0) * 100.0 if len(win) > 21 and win[-21] else 0.0
+    if name == "mom10":
+        return (win[-1] / win[-11] - 1.0) * 100.0 if len(win) > 11 and win[-11] else 0.0
+    if name == "min20":
+        return min(win[-20:]) if len(win) >= 20 else win[-1]
+    if name == "max20":
+        return max(win[-20:]) if len(win) >= 20 else win[-1]
+    if name == "stdev20":
+        w = win[-20:]
+        return statistics.stdev(w) if len(w) >= 3 and len(set(w)) >= 2 else 0.0001
+    if name == "ema20":
+        return _ema(win[-20:]) if len(win) >= 2 else win[-1]
     return 0.0
-
-
-def _wilder_rsi(win: list[float], period: int = 14) -> float:
-    if len(win) < period + 1:
-        return 50.0
-    deltas = [win[i] - win[i - 1] for i in range(1, len(win))]
-    gains = sum(d for d in deltas[-period:] if d > 0) / period
-    losses = sum(-d for d in deltas[-period:] if d < 0) / period
-    if losses == 0:
-        return 100.0
-    rs = gains / losses
-    return 100.0 - (100.0 / (1.0 + rs))
 
 
 def _eval_expr(expr, win: list[float]) -> float:
@@ -111,8 +164,12 @@ def _expr_to_str(expr) -> str:
 
 
 # ── signal / fitness ───────────────────────────────────────────────────────
-def _signal_for_expr(expr, prices: list[float], lookback: int = 20) -> list[float]:
-    """Directional signal series: evaluate the expr on each trailing window."""
+def _signal_for_expr(expr, prices: list[float], lookback: int = 60) -> list[float]:
+    """Directional signal series: evaluate the expr on each trailing window.
+
+    lookback must cover the longest window feature (sma50) so those operators
+    have enough history to compute.
+    """
     out = []
     for i in range(lookback, len(prices) + 1):
         out.append(_eval_expr(expr, prices[i - lookback:i]))
@@ -134,36 +191,152 @@ def _pearson(a: list[float], b: list[float]) -> float:
     return max(-1.0, min(1.0, num / (da * db)))
 
 
-def _forward_returns(prices: list[float]) -> list[float]:
-    return [(prices[i + 1] / prices[i] - 1.0) * 100.0
-            for i in range(len(prices) - 1)]
+def _forward_returns(prices: list[float], horizon: int = 1) -> list[float]:
+    """Cumulative pct move from candle i to i+horizon (objective for fitness)."""
+    if horizon < 1:
+        horizon = 1
+    return [(prices[i + horizon] / prices[i] - 1.0) * 100.0
+            for i in range(len(prices) - horizon)]
 
 
-def _compute_fitness(signal: list[float], prices: list[float]) -> float:
-    """fitness = |corr(signal, forward_return)| - 0.001*complexity.
+def _compute_fitness(signal: list[float], prices: list[float], horizon: int = 1) -> float:
+    """fitness = |corr(signal, forward_return)|.
 
-    Complexity penalty is applied by the caller (it owns the expr); this pure
-    form takes a pre-built signal + prices and returns the |corr| component.
+    The complexity penalty is applied by the caller (it owns the expr); this
+    pure form takes a pre-built signal + prices and returns the |corr|
+    component. horizon>1 uses the cumulative forward return over H candles
+    (ported from the older engine: captures serial structure 5m/next-candle
+    returns lack).
     """
-    fwd = _forward_returns(prices)
-    # align lengths: signal[i] predicts fwd[i]
+    fwd = _forward_returns(prices, horizon)
     m = min(len(signal), len(fwd))
     if m < 10:
         return 0.0
-    corr = _pearson(signal[:m], fwd[:m])
-    return abs(corr)
+    return abs(_pearson(signal[:m], fwd[:m]))
 
 
-def _oos_corr(signal: list[float], prices: list[float], frac: float = 0.3) -> float:
-    """Out-of-sample correlation: train on first (1-frac), test on last frac."""
-    fwd = _forward_returns(prices)
+def _oos_corr(signal: list[float], prices: list[float], frac: float = 0.3,
+              horizon: int = 1) -> float:
+    """GENUINE out-of-sample correlation: train on first (1-frac), test on the
+    held-out LAST frac. (Earlier version mistakenly measured the train side.)
+
+    signal is the series evaluated over the full `prices`; we correlate the
+    tail `signal[cut:]` against the tail of the forward returns.
+    """
+    fwd = _forward_returns(prices, horizon)
     m = min(len(signal), len(fwd))
     if m < 20:
         return 0.0
     cut = int(m * (1 - frac))
     if cut < 10 or m - cut < 10:
         return 0.0
-    return abs(_pearson(signal[:cut], fwd[:cut]))
+    return abs(_pearson(signal[cut:m], fwd[cut:m]))
+
+
+def _permutation_pvalue(signal: list[float], prices: list[float], horizon: int = 1,
+                        n_perm: int = 200, seed: int = 0):
+    """Permutation null-test for a candidate's OOS correlation (ported).
+
+    Builds a null distribution by shuffling the FORWARD-RETURN order n_perm
+    times (keeping the signal fixed) and recomputing |corr(signal, shuffled)|.
+    If the real correlation sits in the top of that null, the candidate is
+    genuinely informative rather than a lucky draw.
+
+    Returns (p_value, real_corr, null_mean). p = fraction of null corrs >= real.
+    """
+    real_corr = _compute_fitness(signal, prices, horizon)
+    fwd = _forward_returns(prices, horizon)
+    if len(fwd) < 20:
+        return 1.0, real_corr, 0.0
+    sig = signal[:len(fwd)]
+    n = len(sig)
+    mean_sig = sum(sig) / n
+    den_s = math.sqrt(sum((sig[i] - mean_sig) ** 2 for i in range(n)))
+    if den_s <= 0:
+        return 1.0, real_corr, 0.0
+    rng = random.Random(seed)
+    null = []
+    for _ in range(n_perm):
+        shuf = fwd[:]
+        rng.shuffle(shuf)
+        mean_r = sum(shuf) / n
+        den_r = math.sqrt(sum((shuf[i] - mean_r) ** 2 for i in range(n)))
+        den = den_s * den_r if den_r > 0 else 1e-4
+        num = sum((sig[i] - mean_sig) * (shuf[i] - mean_r) for i in range(n))
+        null.append(abs(num / den))
+    null_mean = sum(null) / len(null)
+    p = sum(1 for c in null if c >= real_corr) / len(null)
+    return p, real_corr, round(null_mean, 4)
+
+
+def _compute_signal_stats(signal: list[float], prices: list[float], horizon: int = 1):
+    """Win-rate (FRACTION 0-1) + cumulative return (pct) of trading in the
+    signal's direction. Direction at step i is the signal's slope (sign of
+    sig[i]-sig[i-1]); a 'win' is when the forward return agrees. Ported from the
+    older engine (win_rate is a fraction because both the dashboard and the
+    ensemble weight expect 0-1, not a percent).
+    """
+    fwd = _forward_returns(prices, horizon)
+    sig = signal[:len(fwd) + 1]
+    if len(sig) < 11:
+        return 0.0, 0.0
+    wins = 0
+    total = 0
+    cum = 0.0
+    for i in range(1, len(sig)):
+        s_dir = 1 if sig[i] > sig[i - 1] else (-1 if sig[i] < sig[i - 1] else 0)
+        if s_dir == 0:
+            continue
+        r = fwd[i - 1]
+        total += 1
+        if (r > 0 and s_dir > 0) or (r < 0 and s_dir < 0):
+            wins += 1
+        cum += s_dir * r
+    win_rate = round(wins / total, 4) if total > 0 else 0.0
+    return win_rate, round(cum, 2)
+
+
+# ── GP tree operators (ported from the older discovery engine) ─────────────
+def _get_nodes(expr):
+    """All subtree objects in the expression tree (for crossover/mutation)."""
+    nodes = [expr]
+    if isinstance(expr, tuple):
+        for child in expr[1:]:
+            if isinstance(child, (tuple, str)):
+                nodes.extend(_get_nodes(child))
+    return nodes
+
+
+def _replace_node(tree, target, replacement):
+    """Return a copy of `tree` with `target` subtree replaced by `replacement`."""
+    if tree is target:
+        return replacement
+    if isinstance(tree, tuple):
+        return (tree[0], _replace_node(tree[1], target, replacement),
+                _replace_node(tree[2], target, replacement))
+    return tree
+
+
+def _crossover(e1, e2, rng: random.Random):
+    """Swap a random subtree of e1 with a random subtree of e2."""
+    e1 = copy.deepcopy(e1)
+    nodes1 = _get_nodes(e1)
+    nodes2 = _get_nodes(e2)
+    if not nodes1 or not nodes2:
+        return e1
+    src = rng.choice(nodes1)
+    tgt = rng.choice(nodes2)
+    return _replace_node(e1, src, copy.deepcopy(tgt))
+
+
+def _mutate(expr, rng: random.Random):
+    """Replace a random subtree with a fresh random one."""
+    nodes = _get_nodes(expr)
+    if not nodes:
+        return _random_expr(rng, 2)
+    e = copy.deepcopy(expr)
+    node = rng.choice(nodes)
+    return _replace_node(e, node, _random_expr(rng, rng.randint(0, 2)))
 
 
 # ── GP core ─────────────────────────────────────────────────────────────────
@@ -174,10 +347,42 @@ def _random_expr(rng: random.Random, depth: int = 2) -> object:
     return (op, _random_expr(rng, depth - 1), _random_expr(rng, depth - 1))
 
 
-def _fitness_with_penalty(expr, prices: list[float]) -> float:
+def _fitness_with_penalty(expr, prices: list[float], horizon: int = 1) -> float:
     sig = _signal_for_expr(expr, prices)
-    corr = _compute_fitness(sig, prices)
+    if len(sig) < 20:
+        return 0.0
+    corr = _compute_fitness(sig, prices, horizon)
     return corr - COMPLEXITY_PENALTY * _complexity(expr)
+
+
+def _evolve_population(prices: list[float], pop_size: int, generations: int,
+                       horizon: int, rng: random.Random) -> list[object]:
+    """Real GA evolution on `prices`. Elitist survival (top 10%, min 15),
+    crossover/mutation refill, depth cap. Returns the final population."""
+    pop = [_random_expr(rng, 2) for _ in range(pop_size)]
+    for _gen in range(generations):
+        scored = []
+        for expr in pop:
+            try:
+                fit = _fitness_with_penalty(expr, prices, horizon)
+            except Exception:
+                fit = 0.0
+            scored.append((fit, expr))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        keep = max(15, pop_size // 10)
+        survivors = [s[1] for s in scored[:keep]]
+        new_pop = list(survivors)
+        while len(new_pop) < pop_size:
+            parent = rng.choice(survivors)
+            if rng.random() < 0.6 and len(survivors) >= 2:
+                child = _crossover(parent, rng.choice(survivors), rng)
+            else:
+                child = _mutate(parent, rng)
+            if _complexity(child) > 60:
+                child = _random_expr(rng, 2)
+            new_pop.append(child)
+        pop = new_pop
+    return pop
 
 
 def _novelty_ok(expr, population: list[object]) -> bool:
@@ -223,55 +428,87 @@ def redundancy_check(new_signal: list[float], existing_signals: list[list[float]
 
 
 def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
-             *, generations: int = 40, pop_size: int = 30, seed: int = 7,
-             top_k: int = 5) -> list[dict]:
+             *, generations: int = 60, pop_size: int = 40, seed: int = 7,
+             top_k: int = 5, horizon: int = 1) -> list[dict]:
     """Evolve and admit indicators for `pair`.
 
     Returns the list of admitted indicator dicts (also persisted to
-    state/discovered/{pair}.json). OOS-first: an expr must clear OOS_FLOOR and
-    pass novelty + redundancy gates before admission.
+    state/discovered/{pair}.json). Genuine OOS-first (ported from the older
+    engine): an expr must clear OOS_FLOOR on a held-out split, pass a
+    permutation null-test (p < 0.05), and pass novelty + redundancy gates
+    before admission. `horizon` sets the forward-return objective (1 = single
+    next-candle; >1 = cumulative move over H candles, which the older engine
+    proved is far more predictable on real data).
     """
     rng = random.Random(seed)
     prices = list(prices)
-    if len(prices) < 40:
+    if len(prices) < 60:
         return []
 
-    population: list[object] = []
-    best: list[tuple[float, object]] = []
-    for _ in range(generations):
-        expr = _random_expr(rng, depth=2)
-        fit = _fitness_with_penalty(expr, prices)
-        best.append((fit, expr))
-        if len(best) > pop_size:
-            best.sort(reverse=True)
-            best.pop()
-    best.sort(reverse=True)
+    # Train/test split for GENUINE out-of-sample evaluation (fixes the earlier
+    # in-sample OOS bug).
+    cut = int(len(prices) * 0.6)
+    train = prices[:cut]
+    test = prices[cut:]
+    if len(train) < 40 or len(test) < 20:
+        return []
 
+    # 1) Evolve on the TRAIN portion only.
+    pop = _evolve_population(train, pop_size, generations, horizon, rng)
+
+    # 2) Evaluate each unique candidate on the held-out TEST portion + gates.
     admitted: list[dict] = []
+    seen: set[str] = set()
     existing_signals: list[list[float]] = []
-    for fit, expr in best:
-        if fit < OOS_FLOOR:
+    population: list[object] = []
+    for expr in pop:
+        es = _expr_to_str(expr)
+        if es in seen:
             continue
-        if not _novelty_ok(expr, population):
+        seen.add(es)
+        try:
+            sig_test = _signal_for_expr(expr, test)
+            if len(sig_test) < 20:
+                continue
+            oos = _compute_fitness(sig_test, test, horizon)
+            if oos < OOS_FLOOR:
+                continue
+            # Permutation null-test: reject lucky-noise candidates.
+            p_val, _real_c, null_mean = _permutation_pvalue(
+                sig_test, test, horizon, n_perm=200, seed=seed)
+            if p_val >= PERM_PVALUE_FLOOR:
+                continue
+            # OOS signal stats for the dashboard (honest, held-out).
+            win_rate, total_pnl = _compute_signal_stats(sig_test, test, horizon)
+            if redundancy_check(sig_test, existing_signals) == "REJECTED":
+                continue
+            if not _novelty_ok(expr, population):
+                continue
+            ind = {
+                "pair": pair,
+                "name": es,
+                "expr": es,
+                "_expr": expr,                       # raw tree for live re-eval
+                "fitness": round(oos - COMPLEXITY_PENALTY * _complexity(expr), 4),
+                "oos_corr": round(oos, 4),
+                "perm_pvalue": round(p_val, 4),
+                "null_mean_corr": null_mean,
+                "win_rate": win_rate,
+                "total_pnl": total_pnl,
+                "complexity": _complexity(expr),
+                "nodes": _complexity(expr),
+                "horizon": horizon,
+                "interval": "5m",
+                "source": "genetic",
+                "ts": datetime.now(timezone.utc).isoformat(),
+            }
+            admitted.append(ind)
+            existing_signals.append(sig_test)
+            population.append(expr)
+            if len(admitted) >= top_k:
+                break
+        except Exception:
             continue
-        sig = _signal_for_expr(expr, prices)
-        if redundancy_check(sig, existing_signals) == "REJECTED":
-            continue
-        oos = _oos_corr(sig, prices)
-        if oos < OOS_FLOOR:
-            continue
-        ind = {
-            "pair": pair,
-            "expr": _expr_to_str(expr),
-            "fitness": round(fit, 4),
-            "oos_corr": round(oos, 4),
-            "complexity": _complexity(expr),
-        }
-        admitted.append(ind)
-        existing_signals.append(sig)
-        population.append(expr)
-        if len(admitted) >= top_k:
-            break
 
     if admitted:
         _save_discovered(pair, admitted)
@@ -286,7 +523,9 @@ def _discovered_path(pair: str) -> Path:
 
 
 def _save_discovered(pair: str, inds: list[dict]) -> None:
-    _discovered_path(pair).write_text(json.dumps(inds, indent=2), encoding="utf-8")
+    # Drop the raw tree (not JSON-serialisable) before persisting.
+    clean = [{k: v for k, v in ind.items() if k != "_expr"} for ind in inds]
+    _discovered_path(pair).write_text(json.dumps(clean, indent=2), encoding="utf-8")
 
 
 def load_discovered_indicators(pair: str) -> list[dict]:

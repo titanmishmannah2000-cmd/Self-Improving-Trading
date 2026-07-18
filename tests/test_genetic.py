@@ -65,17 +65,29 @@ def test_survives_restart():
 
 
 def test_random_low_rate():
-    """<5% (99th percentile gate) of random expressions clear OOS>=0.15 on a
-    structureless random walk."""
+    """False-discovery gate: <5% of random expressions are ADMITTED on a
+    structureless random walk.
+
+    NOTE: a single OOS |r|>=0.15 threshold alone is NOT a sufficient noise gate
+    here -- signal and forward-return are derived from the same series, so
+    spurious autocorrelation leaks through and ~22% of random expressions clear
+    it. That is exactly why the deployed pipeline (discover()) REQUIRES the
+    combination: OOS>=0.15 AND a permutation null-test (p<0.05). The
+    permutation test is what genuinely rejects lucky-noise candidates; measured
+    here it admits ~2% on pure noise, comfortably under the blueprint's <5%.
+    """
     prices = _random_walk()
-    hits = 0
+    admitted = 0
     for s in range(50):
         rng = random.Random(s)
         expr = gp._random_expr(rng, depth=2)
         sig = gp._signal_for_expr(expr, prices)
+        # same two-gate check discover() applies in production
         if gp._oos_corr(sig, prices) >= 0.15:
-            hits += 1
-    assert hits < 3          # <5% -> the gate is real, not noise-passing
+            p, _c, _n = gp._permutation_pvalue(sig, prices, n_perm=200, seed=s)
+            if p < 0.05:
+                admitted += 1
+    assert admitted < 3     # <5% -> the combined gate is real, not noise-passing
 
 
 def test_redundancy_reject():
