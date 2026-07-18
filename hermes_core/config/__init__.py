@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .loader import _seed_default_state, load_config, load_strategy_for_pair, repo_root
+from .loader import _seed_default_state, load_config, load_strategy_for_pair, repo_root, state_root
 from .schema import (
     ALLOWED_SESSION_FILTERS,
     ALLOWED_STRATEGY_TYPES,
@@ -19,6 +19,7 @@ __all__ = [
     "validate_strategy_params",
     "_seed_default_state",
     "repo_root",
+    "state_root",
     "ValidationError",
     "STRATEGY_PARAM_RANGES",
     "ALLOWED_STRATEGY_TYPES",

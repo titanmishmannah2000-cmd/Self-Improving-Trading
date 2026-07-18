@@ -125,7 +125,7 @@ if not INGEST_TOKEN:
 # Mount a volume at /data on this service and set DB_PATH=/data/hermes.db
 # (falls back to local disk if no volume is mounted — fine for testing,
 # but data will reset on redeploy without a real volume).
-DB_PATH = os.getenv("DB_PATH", "/data/hermes.db")
+DB_PATH = os.getenv("DASHBOARD_DB") or os.getenv("DB_PATH", "/data/hermes.db")
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
 

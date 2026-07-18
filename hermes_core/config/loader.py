@@ -13,6 +13,7 @@ containing ``hermes_core``.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import yaml
@@ -25,7 +26,28 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def repo_root() -> Path:
-    """Absolute path to the project root (contains hermes_core/ and bots/)."""
+    """Absolute path to the project root (contains hermes_core/ and bots/).
+
+    Code/config (config.yaml, strategy YAMLs) is always read from here,
+    which in the Docker image is ``/app``.
+    """
+    return _REPO_ROOT
+
+
+def state_root() -> Path:
+    """Root under which RUNTIME state is written.
+
+    Discipline 3.1/2: engine state must live on the persistent
+    ``/data`` volume, not inside the read-only image (``/app``), or it is
+    wiped on every redeploy. Honour HERMES_STATE_ROOT (set to ``/data`` on
+    Railway) and fall back to repo_root() for local/dev.
+
+    This is SEPARATE from repo_root() on purpose: config is read from the
+    image, but state is written to the volume.
+    """
+    env = os.getenv("HERMES_STATE_ROOT")
+    if env:
+        return Path(env)
     return _REPO_ROOT
 
 

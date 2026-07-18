@@ -26,12 +26,21 @@ from hermes_core.engines import (
 STATE = Path(__file__).resolve().parent.parent / "state"
 
 
+def _bot_state(bot="forex"):
+    # Bot runtime state lives under {state_root}/{bot}/state, where state_root
+    # is HERMES_STATE_ROOT (Railway: /data) else repo_root (dev). Tests
+    # run without HERMES_STATE_ROOT, so it resolves to repo/<bot>/state.
+    d = STATE.parent / bot / "state"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def _hb():
-    return json.loads((STATE / "heartbeat.json").read_text(encoding="utf-8"))
+    return json.loads((_bot_state() / "heartbeat.json").read_text(encoding="utf-8"))
 
 
 def _read_jsonl(path):
-    p = STATE / path
+    p = _bot_state() / path
     if not p.exists():
         return []
     return [json.loads(line) for line in p.read_text(encoding="utf-8").splitlines() if line.strip()]

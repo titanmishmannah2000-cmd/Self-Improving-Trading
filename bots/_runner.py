@@ -27,9 +27,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import sys
 import threading
 import time
+from pathlib import Path
 
 import httpx
 
@@ -57,6 +59,66 @@ def _get_client() -> httpx.Client | None:
             if _PUSH_CLIENT is None:
                 _PUSH_CLIENT = httpx.Client(timeout=5.0)
     return _PUSH_CLIENT
+
+
+def _push_state(bot: str, cfg: dict, cycle: int) -> None:
+    """POST the bot's full decision-state to /api/ingest/{bot} (fail-soft) [Gap 1].
+
+    This is what actually populates the dashboard's pair cards (regime /
+    strategy / blocked-by-conditions) and the overview. The loop only pushes
+    prices on its own; the rich state below was never sent before -> empty
+    dashboard tabs. We build it from config + the state files the loop writes
+    under HERMES_STATE_ROOT/{bot}/state (now on the /data volume).
+    """
+    if not get_env("DASHBOARD_API_URL", ""):
+        return
+    client = _get_client()
+    if client is None:
+        return
+    sdir = Path(get_env("HERMES_STATE_ROOT", str(Path(__file__).resolve().parents[2]))) / bot / "state"
+    try:
+        discovered = json.loads((sdir / "discovered.json").read_text(encoding="utf-8")) if (sdir / "discovered.json").exists() else {}
+    except Exception:
+        discovered = {}
+    try:
+        cortex = json.loads((sdir / "cortex.json").read_text(encoding="utf-8")) if (sdir / "cortex.json").exists() else {}
+    except Exception:
+        cortex = {}
+    try:
+        heartbeat = json.loads((sdir / "heartbeat.json").read_text(encoding="utf-8")) if (sdir / "heartbeat.json").exists() else {}
+    except Exception:
+        heartbeat = {}
+    # recent trades / skips from the jsonl the loop appends
+    def _read_jsonl(name: str, limit: int = 200):
+        p = sdir / name
+        if not p.exists():
+            return []
+        out = []
+        try:
+            for line in p.read_text(encoding="utf-8").splitlines()[-limit:]:
+                line = line.strip()
+                if line:
+                    out.append(json.loads(line))
+        except Exception:
+            pass
+        return out
+    payload = {
+        "strategies": cfg.get("strategies") or cfg.get("pairs"),  # strategies map if present
+        "goal": cfg.get("goal"),
+        "heartbeat": heartbeat,
+        "recent_trades": _read_jsonl("trades.jsonl"),
+        "recent_skips": _read_jsonl("skips.jsonl"),
+        "discovered": discovered,
+        "cortex": cortex,
+        "flatlined_pairs": {},
+        "recent_open_trades": [],
+    }
+    with contextlib.suppress(Exception):
+        client.post(
+            f"{get_env('DASHBOARD_API_URL', '').rstrip('/')}/api/ingest/{bot}",
+            json=payload,
+            headers={"X-Ingest-Token": get_env("INGEST_TOKEN", "")},
+        )
 
 
 def _push_prices(bot: str, prices: dict[str, float]) -> None:
@@ -159,6 +221,10 @@ async def run_bot(bot_name: str) -> None:
                 prices = summary.get("prices") if isinstance(summary, dict) else None
                 if isinstance(prices, dict) and prices:
                     _push_prices_threaded(bot, prices)
+                # Push the bot's full decision-state (strategies/goal/heartbeat/
+                # trades/skips) so the dashboard's pair cards + overview populate.
+                # Fail-soft; a dead dashboard must never stall the bot. [Gap 1]
+                _push_state(bot, cfg, cycle)
             await asyncio.sleep(cycle_seconds)
     finally:
         if aggregator is not None:

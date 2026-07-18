@@ -26,7 +26,7 @@ import traceback
 from collections.abc import Callable
 
 from hermes_core.adapters import make_default_fetch
-from hermes_core.config import load_config, load_strategy_for_pair, repo_root
+from hermes_core.config import load_config, load_strategy_for_pair, repo_root, state_root
 from hermes_core.engines.entry import evaluate_entry
 from hermes_core.engines.exit import evaluate_exit
 from hermes_core.engines.risk import (
@@ -45,6 +45,16 @@ CYCLE_SECONDS = 60                    # 60s cadence
 HEARTBEAT_PATH = repo_root() / "state" / "heartbeat.json"
 TRADES_PATH = repo_root() / "state" / "trades.jsonl"
 SKIPS_PATH = repo_root() / "state" / "skips.jsonl"
+
+
+def _state_dir(bot: str) -> Path:
+    """Per-bot runtime-state dir on the PERSISTENT volume (HERMES_STATE_ROOT,
+    e.g. /data), NOT inside the read-only image (/app). live_compat reads
+    these same paths, so bot writes and dashboard reads line up. [D3/3.1]
+    """
+    d = state_root() / bot / "state"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def _session_token_for(hour: int) -> str:
@@ -80,7 +90,7 @@ def write_heartbeat(
     Always succeeds — failures here must never propagate (one heartbeat per cycle
     without exception is a hard S7 requirement).
     """
-    HEARTBEAT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    HEARTBEAT_PATH = _state_dir(asset) / "heartbeat.json"
     data = {
         "ts": time.time(),
         "asset": asset,
@@ -101,8 +111,8 @@ def write_heartbeat(
     return data
 
 
-def _log_skip(pair: str, cycle: int, reason: str) -> None:
-    SKIPS_PATH.parent.mkdir(parents=True, exist_ok=True)
+def _log_skip(bot: str, pair: str, cycle: int, reason: str) -> None:
+    SKIPS_PATH = _state_dir(bot) / "skips.jsonl"
     row = {"ts": time.time(), "pair": pair, "cycle": cycle, "reason": reason}
     try:
         with open(SKIPS_PATH, "a", encoding="utf-8") as fh:
@@ -111,8 +121,8 @@ def _log_skip(pair: str, cycle: int, reason: str) -> None:
         pass
 
 
-def _log_trade(rec: dict) -> None:
-    TRADES_PATH.parent.mkdir(parents=True, exist_ok=True)
+def _log_trade(bot: str, rec: dict) -> None:
+    TRADES_PATH = _state_dir(bot) / "trades.jsonl"
     try:
         with open(TRADES_PATH, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(rec, default=str) + "\n")
@@ -182,7 +192,7 @@ def run_cycle(
             consecutive_failures += 1
             summary["errors"] += 1
             health_registry["price_adapter"] = False
-            _log_skip(pair, cycle, f"fetch_error:{exc!r}")
+            _log_skip(bot, pair, cycle, f"fetch_error:{exc!r}")
             traceback.print_exc()
             continue
 
@@ -190,7 +200,7 @@ def run_cycle(
             # stale/empty feed — counted, not a hard crash
             consecutive_failures += 1
             summary["errors"] += 1
-            _log_skip(pair, cycle, "no_candle")
+            _log_skip(bot, pair, cycle, "no_candle")
             continue
 
         health_registry.setdefault("price_adapter", True)
@@ -211,7 +221,7 @@ def run_cycle(
             consecutive_failures += 1
             summary["errors"] += 1
             health_registry["indicators"] = False
-            _log_skip(pair, cycle, f"indicator_error:{exc!r}")
+            _log_skip(bot, pair, cycle, f"indicator_error:{exc!r}")
             traceback.print_exc()
             continue
         health_registry["indicators"] = True
@@ -221,14 +231,14 @@ def run_cycle(
             strategy = load_strategy_for_pair(pair, bot)
             ok, reason = param_range_gate(strategy)
             if not ok:
-                _log_skip(pair, cycle, f"param_gate:{reason}")
+                _log_skip(bot, pair, cycle, f"param_gate:{reason}")
                 summary["skips"] += 1
                 continue
         except Exception as exc:  # noqa: BLE001
             consecutive_failures += 1
             summary["errors"] += 1
             health_registry["config"] = False
-            _log_skip(pair, cycle, f"strategy_error:{exc!r}")
+            _log_skip(bot, pair, cycle, f"strategy_error:{exc!r}")
             traceback.print_exc()
             continue
         health_registry["config"] = True
@@ -244,7 +254,7 @@ def run_cycle(
             context = ""
             chart_contexts[pair] = ""
             health_registry["chart_vision"] = False
-            _log_skip(pair, cycle, f"chart_error:{exc!r}")
+            _log_skip(bot, pair, cycle, f"chart_error:{exc!r}")
 
         ensemble = (ensemble_fn(pair) if ensemble_fn else "neutral") or "neutral"
         atr = float(ind["atr"])
@@ -257,14 +267,14 @@ def run_cycle(
                 oversold_pairs, vol_above, reentry, cycle, session_token,
             )
             if sig is None:
-                _log_skip(pair, cycle, "no_signal")
+                _log_skip(bot, pair, cycle, "no_signal")
                 summary["skips"] += 1
                 continue
             # RR guard (S6) — reject R:R < 1.0 before committing
             sl = float(strategy["stop_loss_pct"])
             tp = float(strategy["profit_target_pct"])
             if not check_rr_guard(sl, tp):
-                _log_skip(pair, cycle, "rr_guard")
+                _log_skip(bot, pair, cycle, "rr_guard")
                 summary["skips"] += 1
                 continue
             size = compute_position_size(session_token, atr, 0, strategy)
@@ -284,7 +294,7 @@ def run_cycle(
             pos["unrealised_pct"] = (price - pos["entry_price"]) / pos["entry_price"] * 100.0
             ex = evaluate_exit(pos, price, prices)
             if ex is not None:
-                _log_trade({
+                _log_trade(bot, {
                     "pair": pair, "cycle": cycle, "reason": ex.reason,
                     "entry_price": pos["entry_price"], "exit_price": price,
                     "pnl_pct": pos["unrealised_pct"], "size": pos["size"],
