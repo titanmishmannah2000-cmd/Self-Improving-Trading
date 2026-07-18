@@ -23,7 +23,15 @@ export default function DiscoveredView({ apiBase, isActive = true }) {
   if (!data || data.total_indicators === 0)
     return <div className="reports"><p>No discovered indicators yet. GP runs weekly or when stuck.</p></div>;
 
-  const sorted = Object.entries(data.ensemble || {}).sort((a, b) => Math.abs(b[1]?.signal||0) - Math.abs(a[1]?.signal||0));
+  const pairs = data.pairs || {};
+  const ensemble = data.ensemble || {};
+  // Sort by ensemble signal strength if available, else by pair name.
+  const sorted = Object.keys(pairs).sort((a, b) => {
+    const sa = Math.abs(ensemble[b]?.signal || 0);
+    const sb = Math.abs(ensemble[a]?.signal || 0);
+    if (sa !== sb) return sa - sb;
+    return a.localeCompare(b);
+  });
 
   return (
     <div className="reports">
@@ -32,41 +40,40 @@ export default function DiscoveredView({ apiBase, isActive = true }) {
         <div className="reports-subtitle">{data.total_indicators} indicators across {data.total_pairs} pairs</div>
       </div>
 
-      {sorted.map(([pair, ens]) => {
-        const inds = data.pairs?.[pair] || [];
-        const sigClass = ens.signal > 0.3 ? "bullish" : ens.signal < -0.3 ? "bearish" : "neutral";
-        const sigIcon = ens.signal > 0.3 ? "🟢" : ens.signal < -0.3 ? "🔴" : "⚪";
+      {sorted.map((pair) => {
+        const inds = Array.isArray(pairs[pair]) ? pairs[pair] : [];
+        const ens = ensemble[pair] || {};
+        const signal = ens.signal || 0;
+        const sigClass = signal > 0.3 ? "bullish" : signal < -0.3 ? "bearish" : "neutral";
+        const sigIcon = signal > 0.3 ? "🟢" : signal < -0.3 ? "🔴" : "⚪";
         return (
           <div key={pair} className="report-card" style={{ marginBottom: 16 }}>
             <div className="report-card-header">
               <span className="report-pair">{pair}</span>
               <span className={`signal-badge signal-${sigClass}`}>
-                {sigIcon} {ens.signal > 0 ? "+" : ""}{ens.signal.toFixed(3)}
+                {sigIcon} {signal > 0 ? "+" : ""}{Number(signal).toFixed(3)}
               </span>
               <span style={{ marginLeft: 12, opacity: 0.7 }}>
-                {ens.num_indicators} indicators ({ens.multi_dim} cross-asset)
+                {inds.length} indicators ({ens.multi_dim || 0} cross-asset)
               </span>
             </div>
             <div className="perf-stats" style={{ marginTop: 8 }}>
-              <div className="perf-stat"><label>Best Fitness</label><span>{ens.best_fitness.toFixed(2)}</span></div>
-              <div className="perf-stat"><label>Best WR</label><span>{(ens.best_wr * 100).toFixed(0)}%</span></div>
+              <div className="perf-stat"><label>Best Fitness</label><span>{(ens.best_fitness || 0).toFixed(2)}</span></div>
+              <div className="perf-stat"><label>Best OOS Corr</label><span>{(ens.best_wr || 0).toFixed(2)}</span></div>
             </div>
             {inds.length > 0 && (
               <table className="trade-table" style={{ marginTop: 8, fontSize: "0.85em" }}>
                 <thead>
-                  <tr><th>Expression</th><th>Fit</th><th>WR</th><th>PnL</th><th>Uses</th></tr>
+                  <tr><th>Expression</th><th>Fit</th><th>OOS Corr</th><th>Complexity</th></tr>
                 </thead>
                 <tbody>
                   {inds.map((ind, i) => (
                     <tr key={i}>
-                      <td style={{ fontFamily: "monospace", fontSize: "0.8em", maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis" }}
+                      <td style={{ fontFamily: "monospace", fontSize: "0.8em", maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis" }}
                           title={ind.expr}>{ind.expr}</td>
-                      <td>{ind.fitness.toFixed(2)}</td>
-                      <td>{(ind.win_rate * 100).toFixed(0)}%</td>
-                      <td className={ind.total_pnl > 0 ? "pnl-positive" : ind.total_pnl < 0 ? "pnl-negative" : ""}>
-                        {ind.total_pnl > 0 ? "+" : ""}{ind.total_pnl.toFixed(2)}%
-                      </td>
-                      <td>{ind.uses?.length > 0 ? ind.uses.join(", ") : "price-only"}</td>
+                      <td>{(ind.fitness || 0).toFixed(3)}</td>
+                      <td>{(ind.oos_corr || 0).toFixed(3)}</td>
+                      <td>{ind.complexity ?? "—"}</td>
                     </tr>
                   ))}
                 </tbody>
