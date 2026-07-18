@@ -672,7 +672,11 @@ def overview():
             "strategy": strategy,
             "goal": json.loads(state_row["goal_json"]) if state_row and state_row["goal_json"] else None,
             "heartbeat": heartbeat,
-            "prices": heartbeat.get("prices", {}) if isinstance(heartbeat, dict) else {},
+            # Sticky prices: prefer this cycle's live quote, but fall back to the
+            # last known good tick from price_history so a single bad fetch poll
+            # (e.g. silver no_candle) doesn't blank the card mid-stream — a real
+            # ticker keeps showing the last quote between refreshes.
+            "prices": (lambda hp: {**{p: ph[-1] for p, ph in (hp.get("price_history", {}) or {}).items() if ph}, **(hp.get("prices", {}) or {})})(heartbeat) if isinstance(heartbeat, dict) else {},
             "price_history": heartbeat.get("price_history", {}) if isinstance(heartbeat, dict) else {},
             "_received_at": state_row["received_at"] if state_row else None,
             "recent_trades": [row_to_trade(r) for r in reversed(trades)],

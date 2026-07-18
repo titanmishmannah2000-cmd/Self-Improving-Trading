@@ -432,7 +432,7 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
 
       <FilterChain strategy_type={strategy} lastSkip={!openTrade ? lastSkip : null} />
 
-      {lastSkip && !openTrade && (
+      {lastSkip && !openTrade && livePrice === undefined && (
         <div className="pc-skip-reason">
           Blocked by:{" "}
           <GlossaryTerm id={skipToGlossary(lastSkip.reason_skipped)}>
