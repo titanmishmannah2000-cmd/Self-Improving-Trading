@@ -84,17 +84,19 @@ def _push_state(bot: str, cfg: dict, cycle: int) -> None:
         heartbeat = {}
     # Discovered + cortex are written by the genetic/cortex engines under
     # repo_root()/state/{discovered,cortex}/ (NOT under the per-bot dir), so
-    # read them from there and shape them for the dashboard's tab schema.
+    # read them from there. /api/discovered expects a flat {pair:[inds]} map
+    # (it iterates discovered_json.items() directly), so keep it flat here.
     rr = Path(__file__).resolve().parents[2]  # repo root (/app on Railway)
-    discovered: dict = {}
+    discovered_pairs: dict = {}
     ddir = rr / "state" / "discovered"
     if ddir.exists():
         for f in ddir.glob("*.json"):
             pair = f.stem.replace("_", "/")
             try:
-                discovered[pair] = json.loads(f.read_text(encoding="utf-8"))
+                discovered_pairs[pair] = json.loads(f.read_text(encoding="utf-8"))
             except Exception:
                 continue
+    discovered = discovered_pairs
     cortex: dict = {}
     cfile = rr / "state" / "cortex" / "indicator_exile.json"
     if cfile.exists():
