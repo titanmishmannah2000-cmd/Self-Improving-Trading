@@ -530,7 +530,10 @@ class PriceAggregator:
             # first fetch, so each loop gets clients bound to IT (no cross-loop
             # reuse, no shared-client races). [GUARD L61]
             candle = asyncio.run(self._fetch_async(pair))
-        except Exception:  # noqa: BLE001 — fail-soft; [GUARD L61]
+        except Exception as _e:  # noqa: BLE001 — fail-soft; [GUARD L61]
+            if pair in ("XAU/USD", "XAG/USD"):  # TEMP DIAG
+                print(f"[DIAG fetch_fn {pair}] EXC {type(_e).__name__}: {str(_e)[:120]}",
+                      file=__import__("sys").stderr, flush=True)
             return self._last_good.get(pair)
         if candle is None:
             return None
