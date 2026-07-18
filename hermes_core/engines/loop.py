@@ -27,8 +27,10 @@ from collections.abc import Callable
 
 from hermes_core.adapters import make_default_fetch
 from hermes_core.config import load_config, load_strategy_for_pair, repo_root, state_root
+from hermes_core.engines.decision_cortex import Cortex
 from hermes_core.engines.entry import evaluate_entry
 from hermes_core.engines.exit import evaluate_exit
+from hermes_core.engines.genetic import discover as gp_discover
 from hermes_core.engines.risk import (
     MAX_POSITION_SIZE,
     check_rr_guard,
@@ -42,9 +44,13 @@ from hermes_core.indicators import compute_all
 MAX_CONSECUTIVE_FAILURES = 5          # [GUARD L24]
 CIRCUIT_SLEEP_S = 300                 # 5-minute pause on circuit open
 CYCLE_SECONDS = 60                    # 60s cadence
-HEARTBEAT_PATH = repo_root() / "state" / "heartbeat.json"
-TRADES_PATH = repo_root() / "state" / "trades.jsonl"
-SKIPS_PATH = repo_root() / "state" / "skips.jsonl"
+# Discovery is expensive (GP evolution over price history); throttle per
+# (bot, pair) so it runs at most once per ~hour of wall-clock, or on first run.
+DISCOVERY_INTERVAL_S = int(get_env("DISCOVERY_INTERVAL_S", "3600"))
+_HEARTBEAT_PATH = repo_root() / "state" / "heartbeat.json"
+_TRADES_PATH = repo_root() / "state" / "trades.jsonl"
+_SKIPS_PATH = repo_root() / "state" / "skips.jsonl"
+_DISCOVERY_LAST: dict[tuple[str, str], float] = {}  # (bot, pair) -> last run epoch
 
 
 def _state_dir(bot: str) -> Path:
@@ -84,6 +90,7 @@ def write_heartbeat(
     health: dict | None = None,
     chart_contexts: dict | None = None,
     market_closed: bool = False,
+    regimes: dict | None = None,
 ) -> dict:
     """Emit heartbeat.json with the documented keys (blueprint loop.py:1774/4433).
 
@@ -101,6 +108,7 @@ def write_heartbeat(
         "health": health or {},
         "chart_contexts": chart_contexts or {},
         "market_closed": market_closed,
+        "regimes": regimes or {},
     }
     try:
         with open(HEARTBEAT_PATH, "w", encoding="utf-8") as fh:
@@ -128,6 +136,38 @@ def _log_trade(bot: str, rec: dict) -> None:
             fh.write(json.dumps(rec, default=str) + "\n")
     except OSError:
         pass
+
+
+def _discovered_indicator_ids(bot: str, pair: str) -> list[str]:
+    """Stable ids of the GP indicators admitted for `pair` (for cortex exile tracking)."""
+    try:
+        from hermes_core.engines.genetic import load_discovered_indicators
+        return [i.get("name", "") for i in load_discovered_indicators(pair) if i.get("name")]
+    except Exception:
+        return []
+
+
+def _maybe_discover(bot: str, pair: str, prices: list[float]) -> None:
+    """Throttled GP discovery for one pair.
+
+    Runs when no discovered file exists yet, or at most once per
+    DISCOVERY_INTERVAL_S of wall-clock per (bot, pair). Persists admitted
+    indicators to state/discovered/{pair}.json (read by the dashboard).
+    Fail-soft: any error is swallowed by the caller.
+    """
+    from hermes_core.engines.genetic import load_discovered_indicators
+    now = time.time()
+    key = (bot, pair)
+    if key in _DISCOVERY_LAST and (now - _DISCOVERY_LAST[key]) < DISCOVERY_INTERVAL_S:
+        return
+    if load_discovered_indicators(pair):
+        # already discovered recently enough; just refresh the throttle timer
+        _DISCOVERY_LAST[key] = now
+        return
+    if len(prices) < 40:
+        return
+    gp_discover(pair, prices)
+    _DISCOVERY_LAST[key] = now
 
 
 def run_cycle(
@@ -183,6 +223,8 @@ def run_cycle(
     session_token = _session_token_for(hour)
     last_price = 0.0
     chart_contexts: dict[str, str] = {}
+    regimes: dict[str, str] = {}          # pair -> 'trend'|'range' (dashboard regime cards)
+    cortex = Cortex()                      # per-cycle; exile SET persists to disk
 
     for pair in pairs:
         # --- fetch (fail-soft; failures counted toward circuit breaker) -----
@@ -225,6 +267,19 @@ def run_cycle(
             traceback.print_exc()
             continue
         health_registry["indicators"] = True
+        regimes[pair] = ind.get("regime", "range")  # 'trend'|'range' for dashboard
+
+        # --- throttled GP discovery (fail-soft; never breaks the loop) ------
+        # Evolve + admit indicators for this pair into state/discovered/{pair}.json.
+        # Throttled per (bot, pair) by DISCOVERY_INTERVAL_S so it runs ~hourly
+        # (or on first run when no discovered file exists yet).
+        try:
+            _maybe_discover(bot, pair, prices)
+        except Exception:  # noqa: BLE001
+            health_registry["discovery"] = False
+            traceback.print_exc()
+        else:
+            health_registry["discovery"] = True
 
         # --- load strategy + param-range gate (L40) -------------------------
         try:
@@ -287,6 +342,9 @@ def run_cycle(
                 "partial_enabled": bool(strategy.get("partial_enabled", False)),
                 "current_stop": stop, "atr": atr,
             }
+            # [CORTEX] record the entry (per-type memory; exile persists across cycles)
+            with contextlib.suppress(Exception):
+                cortex.record_entry(pair, "mean_reversion")
             summary["entries"].append(pair)
         else:
             # --- exit evaluation (S5) --------------------------------------
@@ -307,17 +365,23 @@ def run_cycle(
                 else:
                     reentry[pair] = {"last_exit_cycle": cycle}
                     del open_positions[pair]
+                    pnl = pos["unrealised_pct"]
+                    # [CORTEX] record the outcome; auto-exile low-WR GP indicators
+                    with contextlib.suppress(Exception):
+                        cortex.record_outcome(pair, "mean_reversion", pnl)
+                        for ind_id in _discovered_indicator_ids(bot, pair):
+                            cortex.record_indicator_outcome(ind_id, pnl)
                     # [S18] Discord/webhook alert on real trade close (fail-soft)
                     if alert_fn is not None:
                         with contextlib.suppress(Exception):
-                            alert_fn(bot, pair, ex.reason, pos["unrealised_pct"])
+                            alert_fn(bot, pair, ex.reason, pnl)
                 summary["exits"].append((pair, ex.reason))
 
     # --- heartbeat every cycle without exception --------------------------
     status = "ok" if consecutive_failures == 0 else "degraded"
     write_heartbeat(bot, cycle, consecutive_failures, last_price,
                     status=status, health=dict(health_registry),
-                    chart_contexts=chart_contexts)
+                    chart_contexts=chart_contexts, regimes=regimes)
     summary["consecutive_failures"] = consecutive_failures
     if push_fn is not None:
         try:
