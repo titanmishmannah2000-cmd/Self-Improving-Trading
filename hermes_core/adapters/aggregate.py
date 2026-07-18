@@ -327,11 +327,18 @@ class GoldApiSource(_BaseSource):
 
         async def _go() -> float | None:
             client = self._get_client()
-            r = await client.get(self.URL.format(symbol=sym))
-            r.raise_for_status()
-            data = r.json()
-            price = data.get("price")
-            return float(price) if price is not None else None
+            try:  # TEMP DIAG
+                r = await client.get(self.URL.format(symbol=sym))
+                print(f"[DIAG goldapi {sym}] status={r.status_code} body={r.text[:120]}",
+                      file=__import__("sys").stderr, flush=True)
+                r.raise_for_status()
+                data = r.json()
+                price = data.get("price")
+                return float(price) if price is not None else None
+            except Exception as _e:  # TEMP DIAG
+                print(f"[DIAG goldapi {sym}] ERR {type(_e).__name__}: {str(_e)[:120]}",
+                      file=__import__("sys").stderr, flush=True)
+                raise
 
         try:
             out = await self._cached(sym, _go)
