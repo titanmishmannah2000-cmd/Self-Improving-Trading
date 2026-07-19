@@ -182,6 +182,8 @@ def _log_gp_shadow(bot: str, pair: str, prices: list[float], strategy: dict) -> 
             return
         sig = gp_ensemble_signal(pair, prices, strategy)
         _GP_SHADOW_LAST[key] = now
+        # [TEMP LIVE CONFIRM] remove after seeing in prod logs
+        print(f"[SHADOW_LIVE] {pair} plen={len(prices)} sig={sig.meta.get('consensus') if sig else 'None'}", flush=True)
         rec = {
             "ts": time.time(),
             "pair": pair,
