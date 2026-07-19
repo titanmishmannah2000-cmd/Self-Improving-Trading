@@ -176,6 +176,7 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
     # --- REAL close: log the trade with the keys the dashboard reads.
     entry_type = pos.get("entry_type", "mean_reversion")
     pnl = pos["unrealised_pct"]
+    print(f"[TEMP-CLOSE] {bot} {pair} {ex.reason} entry_type={entry_type} pnl={pnl:.4f} exit_reason={ex.reason}", flush=True)
     _log_trade(bot, {
         "id": pos.get("id") or f"{bot}:{pair}:{int(time.time())}",
         "bot": bot, "pair": pair, "cycle": cycle,
