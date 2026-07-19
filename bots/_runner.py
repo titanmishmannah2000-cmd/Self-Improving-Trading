@@ -144,6 +144,7 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
             "id": f"{bot}:{pair}:{int(time.time())}",
             "bot": bot,
             "pair": pair,
+            "entry_type": pos.get("entry_type", "mean_reversion"),
             "entry_price": pos.get("entry_price"),
             "size": pos.get("size"),
             "entry_ts": _now_iso(),

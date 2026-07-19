@@ -251,6 +251,18 @@ body {
 }
 .pc-strategy-rsi_momentum { background: #2a2f24; color: #b4c97f; }
 .pc-strategy-mean_reversion { background: #2a2530; color: #c79bd6; }
+.pc-strategy-gp_ensemble {
+  background: #14303a;
+  color: #5fd0e6;
+  border: 1px solid #2c7d92;
+}
+.dp-gp { color: #5fd0e6; }
+
+/* Portfolio-pulse "GP brain" stat tile — distinct teal so you can spot the
+   genetic-programming entries at a glance among traditional trades. */
+.pulse-stat-gp { background: #14303a; border-radius: 8px; padding: 6px 10px; }
+.pulse-stat-gp .ps-num { color: #5fd0e6; }
+.pulse-stat-gp .ps-label { color: #9fe6f2; }
 
 .pc-status {
   display: flex;

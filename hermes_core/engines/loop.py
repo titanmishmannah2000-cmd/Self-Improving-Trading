@@ -479,6 +479,7 @@ def run_cycle(
             if ex is not None:
                 _log_trade(bot, {
                     "pair": pair, "cycle": cycle, "reason": ex.reason,
+                    "entry_type": pos.get("entry_type", "mean_reversion"),
                     "entry_price": pos["entry_price"], "exit_price": price,
                     "pnl_pct": pos["unrealised_pct"], "size": pos["size"],
                 })

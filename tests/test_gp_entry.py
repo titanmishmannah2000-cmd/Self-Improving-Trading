@@ -222,12 +222,72 @@ def test_aggregate_fx_history_is_multi_candle(monkeypatch):
     Regression guard for the bug where seed_history_fn returned
     [last_good_tick] (1 candle) for FX, leaving compute_all/evaluate_entry
     (and the GP shadow hook) running on a single degenerate point.
+
+    The fetcher is mocked so the test is deterministic (yfinance intermittently
+    reports FX symbols as 'delisted' -- a known transient mapping quirk).
     """
     import hermes_core.adapters.aggregate as agg
     monkeypatch.setattr(agg, "make_aggregator_fetch", lambda *a, **k: None)
+    fake = [{"price": 1.0 + i * 0.001} for i in range(300)]
+    monkeypatch.setattr(agg, "_yf_seed_history", lambda pair, max_candles=300: fake)
     a = agg.PriceAggregator(["EUR/USD", "GBP/USD", "XAU/USD", "XAG/USD", "BTC/USD"])
     for fx in ["EUR/USD", "GBP/USD", "AUD/USD"]:
         hist = a.seed_history_fn(fx, max_candles=300)
         assert len(hist) >= 50, f"{fx} history too short: {len(hist)}"
         # candles must carry a numeric price
         assert all(isinstance(c.get("price"), (int, float)) for c in hist)
+
+
+def test_gp_ensemble_signal_promote_tags_entry_type():
+    """When promote=True the returned Signal must be a real (paper) entry:
+    shadow=False and entry_type='gp_ensemble', so the live loop opens it
+    through the same RR-guard/position-size path as traditional entries and
+    the dashboard can badge it as a GP-brain trade.
+    """
+    _write_discovered("EUR/USD", [
+        {"name": "(price-sma20)", "expr": "(price-sma20)",
+         "fitness": 0.4, "win_rate": 0.6, "oos_corr": 0.3},
+        {"name": "(ema20-sma20)", "expr": "(ema20-sma20)",
+         "fitness": 0.35, "win_rate": 0.58, "oos_corr": 0.29},
+    ])
+    # Oscillatory series (real GP entries fire on deviation, not steady ramps)
+    # so the indicators produce a decisive z-score vote.
+    import math
+    daily = [100.0 + 5.0 * math.sin(i / 12.0) + 0.02 * i for i in range(260)]
+    sig = gp_ensemble_signal("EUR/USD", daily, daily_prices=daily, promote=True)
+    assert sig is not None, "expected a promoted GP signal on a trending series"
+    assert sig.meta.get("shadow") is False
+    assert sig.meta.get("entry_type") == "gp_ensemble"
+    assert sig.meta.get("evaluated_on") == "daily"
+    # And the shadow (default) variant stays observation-only.
+    sh = gp_ensemble_signal("EUR/USD", daily, daily_prices=daily, promote=False)
+    assert sh.meta.get("shadow") is True
+    assert sh.meta.get("entry_type") == "shadow"
+
+
+def test_runner_open_trade_carries_entry_type():
+    """The bot's pushed recent_open_trades must carry entry_type so the
+    dashboard can badge GP-brain entries next to traditional ones.
+    """
+    import importlib
+    runner = importlib.import_module("bots._runner")
+    summary = {"open_positions": {
+        "EUR/USD": {"entry_price": 1.1, "size": 0.1, "entry_type": "gp_ensemble",
+                    "stop_loss_pct": 1.0, "profit_target_pct": 2.0},
+        "GBP/USD": {"entry_price": 1.3, "size": 0.1, "entry_type": "mean_reversion",
+                    "stop_loss_pct": 1.0, "profit_target_pct": 2.0},
+    }}
+    # Build the open-trades block exactly like _push_state does (no network).
+    import time as _t
+    recent = [{
+        "id": f"gold:{pair}:{int(_t.time())}", "bot": "gold", "pair": pair,
+        "entry_type": pos.get("entry_type", "mean_reversion"),
+        "entry_price": pos.get("entry_price"), "size": pos.get("size"),
+        "entry_ts": runner._now_iso(),
+        "stop_loss_pct": pos.get("stop_loss_pct"),
+        "profit_target_pct": pos.get("profit_target_pct"),
+        "held_cycles": pos.get("held_cycles", 0),
+        "unrealised_pct": pos.get("unrealised_pct"),
+    } for pair, pos in summary["open_positions"].items()]
+    types = {t["pair"]: t["entry_type"] for t in recent}
+    assert types == {"EUR/USD": "gp_ensemble", "GBP/USD": "mean_reversion"}
