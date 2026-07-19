@@ -167,7 +167,6 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
     entry_ts, exit_ts) so it is counted as a real close downstream.
     """
     summary["exits"].append((pair, ex.reason))
-    print(f"[TEMP-EXIT] {bot} {pair} reason={ex.reason} stop_moved={ex.reason in ('breakeven','trailing')}", flush=True)
     if ex.reason in ("breakeven", "trailing"):
         # Stop-adjustment only — position stays OPEN, not a trade close.
         if ex.reason == "breakeven":
@@ -177,7 +176,6 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
     # --- REAL close: log the trade with the keys the dashboard reads.
     entry_type = pos.get("entry_type", "mean_reversion")
     pnl = pos["unrealised_pct"]
-    print(f"[TEMP-CLOSE] {bot} {pair} {ex.reason} entry_type={entry_type} pnl={pnl:.4f} exit_reason={ex.reason}", flush=True)
     _log_trade(bot, {
         "id": pos.get("id") or f"{bot}:{pair}:{int(time.time())}",
         "bot": bot, "pair": pair, "cycle": cycle,
