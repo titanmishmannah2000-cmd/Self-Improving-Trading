@@ -147,6 +147,7 @@ def evaluate_entry(
 # any promotion to live trading. Faithful to the "shadow/log-only first for
 # unproven rules" directive.
 import re  # noqa: E402  (local import; entry.py is otherwise stdlib-only)
+import time as _time  # noqa: E402
 
 from hermes_core.engines.genetic import (  # noqa: E402
     FEATURES, _feature, _eval_expr,
@@ -154,6 +155,35 @@ from hermes_core.engines.genetic import (  # noqa: E402
 from hermes_core.engines.genetic import load_discovered_indicators  # noqa: E402
 
 _FEATURE_RE = re.compile(r"^[a-z0-9]+$")
+
+# Daily close cache so GP indicators (discovered on DAILY bars) are evaluated on
+# the SAME regime. Without this the live loop fed them 5m bars -> a regime
+# mismatch (the indicators' sma50/roc20 are daily-scaled). [fixes prior caveat]
+_GP_DAILY_CACHE: dict[str, tuple[float, list[float]]] = {}
+_GP_DAILY_TTL_S = 1800  # refresh daily history at most every 30 min
+
+
+def gp_daily_prices(pair: str) -> list[float] | None:
+    """Daily close series for `pair` (cached 30 min), or None on failure.
+
+    Used so the GP brain is evaluated on the regime its indicators were
+    discovered on. Caller falls back to the live series if this returns None.
+    """
+    try:
+        now = _time.time()
+        cached = _GP_DAILY_CACHE.get(pair)
+        if cached and (now - cached[0]) < _GP_DAILY_TTL_S:
+            return cached[1]
+        from hermes_core.adapters.price import seed_history_interval_sync
+        hist = seed_history_interval_sync(pair, interval="1d", period="2y",
+                                          max_candles=500)
+        px = [float(c["price"]) for c in (hist or []) if c.get("price") is not None]
+        if len(px) < 50:
+            return None
+        _GP_DAILY_CACHE[pair] = (now, px)
+        return px
+    except Exception:  # noqa: BLE001 — never break the entry path
+        return None
 
 
 def _gp_parse(expr_str: str):
@@ -226,16 +256,25 @@ def gp_ensemble_signal(pair: str, prices: list[float],
                        strategy: dict | None = None,
                        consensus_threshold: float = 0.2,
                        min_active: int = 2,
-                       z_threshold: float = 0.5) -> Signal | None:
-    """SHADOW GP entry: weighted vote of discovered indicators for `pair`.
+                       z_threshold: float = 0.5,
+                       daily_prices: list[float] | None = None,
+                       promote: bool = False) -> Signal | None:
+    """GP-ensemble vote of discovered indicators for `pair`.
 
-    Each indicator's expression is evaluated on the live `prices`; its direction
-    is the sign of its value relative to the recent z-scored mean of its own
-    signal series (scale-invariant). Weight = fitness * win_rate * shared_penalty.
-    Returns a Signal with meta["shadow"]=True and the consensus breakdown, or
-    None if not enough indicators fire. NEVER opens a trade.
+    Each indicator's expression is evaluated on the DAILY series (the regime it
+    was discovered on); falls back to the live `prices` only if daily is None.
+    Direction = sign of the indicator's value z-scored vs its own signal series
+    (scale-invariant). Weight = fitness * win_rate * shared_penalty.
+
+    Returns a Signal, or None if not enough indicators fire. When `promote` is
+    False the Signal is tagged shadow=True (observation only). When `promote` is
+    True it is a real (paper) entry candidate (shadow=False, entry_type set) --
+    but it still flows through the live loop's RR guard / position sizing / exit
+    evaluation exactly like traditional entries.
     """
-    if not prices or len(prices) < 50:
+    # Evaluate on the daily regime (fixes the prior 5m/1d mismatch caveat).
+    eval_prices = daily_prices if (daily_prices and len(daily_prices) >= 50) else prices
+    if not eval_prices or len(eval_prices) < 50:
         return None
     inds = load_discovered_indicators(pair, include_shared=True)
     if not inds:
@@ -247,8 +286,8 @@ def gp_ensemble_signal(pair: str, prices: list[float],
         if not expr:
             continue
         try:
-            series = [_gp_eval_last(expr, prices[: i + 1])
-                      for i in range(49, len(prices))]
+            series = [_gp_eval_last(expr, eval_prices[: i + 1])
+                      for i in range(49, len(eval_prices))]
         except Exception:  # noqa: BLE001
             continue
         if len(series) < 20:
@@ -285,10 +324,12 @@ def gp_ensemble_signal(pair: str, prices: list[float],
     return Signal(
         "gp_ensemble", round(abs(strength), 4), size, pair,
         {
-            "shadow": True,
+            "shadow": not promote,
             "gp_strength": round(strength, 4),
             "consensus": consensus,
             "num_active": len(votes),
+            "entry_type": "gp_ensemble" if promote else "shadow",
+            "evaluated_on": "daily" if (daily_prices and len(daily_prices) >= 50) else "live",
         },
     )
 

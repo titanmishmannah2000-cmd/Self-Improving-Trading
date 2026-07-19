@@ -425,6 +425,26 @@ def run_cycle(
                 pair, prices, strategy, context, ensemble,
                 oversold_pairs, vol_above, reentry, cycle, session_token,
             )
+            # GP-promotion: if traditional gives no signal AND GP_PROMOTE=1,
+            # let the GP brain issue a (paper) entry through the SAME guard/size
+            # path as traditional entries. Traditional entries always win; GP is
+            # a tie-breaking fallback so there is never a double open. Pairs in
+            # GP_EXCLUDE_PAIRS (default the two with negative paper expectancy)
+            # are never promoted -- measured, one-lever-at-a-time.
+            if sig is None and get_env("GP_PROMOTE") == "1":
+                _excl = {p.strip().upper() for p in
+                         get_env("GP_EXCLUDE_PAIRS", "GBP/JPY,BTC/USD").split(",") if p.strip()}
+                if pair not in _excl:
+                    try:
+                        from hermes_core.engines.entry import (
+                            gp_ensemble_signal, gp_daily_prices)
+                        _gp_sig = gp_ensemble_signal(
+                            pair, prices, strategy,
+                            daily_prices=gp_daily_prices(pair), promote=True)
+                        if _gp_sig is not None:
+                            sig = _gp_sig
+                    except Exception:  # noqa: BLE001 — GP must never break the cycle
+                        sig = None
             if sig is None:
                 _log_skip(bot, pair, cycle, "no_signal")
                 summary["skips"] += 1
@@ -445,10 +465,11 @@ def run_cycle(
                 "held_cycles": 0, "breakeven_set": False, "partial_done": False,
                 "partial_enabled": bool(strategy.get("partial_enabled", False)),
                 "current_stop": stop, "atr": atr,
+                "entry_type": sig.meta.get("entry_type", "mean_reversion"),
             }
             # [CORTEX] record the entry (per-type memory; exile persists across cycles)
             with contextlib.suppress(Exception):
-                cortex.record_entry(pair, "mean_reversion")
+                cortex.record_entry(pair, sig.meta.get("entry_type", "mean_reversion"))
             summary["entries"].append(pair)
         else:
             # --- exit evaluation (S5) --------------------------------------
