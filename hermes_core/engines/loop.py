@@ -24,6 +24,12 @@ import json
 import time
 import traceback
 from collections.abc import Callable
+from datetime import datetime, timezone
+
+
+def _now_iso() -> str:
+    """UTC ISO-8601 timestamp (matches the dashboard's entry_ts/exit_ts format)."""
+    return datetime.now(timezone.utc).isoformat()
 
 from hermes_core.adapters import make_default_fetch
 from hermes_core.config import load_config, load_strategy_for_pair, repo_root, state_root
@@ -148,6 +154,50 @@ def _log_trade(bot: str, rec: dict) -> None:
             fh.write(json.dumps(rec, default=str) + "\n")
     except OSError:
         pass
+
+
+def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
+                  open_positions, summary, alert_fn) -> None:
+    """Apply the result of `evaluate_exit` to an OPEN position.
+
+    Stop-adjustments (breakeven / trailing) only move the stop — the
+    position stays OPEN and is NOT logged as a trade close. Only a genuine
+    close (sl/tp/time/explicit) writes a closed-trade record, and that record
+    uses the exact keys the dashboard backend reads (id, exit_reason,
+    entry_ts, exit_ts) so it is counted as a real close downstream.
+    """
+    summary["exits"].append((pair, ex.reason))
+    if ex.reason in ("breakeven", "trailing"):
+        # Stop-adjustment only — position stays OPEN, not a trade close.
+        if ex.reason == "breakeven":
+            pos["breakeven_set"] = True
+        pos["current_stop"] = ex.new_stop
+        return
+    # --- REAL close: log the trade with the keys the dashboard reads.
+    entry_type = pos.get("entry_type", "mean_reversion")
+    pnl = pos["unrealised_pct"]
+    _log_trade(bot, {
+        "id": pos.get("id") or f"{bot}:{pair}:{int(time.time())}",
+        "bot": bot, "pair": pair, "cycle": cycle,
+        "reason": ex.reason, "exit_reason": ex.reason,
+        "entry_type": entry_type,
+        "entry_price": pos["entry_price"], "exit_price": price,
+        "entry_ts": pos.get("entry_ts"), "exit_ts": _now_iso(),
+        "pnl_pct": pnl, "size": pos["size"],
+        "hold_cycles": pos.get("held_cycles", 0),
+    })
+    reentry[pair] = {"last_exit_cycle": cycle}
+    del open_positions[pair]
+    # [CORTEX] record the outcome under the REAL entry_type;
+    # auto-exile low-WR GP indicators.
+    with contextlib.suppress(Exception):
+        cortex.record_outcome(pair, entry_type, pnl)
+        for ind_id in _discovered_indicator_ids(bot, pair):
+            cortex.record_indicator_outcome(ind_id, pnl)
+    # [S18] Discord/webhook alert on real trade close (fail-soft)
+    if alert_fn is not None:
+        with contextlib.suppress(Exception):
+            alert_fn(bot, pair, ex.reason, pnl)
 
 
 def _discovered_indicator_ids(bot: str, pair: str) -> list[str]:
@@ -459,6 +509,8 @@ def run_cycle(
             size = compute_position_size(session_token, atr, 0, strategy)
             stop = _atr_stop_for(strategy, price, atr)
             open_positions[pair] = {
+                "id": f"{bot}:{pair}:{int(time.time())}",
+                "entry_ts": _now_iso(),
                 "entry_price": price, "size": min(size, MAX_POSITION_SIZE),
                 "stop_loss_pct": sl, "profit_target_pct": tp,
                 "time_exit_cycles": int(strategy.get("time_exit_cycles", 288)),
@@ -477,31 +529,12 @@ def run_cycle(
             pos["unrealised_pct"] = (price - pos["entry_price"]) / pos["entry_price"] * 100.0
             ex = evaluate_exit(pos, price, prices)
             if ex is not None:
-                _log_trade(bot, {
-                    "pair": pair, "cycle": cycle, "reason": ex.reason,
-                    "entry_type": pos.get("entry_type", "mean_reversion"),
-                    "entry_price": pos["entry_price"], "exit_price": price,
-                    "pnl_pct": pos["unrealised_pct"], "size": pos["size"],
-                })
-                if ex.reason == "breakeven":
-                    pos["breakeven_set"] = True
-                    pos["current_stop"] = ex.new_stop
-                elif ex.reason == "trailing":
-                    pos["current_stop"] = ex.new_stop
-                else:
-                    reentry[pair] = {"last_exit_cycle": cycle}
-                    del open_positions[pair]
-                    pnl = pos["unrealised_pct"]
-                    # [CORTEX] record the outcome; auto-exile low-WR GP indicators
-                    with contextlib.suppress(Exception):
-                        cortex.record_outcome(pair, "mean_reversion", pnl)
-                        for ind_id in _discovered_indicator_ids(bot, pair):
-                            cortex.record_indicator_outcome(ind_id, pnl)
-                    # [S18] Discord/webhook alert on real trade close (fail-soft)
-                    if alert_fn is not None:
-                        with contextlib.suppress(Exception):
-                            alert_fn(bot, pair, ex.reason, pnl)
-                summary["exits"].append((pair, ex.reason))
+                _process_exit(
+                    bot, pair, cycle, pos, price, ex,
+                    cortex=cortex, reentry=reentry,
+                    open_positions=open_positions, summary=summary,
+                    alert_fn=alert_fn,
+                )
 
     # --- heartbeat every cycle without exception --------------------------
     status = "ok" if consecutive_failures == 0 else "degraded"
