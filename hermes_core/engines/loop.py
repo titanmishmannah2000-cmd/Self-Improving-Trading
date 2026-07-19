@@ -167,6 +167,7 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
     entry_ts, exit_ts) so it is counted as a real close downstream.
     """
     summary["exits"].append((pair, ex.reason))
+    print(f"[TEMP-EXIT] {bot} {pair} reason={ex.reason} stop_moved={ex.reason in ('breakeven','trailing')}", flush=True)
     if ex.reason in ("breakeven", "trailing"):
         # Stop-adjustment only — position stays OPEN, not a trade close.
         if ex.reason == "breakeven":
