@@ -175,6 +175,7 @@ def _log_gp_shadow(bot: str, pair: str, prices: list[float], strategy: dict) -> 
     try:
         from hermes_core.engines.entry import gp_ensemble_signal
         if len(prices) < 50:
+            print(f"[SHADOW_DEBUG] {pair} SKIP short prices len={len(prices)}", flush=True)
             return
         now = time.time()
         key = (bot, pair)
@@ -183,10 +184,7 @@ def _log_gp_shadow(bot: str, pair: str, prices: list[float], strategy: dict) -> 
         sig = gp_ensemble_signal(pair, prices, strategy)
         _GP_SHADOW_LAST[key] = now
         # [TEMP DEBUG] remove after live confirmation
-        import logging as _lg
-        _lg.getLogger("hermes.shadow").info(
-            "[shadow] %s ran; signal=%s", pair,
-            (sig.meta.get("consensus") if sig else "None"))
+        print(f"[SHADOW_DEBUG] {pair} ran; prices_len={len(prices)} signal={sig.meta.get('consensus') if sig else 'None'}", flush=True)
         rec = {
             "ts": time.time(),
             "pair": pair,
