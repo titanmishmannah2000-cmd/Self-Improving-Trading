@@ -2201,11 +2201,19 @@ def cortex_dashboard():
     try:
         conn = get_conn()
         rows = conn.execute(
-            "SELECT bot, cortex_json FROM latest_state WHERE cortex_json IS NOT NULL AND cortex_json != '{}'"
+            "SELECT bot, cortex_json FROM latest_state"
         ).fetchall()
         conn.close()
+        # TEMP: dump raw stored values to diagnose no_data
+        raw = {row["bot"]: (row["cortex_json"][:120] if row["cortex_json"] else None) for row in rows}
+        print(f"[TEMP-CORTEX-DB] raw={raw}", flush=True)
+        conn2 = get_conn()
+        rows2 = conn2.execute(
+            "SELECT bot, cortex_json FROM latest_state WHERE cortex_json IS NOT NULL AND cortex_json != '{}'"
+        ).fetchall()
+        conn2.close()
         r = {}
-        for row in rows:
+        for row in rows2:
             try: r[row["bot"]] = json.loads(row["cortex_json"])
             except: pass
         return r if r else {"status": "no_data"}
