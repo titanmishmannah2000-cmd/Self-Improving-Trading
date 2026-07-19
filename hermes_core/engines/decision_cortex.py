@@ -29,6 +29,7 @@ VALID_ENTRY_TYPES = ("mean_reversion", "gp_ensemble")
 
 CORTEX_DIR = repo_root() / "state" / "cortex"
 EXILE_PATH = CORTEX_DIR / "indicator_exile.json"
+MEMORY_PATH = CORTEX_DIR / "cortex_memory.json"  # persisted entry/outcome history
 
 
 def _load_exiles() -> dict:
@@ -45,26 +46,54 @@ def _save_exiles(data: dict) -> None:
     EXILE_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+def _load_memory() -> dict:
+    """Persisted entry/outcome history (D2): survives restart + per-cycle reset."""
+    if MEMORY_PATH.exists():
+        try:
+            return json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {"entries": [], "indicator_stats": {}}
+
+
+def _save_memory(data: dict) -> None:
+    CORTEX_DIR.mkdir(parents=True, exist_ok=True)
+    MEMORY_PATH.write_text(json.dumps(data), encoding="utf-8")
+
+
 class Cortex:
-    """Per-pair, per-type, per-indicator memory + exile system."""
+    """Per-pair, per-type, per-indicator memory + exile system.
+
+    Memory persists to disk (D2) so a restart, or the per-cycle re-creation
+    in the bot loop, never silently rebuilds from scratch.
+    """
 
     def __init__(self) -> None:
-        self._entries: list[dict] = []          # (pair, entry_type, outcome)
-        self._indicator_stats: dict[str, dict] = {}   # ind_id -> attempts/wins/exiled
+        mem = _load_memory()
+        self._entries: list[dict] = mem.get("entries", [])
+        self._indicator_stats: dict[str, dict] = mem.get("indicator_stats", {})
+
+    def _flush(self) -> None:
+        _save_memory({"entries": self._entries,
+                      "indicator_stats": self._indicator_stats})
 
     # ── recording ──────────────────────────────────────────────────────────
     def record_entry(self, pair: str, entry_type: str) -> None:
         self._entries.append({"pair": pair, "type": entry_type, "outcome": None})
+        self._flush()
 
     def record_outcome(self, pair: str, entry_type: str, pnl: float) -> None:
         self._entries.append({"pair": pair, "type": entry_type,
                               "outcome": 1 if pnl > 0 else 0})
+        self._flush()
 
     def record_hypothesis(self, pair: str, text: str) -> None:
         self._entries.append({"pair": pair, "type": "hypothesis", "text": text})
+        self._flush()
 
     def record_discovery(self, pair: str, ind_id: str) -> None:
         self._entries.append({"pair": pair, "type": "discovery", "ind": ind_id})
+        self._flush()
 
     # ── per-type win-rate ───────────────────────────────────────────────────
     def entry_type_wr(self, entry_type: str) -> float | None:
@@ -105,6 +134,7 @@ class Cortex:
             st["exiled"] = True
             exiles[ind_id] = {"exiled_at_attempts": st["attempts"], "wr": round(wr, 3)}
         _save_exiles(exiles)
+        self._flush()
 
     def is_indicator_exiled(self, ind_id: str) -> bool:
         return bool(_load_exiles().get(ind_id))
@@ -120,9 +150,43 @@ class Cortex:
         return sorted(_load_exiles().keys())
 
     def summary(self) -> dict:
+        by_type: dict[str, dict] = {}
+        by_pair: dict[str, dict] = {}
+        for e in self._entries:
+            outcome = e.get("outcome")
+            if outcome is None:
+                continue
+            t = e.get("type")
+            p = e.get("pair")
+            if t:
+                d = by_type.setdefault(t, {"n": 0, "wins": 0, "pnl": 0.0})
+                d["n"] += 1
+                d["wins"] += outcome
+            if p:
+                d = by_pair.setdefault(p, {"n": 0, "wins": 0, "pnl": 0.0})
+                d["n"] += 1
+                d["wins"] += outcome
+        indicators = {}
+        for ind_id, st in self._indicator_stats.items():
+            attempts = st.get("attempts", 0)
+            wins = st.get("wins", 0)
+            indicators[ind_id] = {
+                "entries": attempts,
+                "wins": wins,
+                "pnl": 0.0,  # per-indicator PnL not tracked; kept for shape parity
+                "exiled": st.get("exiled", False),
+            }
         return {
-            "entries": len(self._entries),
-            "type_wr": {t: self.entry_type_wr(t) for t in VALID_ENTRY_TYPES},
-            "best_entry_type": self.best_entry_type(),
+            "summary": {
+                "entries_total": len(self._entries),
+                "exiled_indicators": len(self.get_exiled_indicators()),
+                "indicators_tracked": len(indicators),
+                "best_entry_type": self.best_entry_type(),
+            },
             "exiled": self.get_exiled_indicators(),
+            "indicators": indicators,
+            "policy": {"version": 1},
+            "by_entry_type": by_type,
+            "by_pair": by_pair,
+            "type_wr": {t: self.entry_type_wr(t) for t in VALID_ENTRY_TYPES},
         }

@@ -109,12 +109,13 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
                 continue
     discovered = discovered_pairs
     cortex: dict = {}
-    cfile = rr / "state" / "cortex" / "indicator_exile.json"
-    if cfile.exists():
-        try:
-            cortex[bot] = json.loads(cfile.read_text(encoding="utf-8"))
-        except Exception:
-            cortex = {}
+    # Cortex memory now persists to disk (D2); reconstructing the instance
+    # reloads entry/outcome history + indicator stats across cycles/restarts.
+    try:
+        from hermes_core.engines.decision_cortex import Cortex
+        cortex[bot] = Cortex().summary()
+    except Exception:
+        cortex = {}
     # recent trades / skips from the jsonl the loop appends
     def _read_jsonl(name: str, limit: int = 200):
         p = sdir / name
