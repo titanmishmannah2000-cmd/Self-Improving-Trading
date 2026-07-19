@@ -46,7 +46,11 @@ from pathlib import Path
 from hermes_core.config import repo_root
 
 # ── gates ──────────────────────────────────────────────────────────────────
-OOS_FLOOR = 0.08         # [GUARD L53] admit indicator if OOS corr >= floor; lowered from 0.15 (unreachable for current expr space)
+OOS_FLOOR = 0.15         # admit if held-out |corr| >= floor. Restored to the
+                          # older engine's value (0.15) — the low 0.08 floor let
+                          # permutation-cleared noise slip through the Sharpe/kfold
+                          # OR-gate at ~30% FDR. On the daily/horizon-60 regime we
+                          # actually reach 0.28-0.85, so 0.15 is real, not unreachable.
 COMPLEXITY_PENALTY = 0.001
 REDUNDANCY_R = 0.8       # |pearson| > this vs an existing indicator -> REJECTED
 PERM_PVALUE_FLOOR = 0.05  # reject candidates whose OOS corr is not better than shuffled-label noise
@@ -336,9 +340,12 @@ def _honest_oos(signal: list[float], prices: list[float], horizon: int = 1,
     """Honest out-of-sample correlation via N_FOLDS walk-forward splits.
 
     Returns (median_corr, frac_folds_passing) where a fold "passes" if its
-    held-out |corr| >= MIN_CORR. The old engine used a single 80/20 split;
-    this extends it to k-fold so a candidate must hold up across multiple
-    disjoint hold-outs, not just one lucky split.
+    held-out |corr| >= OOS_FLOOR (0.15) -- the SAME bar the old engine's
+    walk-forward used (its correlation_threshold=0.15, NOT the near-zero
+    MIN_CORR=0.05). A candidate must clear that bar in a MAJORITY of disjoint
+    folds, so a single lucky split cannot admit it -- this is the old engine's
+    actual noise control, and it is what stops the GA (which hunts 2400
+    candidates for one lucky split) from leaking ~20% false discoveries.
     """
     n = min(len(signal), len(prices) - horizon)
     if n < n_folds * 15:
@@ -355,7 +362,7 @@ def _honest_oos(signal: list[float], prices: list[float], horizon: int = 1,
             continue
         c = abs(_pearson(signal[a:b], _forward_returns(prices, horizon)[a:b]))
         corrs.append(c)
-        if c >= MIN_CORR:
+        if c >= OOS_FLOOR:
             passing += 1
     if not corrs:
         return 0.0, 0.0
@@ -541,11 +548,39 @@ def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
             oos = _compute_fitness(sig_test, test, horizon)
             if oos < OOS_FLOOR:
                 continue
-            # Permutation null-test: reject lucky-noise candidates.
+            # Permutation null-test: reject lucky-noise candidates (mandatory
+            # firewall — also what keeps test_random_low_rate FDR <5% on noise).
             p_val, _real_c, null_mean = _permutation_pvalue(
                 sig_test, test, horizon, n_perm=200, seed=seed)
             if p_val >= PERM_PVALUE_FLOOR:
                 continue
+            # ── Ported from the older engine: walk-forward majority gate ──
+            # The old engine's real noise control was walk-forward: a candidate
+            # had to clear the OOS bar in a MAJORITY of disjoint folds, so a
+            # single lucky 60/40 split could not admit it. The GA evolves
+            # thousands of candidates specifically hunting for that one lucky
+            # split, which is why a bare OOS>=0.15 + permutation still admits
+            # ~20% noise under full evolution. _honest_oos returns
+            # (median_corr, frac_folds_passing); we require the candidate to
+            # pass in >= half the folds (the old `clear >= (n_folds+1)//2`
+            # rule). Sharpe is a SECONDARY escape (old engine: corr OR sharpe)
+            # but only when the split is too short for honest k-fold.
+            _n = min(len(sig_test), len(test) - horizon)
+            if _n >= N_FOLDS * 15:
+                kfold_med, frac = _honest_oos(sig_test, test, horizon)
+                sh = _sharpe(sig_test, test, horizon)
+                # Old-engine walk-forward rule, tightened for shorter series:
+                # require BOTH a strong majority of folds clearing OOS_FLOOR
+                # (>=4 of 5; the old engine's n_windows=4 -> >=2 of 3 on 2y daily
+                # where folds are large and 0.15 is genuinely hard by chance)
+                # AND the median fold-corr >= OOS_FLOOR. On our ~400pt test the
+                # folds are small, so a stricter majority is needed to kill the
+                # GA's lucky-split hunt. (The old engine's secondary Sharpe OR is
+                # intentionally NOT used here: on noise it admits false positives
+                # and the k-fold majority already captures tradeable signals.)
+                _kfold_ok = (frac >= 0.8) and (kfold_med >= OOS_FLOOR)
+                if not _kfold_ok:
+                    continue
             # OOS signal stats for the dashboard (honest, held-out).
             win_rate, total_pnl = _compute_signal_stats(sig_test, test, horizon)
             if redundancy_check(sig_test, existing_signals) == "REJECTED":
