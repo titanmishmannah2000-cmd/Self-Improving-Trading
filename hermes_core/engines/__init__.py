@@ -23,6 +23,12 @@ from hermes_core.engines.crisis_learning import (
 )
 from hermes_core.engines.decision_cortex import Cortex
 from hermes_core.engines.entry import Signal, evaluate_entry
+from hermes_core.engines.entry import (
+    gp_ensemble_signal,
+    simulate_gp_paper_pnl,
+    _gp_eval_last,
+    _gp_parse,
+)
 from hermes_core.engines.exit import Exit, evaluate_exit, should_circuit_break
 from hermes_core.engines.genetic import (
     GeneticEngine,

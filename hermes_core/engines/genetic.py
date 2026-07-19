@@ -631,14 +631,45 @@ def _save_discovered(pair: str, inds: list[dict]) -> None:
     _discovered_path(pair).write_text(json.dumps(clean, indent=2), encoding="utf-8")
 
 
-def load_discovered_indicators(pair: str) -> list[dict]:
+def load_discovered_indicators(pair: str, include_shared: bool = True) -> list[dict]:
     p = _discovered_path(pair)
-    if not p.exists():
-        return []
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return []
+    own: list[dict] = []
+    if p.exists():
+        try:
+            own = json.loads(p.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            own = []
+    if not include_shared:
+        return own
+    # Ported from the older engine's _get_shared_pairs: indicators discovered
+    # on one pair are REUSED (at 50% weight) on related pairs in the same group.
+    # e.g. gold's discoveries inform silver, and USD-pair discoveries inform
+    # each other. This is NOT auto-discovery of new tradeable symbols -- the
+    # pair universe is unchanged; only indicator knowledge is shared.
+    merged = list(own)
+    for sp in _shared_pairs_for(pair):
+        for ind in load_discovered_indicators(sp, include_shared=False):
+            c = dict(ind)
+            c["_shared_from"] = sp
+            c["_shared_penalty"] = 0.5
+            merged.append(c)
+    return merged
+
+
+# Pairs that share indicator knowledge (ported from old engine _SHARED_INDICATOR_GROUPS).
+# Gold/silver cointegrated; USD pairs share DXY-driven structure. Hand-coded,
+# NOT discovered -- the tradeable-symbol universe is unchanged.
+SHARED_INDICATOR_GROUPS = [
+    {"XAU/USD", "XAG/USD"},
+    {"EUR/USD", "GBP/USD", "AUD/USD"},
+]
+
+
+def _shared_pairs_for(pair: str) -> list[str]:
+    for group in SHARED_INDICATOR_GROUPS:
+        if pair in group:
+            return [p for p in group if p != pair]
+    return []
 
 
 class GeneticEngine:
