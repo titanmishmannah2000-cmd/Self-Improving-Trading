@@ -2201,12 +2201,15 @@ def cortex_dashboard():
     try:
         conn = get_conn()
         rows = conn.execute(
-            "SELECT bot, cortex_json FROM latest_state"
+            "SELECT bot, cortex_json FROM latest_state WHERE cortex_json IS NOT NULL AND cortex_json != '{}'"
         ).fetchall()
         conn.close()
-        # TEMP: return raw stored values to diagnose no_data (no print; via response)
-        raw = {row["bot"]: (row["cortex_json"][:200] if row["cortex_json"] else None) for row in rows}
-        return {"_temp_raw": raw}
+        r = {}
+        for row in rows:
+            try: r[row["bot"]] = json.loads(row["cortex_json"])
+            except: pass
+        # TEMP-MARKER v2 (verify deploy)
+        return {"_marker": "cortex-v2", **(r if r else {"status": "no_data"})}
     except Exception as e:
         return {"error": str(e)}
 
