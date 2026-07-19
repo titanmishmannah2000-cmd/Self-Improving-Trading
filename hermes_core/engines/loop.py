@@ -159,6 +159,45 @@ def _discovered_indicator_ids(bot: str, pair: str) -> list[str]:
         return []
 
 
+# Logs the GP-ensemble "would-be" signal for a pair every cycle. SHADOW ONLY:
+# it writes a structured record to state/{bot}/gp_shadow.jsonl and NEVER opens
+# an order. This is the out-of-sample track record we require before any live
+# promotion of the GP brain (faithful to "shadow/log-only first").
+_GP_SHADOW_LAST: dict[tuple, float] = {}
+GP_SHADOW_LOG_INTERVAL_S = 300  # at most one shadow record per 5 min per pair
+
+
+def _log_gp_shadow(bot: str, pair: str, prices: list[float], strategy: dict) -> None:
+    """Evaluate the GP shadow entry and append a paper-only record.
+
+    Fail-soft: any exception is swallowed (logging must never break the cycle).
+    """
+    try:
+        from hermes_core.engines.entry import gp_ensemble_signal
+        if len(prices) < 50:
+            return
+        now = time.time()
+        key = (bot, pair)
+        if key in _GP_SHADOW_LAST and (now - _GP_SHADOW_LAST[key]) < GP_SHADOW_LOG_INTERVAL_S:
+            return
+        sig = gp_ensemble_signal(pair, prices, strategy)
+        _GP_SHADOW_LAST[key] = now
+        rec = {
+            "ts": time.time(),
+            "pair": pair,
+            "signal": None if sig is None else sig.type,
+            "consensus": (sig.meta.get("consensus") if sig else None),
+            "gp_strength": (sig.meta.get("gp_strength") if sig else None),
+            "num_active": (sig.meta.get("num_active") if sig else 0),
+            "shadow": True,
+        }
+        path = _state_dir(bot) / "gp_shadow.jsonl"
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, default=str) + "\n")
+    except Exception:  # noqa: BLE001 — observation must never break the cycle
+        pass
+
+
 def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None) -> None:
     """Throttled GP discovery for one pair.
 
@@ -350,6 +389,12 @@ def run_cycle(
             traceback.print_exc()
             continue
         health_registry["config"] = True
+
+        # ── SHADOW GP-ensemble observation (LOG ONLY, never an order) ──
+        # Records the GP brain's would-be signal/consensus every 5 min per pair
+        # so we build the real out-of-sample track record before any live
+        # promotion. Fails soft; does NOT affect trading decisions.
+        _log_gp_shadow(bot, pair, prices, strategy)
 
         # --- chart context (fail-open; an error yields neutral) -------------
         context = ""

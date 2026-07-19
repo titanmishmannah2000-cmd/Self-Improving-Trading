@@ -171,3 +171,45 @@ def test_paper_pnl_runs_and_is_deterministic():
 
 def test_paper_pnl_short_series_returns_empty():
     assert simulate_gp_paper_pnl("EUR/USD", [1.0, 2.0, 3.0])["trades"] == 0
+
+
+# ── Shadow logger wiring (Task B live hook) ────────────────────────────────
+def test_log_gp_shadow_writes_record(tmp_path, monkeypatch):
+    """The live-loop shadow hook appends a paper-only record and never raises."""
+    import hermes_core.engines.loop as loop
+    import hermes_core.engines.genetic as gp
+
+    monkeypatch.setattr(loop, "_state_dir", lambda bot: (tmp_path / bot).mkdir(parents=True, exist_ok=True) or (tmp_path / bot))
+    # ensure some discovered indicators exist for the pair
+    _write_discovered("EUR/USD", [
+        {"name": "(price-sma20)", "expr": "(price-sma20)",
+         "fitness": 0.4, "win_rate": 0.6, "oos_corr": 0.3},
+        {"name": "(ema20-sma20)", "expr": "(ema20-sma20)",
+         "fitness": 0.35, "win_rate": 0.58, "oos_corr": 0.29},
+    ])
+    # ramp then a sharp recent move so the indicators' last values deviate
+    # from their rolling means (z-score clears the gate -> a real signal).
+    prices = [100.0 + 0.2 * i for i in range(110)] + [112.0 + 0.5 * j for j in range(10)]
+    strategy = {"position_size_r": 0.1}
+
+    loop._log_gp_shadow("goldbot", "EUR/USD", prices, strategy)
+
+    rec_path = tmp_path / "goldbot" / "gp_shadow.jsonl"
+    assert rec_path.exists()
+    lines = rec_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    rec = json.loads(lines[0])
+    assert rec["shadow"] is True
+    assert rec["pair"] == "EUR/USD"
+    assert rec["signal"] == "gp_ensemble"
+    assert rec["consensus"] in ("bullish", "strong_bullish",
+                                 "bearish", "strong_bearish")
+
+
+def test_log_gp_shadow_fail_soft(tmp_path, monkeypatch):
+    """Bad inputs must never raise; the hook stays invisible to the cycle."""
+    import hermes_core.engines.loop as loop
+    monkeypatch.setattr(loop, "_state_dir", lambda bot: (tmp_path / bot).mkdir(parents=True, exist_ok=True) or (tmp_path / bot))
+    # too-short prices -> silent no-op
+    loop._log_gp_shadow("b", "EUR/USD", [1.0, 2.0], {"position_size_r": 0.1})
+    assert not (tmp_path / "b" / "gp_shadow.jsonl").exists()
