@@ -14,8 +14,11 @@ plus token rejection and explicit empty-tab handling.
 from __future__ import annotations
 
 import pytest
+from fastapi.testclient import TestClient
 
 import dashboard.backend.main as m
+
+client = TestClient(m.app)
 
 
 @pytest.fixture(autouse=True)
@@ -33,6 +36,16 @@ def _tmp_backend(tmp_path, monkeypatch):
     m.INGEST_TOKEN = "secret-token"
     monkeypatch.setattr(m, "get_conn", m.get_conn)  # re-init below
     m.init_db()
+    # Replicate the import-time migration (cortex_json/flatlined_json) that the
+    # production DB has but init_db()'s base schema omits.
+    conn = m.get_conn()
+    for _col in ("discovered_json", "cortex_json", "flatlined_json", "open_trades_json"):
+        try:
+            conn.execute(f"ALTER TABLE latest_state ADD COLUMN {_col} TEXT DEFAULT '{{}}'")
+        except Exception:
+            pass
+    conn.commit()
+    conn.close()
     yield
 
 
@@ -45,21 +58,21 @@ TOKEN = {"X-Ingest-Token": "secret-token"}
 
 # ── blueprint Phase 16 success criteria ───────────────────────────────────
 def test_ingest_forex():
-    c = m.test_client()
+    c = client
     r = c.post("/api/ingest/forex", json=VALID_RECORD, headers=TOKEN)
     assert r.status_code == 200
-    trades = c.get("/api/trades/forex").json
+    trades = c.get("/api/trades/forex").json()
     assert any(t["id"] == VALID_RECORD["id"] for t in trades)
 
 
 def test_no_collision():
     # two different bots, same id -> both retained, distinct (PK bot,id)
-    c = m.test_client()
+    c = client
     rec_x = dict(VALID_RECORD, id="X")
     c.post("/api/ingest/forex", json=rec_x, headers=TOKEN)
     c.post("/api/ingest/gold", json=dict(VALID_RECORD, id="X"), headers=TOKEN)
-    fx = c.get("/api/trades/forex").json
-    gd = c.get("/api/trades/gold").json
+    fx = c.get("/api/trades/forex").json()
+    gd = c.get("/api/trades/gold").json()
     assert any(t["id"] == "X" and t["bot"] == "forex" for t in fx)
     assert any(t["id"] == "X" and t["bot"] == "gold" for t in gd)
     # the forex "X" must NOT have been overwritten by gold's "X"
@@ -68,16 +81,16 @@ def test_no_collision():
 
 
 def test_unknown_bot_404():
-    c = m.test_client()
+    c = client
     r = c.post("/api/ingest/unknown_bot", json={}, headers=TOKEN)
     assert r.status_code == 404
 
 
 def test_overview_both():
-    c = m.test_client()
+    c = client
     c.post("/api/ingest/forex", json=VALID_RECORD, headers=TOKEN)
     c.post("/api/ingest/gold", json=dict(VALID_RECORD, id="G1"), headers=TOKEN)
-    o = c.get("/api/overview").json
+    o = c.get("/api/overview").json()
     assert "forex" in o and "gold" in o
     assert o["forex"]["trades"] >= 1
     assert o["gold"]["trades"] >= 1
@@ -85,27 +98,78 @@ def test_overview_both():
 
 def test_persist_restart():
     # ingest, then simulate a restart by building a fresh client (same DB file)
-    c = m.test_client()
+    c = client
     c.post("/api/ingest/forex", json=dict(VALID_RECORD, id="Y"), headers=TOKEN)
     c2 = m.test_client()   # new handler, same on-disk SQLite
-    trades = c2.get("/api/trades/forex").json
+    trades = c2.get("/api/trades/forex").json()
     assert any(t["id"] == "Y" for t in trades)
 
 
 # ── auth + empty-tab handling ───────────────────────────────────────────────
 def test_ingest_requires_token():
-    c = m.test_client()
+    c = client
     r = c.post("/api/ingest/forex", json=VALID_RECORD, headers={})
     assert r.status_code == 401
 
 
 def test_unknown_bot_read_returns_empty_not_500():
-    c = m.test_client()
-    assert c.get("/api/trades/unknown_bot").json == []
-    assert c.get("/api/discovered/unknown_bot").json == []
+    c = client
+    assert c.get("/api/trades/unknown_bot").json() == []
+    assert c.get("/api/discovered/unknown_bot").json() == []
 
 
 def test_empty_tab_explicit_not_500():
-    c = m.test_client()
+    c = client
     assert c.get("/api/trades/forex").status_code == 200
-    assert c.get("/api/trades/forex").json == []   # no data yet, explicit []
+    assert c.get("/api/trades/forex").json() == []   # no data yet, explicit []
+
+
+def test_gp_open_trade_surfaces_in_overview():
+    """Regression: the bot pushes its live open_positions every cycle as
+    recent_open_trades (carrying entry_type='gp_ensemble' for GP-brain
+    entries). /api/overview must surface them with entry_type intact -- the
+    prior cross-check against the trades table silently dropped every live
+    open position (open positions are only written to trades on EXIT), so GP
+    entries (and all live opens) never reached the dashboard.
+
+    Self-contained: own temp DB + direct overview() call (no shared fixture).
+    """
+    import tempfile as _tf
+    import json
+    from datetime import datetime, timezone
+    import dashboard.backend.main as mm
+
+    d = _tf.mkdtemp()
+    mm.DB_PATH = f"{d}/dash.db"
+    mm.init_db()
+    conn = mm.get_conn()
+    for _col in ("discovered_json", "cortex_json", "flatlined_json", "open_trades_json"):
+        try:
+            conn.execute(f"ALTER TABLE latest_state ADD COLUMN {_col} TEXT DEFAULT '{{}}'")
+        except Exception:
+            pass
+
+    ts = datetime.now(timezone.utc).isoformat()
+    gp_open = {
+        "id": "gold:XAU/USD:1700000000", "bot": "gold", "pair": "XAU/USD",
+        "entry_type": "gp_ensemble", "entry_price": 4000.0, "size": 0.1,
+        "entry_ts": ts, "stop_loss_pct": 1.5, "profit_target_pct": 3.0,
+        "held_cycles": 3, "unrealised_pct": 0.32,
+    }
+    conn.execute(
+        """INSERT INTO latest_state
+           (bot, strategy_json, goal_json, heartbeat_json, open_trades_json,
+            discovered_json, cortex_json, flatlined_json, received_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        ("gold",
+         '{"XAU/USD": {"strategy_type": "rsi_momentum"}}',
+         "{}", '{"prices": {"XAU/USD": 4013.0}}',
+         json.dumps([gp_open]), "{}", "{}", "{}", ts),
+    )
+    conn.commit()
+    o = mm.overview()
+    open_trades = o["bots"]["gold"]["recent_open_trades"]
+    gp = [t for t in open_trades if t.get("entry_type") == "gp_ensemble"]
+    assert gp, f"GP open trade dropped from overview: {open_trades}"
+    assert gp[0]["pair"] == "XAU/USD"
+    assert gp[0].get("unrealised_pct") == 0.32

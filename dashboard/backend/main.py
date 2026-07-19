@@ -648,19 +648,30 @@ def overview():
         heartbeat = heartbeat or {}
         strategy = json.loads(state_row["strategy_json"]) if state_row and state_row["strategy_json"] else None
         strategy = strategy or {}
-        # Open trades: try heartbeat push first, fall back to live query from trades table
+        # Open trades: the bot pushes its CURRENT open_positions every cycle as
+        # recent_open_trades (carrying entry_type, e.g. 'gp_ensemble' for the GP
+        # brain). Treat that push as authoritative for "what is open now" — it
+        # is always fresh (entry_ts set each cycle). We keep the 24h staleness
+        # cutoff, but we NO LONGER discard pushed open trades just because they
+        # aren't (yet) rows in the trades table: open positions are only written
+        # to trades on EXIT, so a live open position would never match and was
+        # being silently dropped. Enrich with trades-table entry_type if present.
         open_trades = json.loads(state_row["open_trades_json"]) if state_row and state_row["open_trades_json"] else []
         open_trades = open_trades or []
-        # Stale cleanup: remove open trades older than 24h (bot pushed stale data)
         if open_trades:
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
             open_trades = [t for t in open_trades if (t.get("entry_ts") or "") > cutoff]
-        # Cross-check: only keep trades that actually exist in the trades table as open
         if open_trades:
-            live_ids = {r["id"] for r in conn.execute(
-                "SELECT id FROM trades WHERE bot=? AND exit_ts IS NULL", (bot,)
-            ).fetchall()}
-            open_trades = [t for t in open_trades if t.get("id") in live_ids]
+            live_by_id = {r["id"]: r for r in conn.execute(
+                "SELECT * FROM trades WHERE bot=? AND exit_ts IS NULL", (bot,)).fetchall()}
+            for t in open_trades:
+                if not t.get("entry_type"):
+                    src = live_by_id.get(t.get("id"))
+                    if src and src["raw_json"]:
+                        try:
+                            t["entry_type"] = json.loads(src["raw_json"]).get("entry_type")
+                        except Exception:
+                            pass
         if not open_trades:
             live = conn.execute(
                 "SELECT * FROM trades WHERE bot=? AND exit_ts IS NULL ORDER BY entry_ts DESC",
