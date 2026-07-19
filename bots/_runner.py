@@ -86,6 +86,21 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
     # Real runtime state lives where the loop writes it (HERMES_STATE_ROOT
     # volume, per-bot) — heartbeat/trades/skips below.
     sdir = Path(get_env("HERMES_STATE_ROOT", str(Path(__file__).resolve().parents[2]))) / bot / "state"
+
+    def _read_jsonl(name: str, limit: int = 400):
+        p = sdir / name
+        if not p.exists():
+            return []
+        out = []
+        try:
+            for line in p.read_text(encoding="utf-8").splitlines()[-limit:]:
+                line = line.strip()
+                if line:
+                    out.append(json.loads(line))
+        except Exception:
+            pass
+        return out
+
     try:
         heartbeat = json.loads((sdir / "heartbeat.json").read_text(encoding="utf-8")) if (sdir / "heartbeat.json").exists() else {}
     except Exception:
@@ -109,7 +124,11 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
                 continue
     discovered = discovered_pairs
     cortex: dict = {}
-    # TEMP: surface what the container actually computes for cortex
+    # Cortex memory persists to disk (D2). Replay recent trade outcomes into a
+    # fresh Cortex so entry-type / per-pair win-rates reflect real history,
+    # not just future in-memory entries. #1's fix makes this accurate: only
+    # records with a real exit_reason count as outcomes, and entry_type is now
+    # correct (was hardcoded mean_reversion before).
     try:
         from hermes_core.engines.decision_cortex import Cortex
         c = Cortex()
@@ -118,29 +137,14 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
             pair = t.get("pair") or t.get("asset")
             if not pair:
                 continue
-            if t.get("exit_reason"):
+            if t.get("exit_reason"):  # a real close -> outcome
                 c.record_outcome(pair, et, float(t.get("pnl_pct") or 0.0))
-            else:
+            else:                      # still open -> record the entry
                 c.record_entry(pair, et)
         cortex[bot] = c.summary()
-        print(f"[TEMP-CORTEX] {bot} summary={cortex[bot].get('summary')} exiled={cortex[bot].get('exiled')}", flush=True)
-    except Exception as _e:
-        print(f"[TEMP-CORTEX] {bot} ERROR: {type(_e).__name__}: {_e}", flush=True)
+    except Exception:
         cortex = {}
     # recent trades / skips from the jsonl the loop appends
-    def _read_jsonl(name: str, limit: int = 200):
-        p = sdir / name
-        if not p.exists():
-            return []
-        out = []
-        try:
-            for line in p.read_text(encoding="utf-8").splitlines()[-limit:]:
-                line = line.strip()
-                if line:
-                    out.append(json.loads(line))
-        except Exception:
-            pass
-        return out
     # Build a real per-pair strategy dict (the dashboard's overview calls
     # .keys() on strategy_json, so it MUST be a mapping, not a list).
     strategies = {}
