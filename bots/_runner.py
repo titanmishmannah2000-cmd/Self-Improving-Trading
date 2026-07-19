@@ -109,11 +109,22 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
                 continue
     discovered = discovered_pairs
     cortex: dict = {}
-    # Cortex memory now persists to disk (D2); reconstructing the instance
-    # reloads entry/outcome history + indicator stats across cycles/restarts.
+    # Cortex memory persists to disk (D2), but to make the tab live immediately
+    # we also replay recent trade outcomes into a fresh Cortex so entry-type /
+    # per-pair win-rates reflect real history, not just future in-memory entries.
     try:
         from hermes_core.engines.decision_cortex import Cortex
-        cortex[bot] = Cortex().summary()
+        c = Cortex()
+        for t in _read_jsonl("trades.jsonl", limit=400):
+            et = t.get("entry_type") or "mean_reversion"
+            pair = t.get("pair") or t.get("asset")
+            if not pair:
+                continue
+            if t.get("exit_reason"):  # a real close -> outcome
+                c.record_outcome(pair, et, float(t.get("pnl_pct") or 0.0))
+            else:                      # still open -> record the entry
+                c.record_entry(pair, et)
+        cortex[bot] = c.summary()
     except Exception:
         cortex = {}
     # recent trades / skips from the jsonl the loop appends
