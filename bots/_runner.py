@@ -142,7 +142,9 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
             else:                      # still open -> record the entry
                 c.record_entry(pair, et)
         cortex[bot] = c.summary()
-    except Exception:
+        print(f"[TEMP-CORTEX] {bot} summary={cortex[bot].get('summary')} by_entry_type={cortex[bot].get('by_entry_type')}", flush=True)
+    except Exception as _e:
+        print(f"[TEMP-CORTEX] {bot} ERROR: {type(_e).__name__}: {_e}", flush=True)
         cortex = {}
     # recent trades / skips from the jsonl the loop appends
     # Build a real per-pair strategy dict (the dashboard's overview calls
