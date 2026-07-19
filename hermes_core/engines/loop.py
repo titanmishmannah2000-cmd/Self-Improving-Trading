@@ -443,6 +443,8 @@ def run_cycle(
                             daily_prices=gp_daily_prices(pair), promote=True)
                         if _gp_sig is not None:
                             sig = _gp_sig
+                            # [TEMP LIVE CONFIRM]
+                            print(f"[GP_PROMOTE_LIVE] {pair} {_gp_sig.meta.get('consensus')} strength={_gp_sig.meta.get('gp_strength')}", flush=True)
                     except Exception:  # noqa: BLE001 — GP must never break the cycle
                         sig = None
             if sig is None:
