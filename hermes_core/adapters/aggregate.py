@@ -565,6 +565,17 @@ class PriceAggregator:
         # so indicators (RSI/ADX/BB) are meaningful.
         if pair in ("XAU/USD", "XAG/USD"):
             return _yf_history(pair, max_candles)
+        # [FIX] FX pairs need a real multi-candle series, not a single last
+        # tick. Previously this returned [last_good_tick] (1 candle), which
+        # made compute_all/evaluate_entry (and the GP shadow hook) run on a
+        # degenerate single point. Seed from yfinance history (proven to return
+        # ~300 candles for FX) so indicators are meaningful.
+        try:
+            fx_h = _yf_seed_history(pair, max_candles=max_candles)
+            if fx_h:
+                return fx_h
+        except Exception:  # noqa: BLE001 — fall back to last good tick
+            pass
         last = self._last_good.get(pair)
         return [last] if last is not None else []
 

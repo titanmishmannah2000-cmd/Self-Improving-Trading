@@ -213,3 +213,21 @@ def test_log_gp_shadow_fail_soft(tmp_path, monkeypatch):
     # too-short prices -> silent no-op
     loop._log_gp_shadow("b", "EUR/USD", [1.0, 2.0], {"position_size_r": 0.1})
     assert not (tmp_path / "b" / "gp_shadow.jsonl").exists()
+
+
+# ── Regression: FX pairs must get a REAL multi-candle history (not 1 tick) ──
+def test_aggregate_fx_history_is_multi_candle(monkeypatch):
+    """The live loop's history_fn must return a real series for FX.
+
+    Regression guard for the bug where seed_history_fn returned
+    [last_good_tick] (1 candle) for FX, leaving compute_all/evaluate_entry
+    (and the GP shadow hook) running on a single degenerate point.
+    """
+    import hermes_core.adapters.aggregate as agg
+    monkeypatch.setattr(agg, "make_aggregator_fetch", lambda *a, **k: None)
+    a = agg.PriceAggregator(["EUR/USD", "GBP/USD", "XAU/USD", "XAG/USD", "BTC/USD"])
+    for fx in ["EUR/USD", "GBP/USD", "AUD/USD"]:
+        hist = a.seed_history_fn(fx, max_candles=300)
+        assert len(hist) >= 50, f"{fx} history too short: {len(hist)}"
+        # candles must carry a numeric price
+        assert all(isinstance(c.get("price"), (int, float)) for c in hist)
