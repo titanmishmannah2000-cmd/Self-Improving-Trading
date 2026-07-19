@@ -76,6 +76,10 @@ Last updated: 2026-07-19
 - `5f5b2bc` Fix dashboard dropping live open trades (GP-brain surfacing)
 - `0730b07` Show 'GP Brain' badge on the pair-card grid (not just detail panel)
 - `e369ee0` Fix GP Brain pill overflowing the pair card
+- `6d614b5` Fix trade-close pipeline (audit #1): only real closes logged with correct keys
+- `e0b4c9e` TEMP: print on real close to confirm new close path executes
+- `0d21b14` TEMP: print on every exit evaluation (prove _process_exit runs)
+- `dba23f9` Remove TEMP close/exit debug prints; keep clean fix
 
 ---
 

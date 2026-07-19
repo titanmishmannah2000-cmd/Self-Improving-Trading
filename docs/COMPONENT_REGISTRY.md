@@ -300,6 +300,33 @@ backend container.
 
 ---
 
+## Known issues / audit log
+
+### 2026-07-19 — Dashboard & pipeline audit (B1–B10, X1–X2)
+User reported: closed-trades counter = 0, no cumulative chart, empty Activity,
+empty Reports, empty Cortex. Root-cause trace found a single master bug feeding
+most failures.
+
+- **B1/B2 (FIXED `6d614b5`):** Every `evaluate_exit` result — including
+  breakeven/trailing stop-*adjustments* — was written to the closed-trades log,
+  and the record used key `reason` while the backend reads `exit_reason`. Net:
+  all "closed" rows had `exit_reason=None` + `entry_price==exit_price` → closed
+  counter, cumulative chart, Activity feed, and Reports all read zero.
+  - Fix: extracted `_process_exit()`; breakeven/trailing only move the stop
+    (position stays open, nothing logged); a real close logs a record carrying
+    `id`, `exit_reason`, `entry_ts`, `exit_ts`, and the true `entry_type`.
+  - Positions now stamped with `id` + `entry_ts` at open for stable identity.
+  - Added `tests/test_exit_logging.py` (5 tests: breakeven/trailing = no close;
+    sl/tp/partial = correctly-keyed record). All 30 targeted tests pass.
+- **B8 (FIXED same commit):** Cortex `record_outcome` was hardcoded
+  `"mean_reversion"` regardless of the actual entry type; now uses the real
+  `entry_type` (so GP-brain win-rate is measured correctly).
+- **B3–B7, B9–B10, X1–X2:** See audit list — pending (Cortex empty needs the
+  full cortex summary pushed; GP outcome credit + evolution gap not yet done).
+
+
+---
+
 ## Intelligence maturity summary
 
 | Engine | Level | Autonomy |
