@@ -142,14 +142,82 @@ async def seed_history(pair: str, max_candles: int = 300) -> list:
                                         max_candles=max_candles)
 
 
+def _goldapi_spot(sym: str) -> float | None:
+    """Live spot USD price for XAU/XAG from GoldAPI.io (free, no key).
+
+    Mirrors aggregate.py _goldapi_spot so the gold->silver rescale below uses
+    the same no-cost source. Fail-soft -> None.
+    """
+    try:
+        import httpx as _hx
+        r = _hx.get(f"https://api.gold-api.com/price/{sym}", timeout=5.0)
+        r.raise_for_status()
+        price = r.json().get("price")
+        return float(price) if price is not None else None
+    except Exception:  # noqa: BLE001 — fail-soft
+        return None
+
+
+async def _rescaled_silver_history(max_candles: int) -> list[dict]:
+    """Authentic silver (XAG/USD) DAILY history for GP discovery.
+
+    No free silver history API exists (yfinance XAG=F / SI=F / SLV all 404).
+    Silver is cointegrated with gold, so we take REAL gold daily candles and
+    rescale them into silver price space via the LIVE gold/silver ratio from
+    GoldAPI (free, no key). Preserves authentic volatility and regime shape in
+    silver price space -- not invented numbers. Same approach as
+    aggregate.py _yf_history for XAG/USD. Fail-soft -> [] on any failure.
+
+    Async (awaited directly inside seed_history_interval) so it runs on the
+    SAME event loop -- no nested asyncio.run collision.
+    """
+    try:
+        df = await _download("XAU=F", period="2y", interval="1d")
+        if df is None or len(df) == 0:
+            return []
+        tail = df.tail(max_candles)
+        gold_h = []
+        fetch_ts = time.time()
+        for idx, row in tail.iterrows():
+            candle_ts = float(pd.Timestamp(idx).timestamp())
+            gold_h.append(_row_to_candle(row, candle_ts, fetch_ts))
+        if not gold_h:
+            return []
+        xau = _goldapi_spot("XAU")
+        xag = _goldapi_spot("XAG")
+        if xau is None or xag is None or xag == 0:
+            return []
+        ratio = xau / xag  # current gold/silver ratio (~80)
+        out = []
+        for c in gold_h:
+            out.append({
+                "price": c["price"] / ratio,
+                "high": c.get("high", c["price"]) / ratio,
+                "low": c.get("low", c["price"]) / ratio,
+                "ts": c.get("ts"),
+                "candle_ts": c.get("candle_ts"),
+            })
+        return out
+    except Exception:  # noqa: BLE001 — fail-soft
+        return []
+
+
 async def seed_history_interval(pair: str, interval: str = "5m", period: str = "2y",
                                  max_candles: int = 500) -> list:
     """Return up to ``max_candles`` candles for ``pair`` at an arbitrary
-    ``interval``/``period`` (e.g. interval="1d", period="2y" for the GP
-    discovery regime). The GP discovery engine requires longer-horizon daily
-    history to find predictive structure (5m/next-candle "almost never clear,
-    by design" — see genetic_discovery.run_genetic_discovery). Fail-soft: [].
+    ``interval``/``period`` (e.g. daily 2y for the GP discovery regime). The GP
+    discovery engine requires longer-horizon daily history to find predictive
+    structure (5m next-candle almost never clears, by design). Fail-soft: [].
+
+    Special case XAG/USD: no free silver history feed exists, so we rescale
+    REAL gold daily candles into silver price-space via the live GSR (see
+    _rescaled_silver_history). Keeps loop.py / scaffold untouched.
     """
+    if pair == "XAG/USD" and interval == "1d":
+        silver = await _rescaled_silver_history(max_candles)
+        if silver:
+            return silver
+        # fall through to a direct yfinance attempt only if rescale failed
     symbol = _to_symbol(pair)
     df = await _download(symbol, period=period, interval=interval)
     if df is None or len(df) == 0:
