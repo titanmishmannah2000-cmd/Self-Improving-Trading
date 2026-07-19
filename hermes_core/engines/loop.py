@@ -183,11 +183,10 @@ def _log_gp_shadow(bot: str, pair: str, prices: list[float], strategy: dict) -> 
         sig = gp_ensemble_signal(pair, prices, strategy)
         _GP_SHADOW_LAST[key] = now
         # [TEMP DEBUG] remove after live confirmation
-        if sig is not None:
-            import logging as _lg
-            _lg.getLogger("hermes.shadow").info(
-                "[shadow] %s: %s strength=%.3f active=%d",
-                pair, sig.meta.get("consensus"), sig.meta.get("gp_strength"), sig.meta.get("num_active"))
+        import logging as _lg
+        _lg.getLogger("hermes.shadow").info(
+            "[shadow] %s ran; signal=%s", pair,
+            (sig.meta.get("consensus") if sig else "None"))
         rec = {
             "ts": time.time(),
             "pair": pair,
