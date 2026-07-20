@@ -2198,8 +2198,15 @@ def audit_list_findings(
 
 @app.get("/api/version")
 def version_marker():
-    # TEMP: verify dashboard deploy picks up new code
-    return {"version": "v-cortex-fix-2026-07-20", "cortex_json_supported": True}
+    # TEMP: dump raw cortex_json from live DB to diagnose no_data
+    try:
+        conn = get_conn()
+        row = conn.execute("SELECT cortex_json FROM latest_state WHERE bot='forex'").fetchone()
+        conn.close()
+        return {"version": "v-cortex-fix-2026-07-20",
+                "raw_cortex_json": (row[0] if row else None)}
+    except Exception as e:
+        return {"version": "v-cortex-fix-2026-07-20", "error": str(e)}
 
 
 @app.get("/api/cortex")
