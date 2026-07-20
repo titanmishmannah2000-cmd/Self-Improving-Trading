@@ -97,3 +97,7 @@ Last updated: 2026-07-20
 - **Files Changed:** (list)
 - **Verification:** (how it was proven — pytest, build, live API, screenshot)
 -->
+
+## Bug fixes found during the audit (separate from audit items)
+
+- **Discovery-loop ImportError (CLOSED, found during B10):** the bot's own `_maybe_discover` imported `gp_discover` from `genetic` — but `genetic` only exports `discover` (aliased `gp_discover` at `loop.py` module-top, not inside `genetic`). So the discovery thread threw `ImportError` on EVERY pair, meaning the bot NEVER discovered indicators on its own in production (only manual diagnostic runs had populated them). Fixed in `c58d613`: `loop._maybe_discover` now imports `apply_live_feedback` + `load_discovered_indicators` and uses the module-level `gp_discover` alias. VERIFIED LIVE: forex logs now show `discovered=3` per pair (was ImportError before); /api/discovered returns 21 indicators across 5 pairs.
