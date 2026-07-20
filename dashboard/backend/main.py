@@ -2198,13 +2198,15 @@ def audit_list_findings(
 
 @app.get("/api/version")
 def version_marker():
-    # TEMP: dump raw cortex_json value for forex
+    # TEMP: run the EXACT /api/cortex query and return raw rows
     try:
         conn = get_conn()
-        row = conn.execute("SELECT cortex_json FROM latest_state WHERE bot='forex'").fetchone()
-        val = row["cortex_json"] if row else None
+        rows = conn.execute(
+            "SELECT bot, cortex_json FROM latest_state WHERE cortex_json IS NOT NULL AND cortex_json != '{}'"
+        ).fetchall()
+        raw = {r["bot"]: (r["cortex_json"][:80] if r["cortex_json"] else None) for r in rows}
         conn.close()
-        return {"version": "v-cortex-fix-2026-07-20", "raw_cortex_json": val}
+        return {"version": "v-cortex-fix-2026-07-20", "filtered_rows": raw, "row_count": len(raw)}
     except Exception as e:
         return {"version": "v-cortex-fix-2026-07-20", "error": repr(e), "errtype": type(e).__name__}
 
