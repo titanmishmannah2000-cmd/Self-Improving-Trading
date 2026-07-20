@@ -167,7 +167,7 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
     entry_ts, exit_ts) so it is counted as a real close downstream.
     """
     summary["exits"].append((pair, ex.reason))
-    print(f"[TEMP-CORTEX] _process_exit ENTERED {bot}/{pair} reason={ex.reason} et={pos.get('entry_type')} gp_ind={pos.get('gp_indicators')}", file=sys.stderr, flush=True)
+    print(f"[TEMP-CORTEX] _process_exit ENTERED {bot}/{pair} reason={ex.reason} et={pos.get('entry_type')} gp_ind={pos.get('gp_indicators')}", flush=True)
     if ex.reason in ("breakeven", "trailing"):
         # Stop-adjustment only — position stays OPEN, not a trade close.
         if ex.reason == "breakeven":
@@ -207,7 +207,7 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
             _credited = []
         for ind_id in _credited:
             cortex.record_indicator_outcome(ind_id, pnl, entry_type="gp_ensemble")
-        print(f"[TEMP-CORTEX] {bot}/{pair} et={entry_type} is_gp={is_gp} credited={_credited}", file=sys.stderr, flush=True)
+        print(f"[TEMP-CORTEX] {bot}/{pair} et={entry_type} is_gp={is_gp} credited={_credited}", flush=True)
     # [S18] Discord/webhook alert on real trade close (fail-soft)
     if alert_fn is not None:
         with contextlib.suppress(Exception):
@@ -393,7 +393,7 @@ def run_cycle(
     chart_contexts: dict[str, str] = {}
     regimes: dict[str, str] = {}          # pair -> 'trend'|'range' (dashboard regime cards)
     cortex = Cortex()                      # per-cycle; exile SET persists to disk
-    print(f"[TEMP-CYCLE] run_cycle START bot={bot} pairs={pairs} cortex_entries_loaded={len(cortex._entries)}", file=sys.stderr, flush=True)
+    print(f"[TEMP-CYCLE] run_cycle START bot={bot} pairs={pairs} cortex_entries_loaded={len(cortex._entries)}", flush=True)
 
     for pair in pairs:
         # --- fetch (fail-soft; failures counted toward circuit breaker) -----
