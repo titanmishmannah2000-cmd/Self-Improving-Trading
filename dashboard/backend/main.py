@@ -2196,6 +2196,12 @@ def audit_list_findings(
     return {"status": "ok", "count": len(results), "findings": results}
 
 
+@app.get("/api/version")
+def version_marker():
+    # TEMP: verify dashboard deploy picks up new code
+    return {"version": "v-cortex-fix-2026-07-20", "cortex_json_supported": True}
+
+
 @app.get("/api/cortex")
 def cortex_dashboard():
     try:
