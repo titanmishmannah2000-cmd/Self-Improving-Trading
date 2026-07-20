@@ -346,7 +346,6 @@ async def run_bot(bot_name: str) -> None:
     try:
         while True:
             cycle += 1
-            print(f"[TEMP-CYCLE] {bot} cycle={cycle} start", file=sys.stderr, flush=True)
             for pair in pairs:
                 # Run the SYNCHRONOUS poll loop in a worker thread. This matters
                 # because PriceAggregator.fetch_fn calls asyncio.run() internally
@@ -378,7 +377,6 @@ async def run_bot(bot_name: str) -> None:
                 # overview populate. Fail-soft; a dead dashboard must never
                 # stall the bot. [Gap 1]
                 _push_state(bot, cfg, cycle, summary)
-                print(f"[TEMP-CYCLE] {bot} cycle={cycle} pushed", file=sys.stderr, flush=True)
             await asyncio.sleep(cycle_seconds)
     finally:
         _stop.set()
