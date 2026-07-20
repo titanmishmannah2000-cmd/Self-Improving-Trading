@@ -123,6 +123,7 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
             except Exception:
                 continue
     discovered = discovered_pairs
+    print(f"[TEMP-PUSH] {bot} discovered dir={ddir} exists={ddir.exists()} pairs={sorted(discovered_pairs.keys())}", file=sys.stderr, flush=True)
     cortex: dict = {}
     # Cortex memory persists to disk (D2). Replay recent trade outcomes into a
     # fresh Cortex so entry-type / per-pair win-rates reflect real history,
