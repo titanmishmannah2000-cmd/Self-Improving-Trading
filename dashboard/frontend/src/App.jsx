@@ -1053,14 +1053,13 @@ function PortfolioPulse({ overview }) {
   let gpOpenCount = 0;
 
   for (const bot of Object.values(overview?.bots || {})) {
+    // Closed trades: only rows in trades.jsonl that carry an exit_reason.
+    // (Open-log rows there have no exit_reason and would double-count the
+    // live positions already in recent_open_trades — so we ignore them here.)
     for (const t of bot.recent_trades || []) {
-      if (!t.exit_reason) {
-        openCount++;
-        totalPnl += t.pnl_pct ?? t.unrealised_pct ?? 0;
-      } else {
-        closedCount++;
-      }
+      if (t.exit_reason) closedCount++;
     }
+    // Open positions: recent_open_trades is the authoritative live-open list.
     for (const t of bot.recent_open_trades || []) {
       openCount++;
       totalPnl += t._unrealised_pct ?? t.unrealised_pct ?? t.pnl_pct ?? 0;
