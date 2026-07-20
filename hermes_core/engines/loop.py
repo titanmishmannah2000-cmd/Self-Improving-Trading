@@ -200,6 +200,7 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
             _credited = []
         for ind_id in _credited:
             cortex.record_indicator_outcome(ind_id, pnl)
+        print(f"[TEMP-CORTEX] {bot}/{pair} et={entry_type} credited={_credited}", file=sys.stderr, flush=True)
     # [S18] Discord/webhook alert on real trade close (fail-soft)
     if alert_fn is not None:
         with contextlib.suppress(Exception):

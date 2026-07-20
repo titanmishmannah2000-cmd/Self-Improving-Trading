@@ -137,7 +137,10 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
     try:
         from hermes_core.engines.decision_cortex import Cortex
         cortex = Cortex().summary()
-    except Exception:
+        print(f"[TEMP-CORTEX] push read: indicators={len(cortex.get('indicators', {}))} "
+              f"entries_total={cortex.get('summary', {}).get('entries_total')}", file=sys.stderr, flush=True)
+    except Exception as e:
+        print(f"[TEMP-CORTEX] push read FAILED: {e!r}", file=sys.stderr, flush=True)
         cortex = {}
     # recent trades / skips from the jsonl the loop appends
     # Build a real per-pair strategy dict (the dashboard's overview calls
