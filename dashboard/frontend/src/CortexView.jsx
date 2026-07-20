@@ -35,8 +35,10 @@ export default function CortexView({ apiBase, isActive = true }) {
   const exiled = (botData && botData.exiled) || [];
   const indicators = (botData && botData.indicators) || {};
   const policy = (botData && botData.policy) || {};
-  const byType = s.by_entry_type || {};
-  const byPair = s.by_pair || {};
+  // by_entry_type / by_pair are top-level siblings of summary in the API payload,
+  // not nested under summary — read them from botData directly.
+  const byType = (botData && botData.by_entry_type) || {};
+  const byPair = (botData && botData.by_pair) || {};
   const suppressions = policy.suppressions || {};
   const allocation = policy.allocation || {};
   const prioDisc = policy.priority_discovery || [];
