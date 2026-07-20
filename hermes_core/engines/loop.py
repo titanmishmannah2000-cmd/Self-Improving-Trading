@@ -274,7 +274,7 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
     """
     from hermes_core.adapters.price import seed_history_interval_sync
     from hermes_core.engines.genetic import (
-        apply_live_feedback, gp_discover, load_discovered_indicators)
+        apply_live_feedback, load_discovered_indicators)
     now = time.time()
     key = (bot, pair)
     if key in _DISCOVERY_LAST and (now - _DISCOVERY_LAST[key]) < DISCOVERY_INTERVAL_S:
