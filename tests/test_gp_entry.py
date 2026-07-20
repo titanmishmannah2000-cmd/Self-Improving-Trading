@@ -75,9 +75,33 @@ def test_gold_indicators_shared_into_silver():
     assert len(shared) == 1
     assert shared[0]["_shared_penalty"] == 0.5
 
-    # Without sharing, only silver's own indicator is present.
-    own_only = load_discovered_indicators("XAG/USD", include_shared=False)
-    assert {i["name"] for i in own_only} == {"(ema20-sma20)"}
+
+def test_dependent_pair_without_own_file_still_shared():
+    """X1 regression: a shared-dependent pair (XAG/USD) that has NO own
+    discovered file must STILL surface the group's indicators via the
+    shared loader (the old _push_state globbed own-files only, so XAG/USD,
+    GBP/USD, AUD/USD were missing from /api/discovered)."""
+    gold_ind = [{
+        "pair": "XAU/USD", "name": "(price-sma20)", "expr": "(price-sma20)",
+        "fitness": 0.3, "win_rate": 0.55, "oos_corr": 0.3, "complexity": 2,
+    }]
+    _write_discovered("XAU/USD", gold_ind)  # only the anchor file exists
+    merged = load_discovered_indicators("XAG/USD", include_shared=True)
+    assert len(merged) == 1
+    assert merged[0]["name"] == "(price-sma20)"
+
+
+def test_discovered_record_carries_x2_fields():
+    """X2: every discovered record must carry the fields the dashboard shows."""
+    ind = [{
+        "pair": "EUR/USD", "name": "price", "expr": "price",
+        "fitness": 0.83, "oos_corr": 0.84, "complexity": 1,
+    }]
+    _write_discovered("EUR/USD", ind)
+    loaded = load_discovered_indicators("EUR/USD")[0]
+    for k in ("expr", "fitness", "oos_corr", "complexity"):
+        assert loaded.get(k) is not None, f"missing required field {k}"
+
 
 
 def test_shared_loading_never_infinite_loops():

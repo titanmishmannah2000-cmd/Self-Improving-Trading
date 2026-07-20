@@ -111,19 +111,21 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
     # path even under a non-editable install (where __file__ parents[2] !=
     # the package root). /api/discovered expects a flat {pair:[inds]} map
     # (it iterates discovered_json.items() directly), so keep it flat here.
+    # NOTE: because indicators are SHARED across pairs (SHARED_INDICATOR_GROUPS),
+    # a pair's own file may not exist — its indicators live in the group's
+    # anchor pair file. Use the shared-inclusive loader so every configured
+    # pair is represented (matches what the entry engine actually trades on).
     from hermes_core.config import repo_root
-    rr = repo_root()
+    from hermes_core.engines.genetic import load_discovered_indicators
     discovered_pairs: dict = {}
-    ddir = rr / "state" / "discovered"
-    if ddir.exists():
-        for f in ddir.glob("*.json"):
-            pair = f.stem.replace("_", "/")
-            try:
-                discovered_pairs[pair] = json.loads(f.read_text(encoding="utf-8"))
-            except Exception:
-                continue
+    for p in (cfg.get("pairs") or []):
+        try:
+            inds = load_discovered_indicators(p, include_shared=True)
+            if inds:
+                discovered_pairs[p] = inds
+        except Exception:
+            continue
     discovered = discovered_pairs
-    print(f"[TEMP-PUSH] {bot} discovered dir={ddir} exists={ddir.exists()} pairs={sorted(discovered_pairs.keys())}", file=sys.stderr, flush=True)
     cortex: dict = {}
     # Cortex memory persists to disk (D2). Replay recent trade outcomes into a
     # fresh Cortex so entry-type / per-pair win-rates reflect real history,
