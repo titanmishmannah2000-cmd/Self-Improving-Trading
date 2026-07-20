@@ -2196,21 +2196,6 @@ def audit_list_findings(
     return {"status": "ok", "count": len(results), "findings": results}
 
 
-@app.get("/api/version")
-def version_marker():
-    # TEMP: run the EXACT /api/cortex query and return raw rows
-    try:
-        conn = get_conn()
-        rows = conn.execute(
-            "SELECT bot, cortex_json FROM latest_state WHERE cortex_json IS NOT NULL AND cortex_json != '{}'"
-        ).fetchall()
-        raw = {r["bot"]: (r["cortex_json"][:80] if r["cortex_json"] else None) for r in rows}
-        conn.close()
-        return {"version": "v-cortex-fix-2026-07-20", "filtered_rows": raw, "row_count": len(raw)}
-    except Exception as e:
-        return {"version": "v-cortex-fix-2026-07-20", "error": repr(e), "errtype": type(e).__name__}
-
-
 @app.get("/api/cortex")
 def cortex_dashboard():
     try:

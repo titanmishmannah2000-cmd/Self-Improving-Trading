@@ -273,19 +273,6 @@ def register(app, ingest_token_getter, valid_bots):
             result["total_pairs"] = len(result["pairs"])
         return result
 
-    @app.get("/api/cortex")
-    def compat_cortex():
-        result = {}
-        any_data = False
-        for bot in valid_bots:
-            c = _build_cortex(bot)
-            if c.get(bot, {}).get("exiled") or c.get(bot, {}).get("indicators"):
-                any_data = True
-            result.update(c)
-        if not any_data:
-            return {"status": "no_data"}
-        return result
-
     @app.get("/api/heartbeat/{bot_name}")
     def compat_heartbeat(bot_name: str):
         if bot_name not in valid_bots:
