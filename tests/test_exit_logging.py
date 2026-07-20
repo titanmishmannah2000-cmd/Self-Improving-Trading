@@ -181,3 +181,67 @@ def test_gp_close_credits_only_firing_indicators():
                     summary={"exits": []}, alert_fn=None)
     assert cortex2.ind_credit == [], \
         "non-GP close must credit no indicators"
+
+
+def test_gp_close_persists_to_cortex_and_surfaces_in_summary(tmp_path, monkeypatch):
+    """End-to-end X2 pipeline (no live trade needed):
+
+    A GP shadow close must (a) credit its firing indicators via
+    record_indicator_outcome, (b) PERSIST that to the cortex memory file on
+    disk (the /data volume in prod — was previously ephemeral /app, so it was
+    wiped every redeploy and live feedback never accumulated), and (c) show up
+    in Cortex().summary()['indicators'] with a gp_ensemble sub-block — exactly
+    what /api/cortex reads to populate the GP-Entry column.
+    """
+    import hermes_core.engines.decision_cortex as cx
+    monkeypatch.setattr(cx, "CORTEX_DIR", tmp_path / "cortex")
+    monkeypatch.setattr(cx, "MEMORY_PATH", tmp_path / "cortex" / "m.json")
+    monkeypatch.setattr(cx, "EXILE_PATH", tmp_path / "cortex" / "e.json")
+
+    from hermes_core.engines.decision_cortex import Cortex
+
+    # Real persisted cortex (mirrors what the bot + push both use).
+    cortex = Cortex()
+    pos = _make_pos("shadow")  # GP in shadow mode (not yet promoted)
+    pos["gp_indicators"] = ["EUR_roc20", "EUR_rsi14"]
+    pos["unrealised_pct"] = 2.3
+    ex = evaluate_exit(pos, 0.98, None)
+    assert ex is not None and ex.reason == "stop_loss"
+    op = {"EUR/USD": pos}
+    L._process_exit("forex", "EUR/USD", 10, pos, 0.98, ex,
+                    cortex=cortex, reentry={}, open_positions=op,
+                    summary={"exits": []}, alert_fn=None)
+
+    # (b) file actually written to disk
+    assert cx.MEMORY_PATH.exists(), "cortex memory must persist to disk"
+
+    # (c) a FRESH Cortex (what the push / apply_live_feedback read) sees it
+    reloaded = Cortex().summary()
+    inds = reloaded.get("indicators", {})
+    assert "EUR_roc20" in inds, f"indicator missing from summary: {list(inds)}"
+    gp_block = inds["EUR_roc20"].get("by_type", {}).get("gp_ensemble")
+    assert gp_block, f"GP-entry sub-block missing: {inds['EUR_roc20']}"
+    assert gp_block["entries"] == 1 and gp_block["wins"] == 1
+    # The outcome is also recorded under gp_ensemble (shadow GP is real evidence)
+    assert reloaded["by_entry_type"]["gp_ensemble"]["n"] == 1
+
+
+def test_mean_reversion_close_does_not_credit_indicators(tmp_path, monkeypatch):
+    """Sanity: a non-GP close must not create any indicator stats."""
+    import hermes_core.engines.decision_cortex as cx
+    monkeypatch.setattr(cx, "CORTEX_DIR", tmp_path / "cortex")
+    monkeypatch.setattr(cx, "MEMORY_PATH", tmp_path / "cortex" / "m.json")
+    monkeypatch.setattr(cx, "EXILE_PATH", tmp_path / "cortex" / "e.json")
+
+    from hermes_core.engines.decision_cortex import Cortex
+
+    cortex = Cortex()
+    pos = _make_pos("mean_reversion")
+    pos["gp_indicators"] = []
+    pos["unrealised_pct"] = -0.5
+    ex = evaluate_exit(pos, 0.98, None)
+    op = {"GBP/USD": pos}
+    L._process_exit("forex", "GBP/USD", 11, pos, 0.98, ex,
+                    cortex=cortex, reentry={}, open_positions=op,
+                    summary={"exits": []}, alert_fn=None)
+    assert Cortex().summary()["indicators"] == {}

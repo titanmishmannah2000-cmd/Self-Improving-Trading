@@ -34,7 +34,6 @@ VALID_ENTRY_TYPES = ("mean_reversion", "gp_ensemble")
 CORTEX_DIR = state_root() / "cortex"
 EXILE_PATH = CORTEX_DIR / "indicator_exile.json"
 MEMORY_PATH = CORTEX_DIR / "cortex_memory.json"  # persisted entry/outcome history
-print(f"[TEMP-CORTEX] CORTEX_DIR={CORTEX_DIR}")
 
 
 def _load_exiles() -> dict:
