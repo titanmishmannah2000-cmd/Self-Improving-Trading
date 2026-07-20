@@ -141,7 +141,11 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
                 c.record_outcome(pair, et, float(t.get("pnl_pct") or 0.0))
             else:                      # still open -> record the entry
                 c.record_entry(pair, et)
-        cortex[bot] = c.summary()
+        # Send the summary dict directly (NOT keyed by bot). The backend
+        # stores it as cortex_json and /api/cortex keys it by bot from the
+        # URL — same contract as the working Discovered tab. Keying it here
+        # would double-nest ({bot:{bot:summary}}) and break CortexView.
+        cortex = c.summary()
     except Exception:
         cortex = {}
     # recent trades / skips from the jsonl the loop appends

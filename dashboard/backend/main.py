@@ -2208,8 +2208,7 @@ def cortex_dashboard():
         for row in rows:
             try: r[row["bot"]] = json.loads(row["cortex_json"])
             except: pass
-        # TEMP-MARKER v2 (verify deploy)
-        return {"_marker": "cortex-v2", **(r if r else {"status": "no_data"})}
+        return r if r else {"status": "no_data"}
     except Exception as e:
         return {"error": str(e)}
 
