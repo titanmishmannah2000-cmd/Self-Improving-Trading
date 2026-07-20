@@ -251,7 +251,7 @@ def _push_prices_threaded(bot: str, prices: dict[str, float]) -> None:
 
 
 def _discovery_loop(bot: str, pairs: list[str], stop: threading.Event,
-                    cortex=None) -> None:
+                    cortex=None, cfg: dict | None = None) -> None:
     """Background periodic GP discovery (decoupled from the heartbeat cycle).
 
     Runs _maybe_discover for each pair on its own interval so a slow price API
@@ -261,6 +261,11 @@ def _discovery_loop(bot: str, pairs: list[str], stop: threading.Event,
     `cortex` is an optional persistent Cortex instance (B10) used to feed real
     paper-PnL results back into discovered-indicator fitness. When omitted,
     discovery still runs but live feedback is skipped.
+
+    Because the main trade loop can stall (slow fetches) and therefore stop
+    pushing its decision-state, we push the discovered indicators HERE after
+    each discovery pass — so newly-found indicators reach the dashboard even
+    if the trade loop is wedged. [X1]
     """
     from hermes_core.engines.genetic import load_discovered_indicators
     interval = max(int(get_env("DISCOVERY_INTERVAL_S", "3600")), 60)
@@ -279,6 +284,12 @@ def _discovery_loop(bot: str, pairs: list[str], stop: threading.Event,
                 print(f"[hermes][discovery] {bot}/{pair}: ERROR {exc!r}",
                       file=sys.stderr, flush=True)
                 continue
+        # Push discovered state now (decoupled from the trade loop). [X1]
+        try:
+            if cfg is not None:
+                _push_state(bot, cfg, cycle=-1, summary=None)
+        except Exception:
+            pass
         stop.wait(interval)
 
 
@@ -329,12 +340,13 @@ async def run_bot(bot_name: str) -> None:
     except Exception:
         _disc_cortex = None
     _disc = threading.Thread(target=_discovery_loop,
-                             args=(bot, pairs, _stop, _disc_cortex),
+                             args=(bot, pairs, _stop, _disc_cortex, cfg),
                              daemon=True)
     _disc.start()
     try:
         while True:
             cycle += 1
+            print(f"[TEMP-CYCLE] {bot} cycle={cycle} start", file=sys.stderr, flush=True)
             for pair in pairs:
                 # Run the SYNCHRONOUS poll loop in a worker thread. This matters
                 # because PriceAggregator.fetch_fn calls asyncio.run() internally
@@ -366,6 +378,7 @@ async def run_bot(bot_name: str) -> None:
                 # overview populate. Fail-soft; a dead dashboard must never
                 # stall the bot. [Gap 1]
                 _push_state(bot, cfg, cycle, summary)
+                print(f"[TEMP-CYCLE] {bot} cycle={cycle} pushed", file=sys.stderr, flush=True)
             await asyncio.sleep(cycle_seconds)
     finally:
         _stop.set()
