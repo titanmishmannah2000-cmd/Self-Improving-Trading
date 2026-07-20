@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 
-from hermes_core.config import repo_root
+from hermes_core.config import repo_root, state_root
 
 # ── gates ──────────────────────────────────────────────────────────────────
 EXILE_WR = 0.30          # [GUARD L36] WR below this after enough attempts -> exile
@@ -27,7 +27,11 @@ REINSTATE_WR = 0.40      # WR at/above this reinstates an exiled indicator
 EXILE_DECAY_ENTRIES = 100  # reconsider exiled indicators every 100 entries
 VALID_ENTRY_TYPES = ("mean_reversion", "gp_ensemble")
 
-CORTEX_DIR = repo_root() / "state" / "cortex"
+# Persist cortex memory + exile set on the RUNTIME volume (HERMES_STATE_ROOT,
+# i.e. /data on Railway), NOT inside the image (/app). Otherwise every redeploy
+# wipes cortex_memory.json and the GP live-feedback loop (B9/B10) can never
+# accumulate the per-indicator stats it needs. Falls back to repo_root() locally.
+CORTEX_DIR = state_root() / "cortex"
 EXILE_PATH = CORTEX_DIR / "indicator_exile.json"
 MEMORY_PATH = CORTEX_DIR / "cortex_memory.json"  # persisted entry/outcome history
 

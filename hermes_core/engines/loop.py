@@ -192,15 +192,21 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
     # auto-exile low-WR GP indicators. B9: credit ONLY the indicators that
     # actually fired on THIS trade (carried on pos["gp_indicators"]), not every
     # discovered indicator for the pair (the old code credited all equally).
+    # GP trades open as "shadow" until promoted, but a shadow GP paper-trade is
+    # still real GP evidence we must learn from — so credit its indicators and
+    # record the outcome under "gp_ensemble" whenever the trade was GP-driven
+    # (gp_indicators non-empty), not only when already promoted to live.
     with contextlib.suppress(Exception):
-        cortex.record_outcome(pair, entry_type, pnl)
-        if entry_type == "gp_ensemble":
+        is_gp = bool(pos.get("gp_indicators"))
+        _record_type = "gp_ensemble" if is_gp else entry_type
+        cortex.record_outcome(pair, _record_type, pnl)
+        if is_gp:
             _credited = pos.get("gp_indicators") or []
         else:
             _credited = []
         for ind_id in _credited:
-            cortex.record_indicator_outcome(ind_id, pnl)
-        print(f"[TEMP-CORTEX] {bot}/{pair} et={entry_type} credited={_credited}", file=sys.stderr, flush=True)
+            cortex.record_indicator_outcome(ind_id, pnl, entry_type="gp_ensemble")
+        print(f"[TEMP-CORTEX] {bot}/{pair} et={entry_type} is_gp={is_gp} credited={_credited}", file=sys.stderr, flush=True)
     # [S18] Discord/webhook alert on real trade close (fail-soft)
     if alert_fn is not None:
         with contextlib.suppress(Exception):

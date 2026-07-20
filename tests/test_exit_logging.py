@@ -20,7 +20,7 @@ class _CortexStub:
     def record_outcome(self, pair, entry_type, pnl):
         self.outcomes.append((pair, entry_type, pnl))
 
-    def record_indicator_outcome(self, ind_id, pnl):
+    def record_indicator_outcome(self, ind_id, pnl, entry_type=None):
         self.ind_credit.append(ind_id)
 
     def record_entry(self, pair, entry_type):
