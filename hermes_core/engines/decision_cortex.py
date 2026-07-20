@@ -84,7 +84,8 @@ class Cortex:
 
     def record_outcome(self, pair: str, entry_type: str, pnl: float) -> None:
         self._entries.append({"pair": pair, "type": entry_type,
-                              "outcome": 1 if pnl > 0 else 0})
+                              "outcome": 1 if pnl > 0 else 0,
+                              "pnl": float(pnl)})
         self._flush()
 
     def record_hypothesis(self, pair: str, text: str) -> None:
@@ -162,10 +163,12 @@ class Cortex:
                 d = by_type.setdefault(t, {"n": 0, "wins": 0, "pnl": 0.0})
                 d["n"] += 1
                 d["wins"] += outcome
+                d["pnl"] += e.get("pnl", 0.0)
             if p:
                 d = by_pair.setdefault(p, {"n": 0, "wins": 0, "pnl": 0.0})
                 d["n"] += 1
                 d["wins"] += outcome
+                d["pnl"] += e.get("pnl", 0.0)
         indicators = {}
         for ind_id, st in self._indicator_stats.items():
             attempts = st.get("attempts", 0)
