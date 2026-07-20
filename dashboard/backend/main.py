@@ -2198,15 +2198,17 @@ def audit_list_findings(
 
 @app.get("/api/version")
 def version_marker():
-    # TEMP: dump raw cortex_json from live DB to diagnose no_data
+    # TEMP: full exception dump for cortex_json diagnosis
     try:
         conn = get_conn()
         row = conn.execute("SELECT cortex_json FROM latest_state WHERE bot='forex'").fetchone()
+        cols = [d[1] for d in conn.execute("PRAGMA table_info(latest_state)").fetchall()]
         conn.close()
         return {"version": "v-cortex-fix-2026-07-20",
-                "raw_cortex_json": (row[0] if row else None)}
+                "raw_cortex_json": (row[0] if row else None),
+                "columns": cols}
     except Exception as e:
-        return {"version": "v-cortex-fix-2026-07-20", "error": str(e)}
+        return {"version": "v-cortex-fix-2026-07-20", "error": repr(e), "errtype": type(e).__name__}
 
 
 @app.get("/api/cortex")
