@@ -44,7 +44,9 @@ Last updated: 2026-07-19
 
   state/  (per bot):  trades.jsonl, gp_shadow.jsonl, gp_state.json
   state/discovered/{pair}.json   ← GP indicators (read by dashboard /api/discovered)
-  state/cortex/*.json            ← cortex entry memory
+  {state_root}/cortex/*.json     ← cortex entry+indicator memory (cortex_memory.json, indicator_exile.json)
+                                   NB: uses state_root() = HERMES_STATE_ROOT (/data volume in prod),
+                                   NOT repo_root() — must persist across redeploys for GP live feedback.
 ```
 
 ---
