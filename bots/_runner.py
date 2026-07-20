@@ -146,7 +146,9 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
         # URL — same contract as the working Discovered tab. Keying it here
         # would double-nest ({bot:{bot:summary}}) and break CortexView.
         cortex = c.summary()
-    except Exception:
+        print(f"[TEMP-CORTEX] {bot} OK keys={list(cortex.keys())} entries={cortex.get('summary',{}).get('entries_total')}", flush=True)
+    except Exception as _e:
+        print(f"[TEMP-CORTEX] {bot} EXCEPT: {type(_e).__name__}: {_e}", flush=True)
         cortex = {}
     # recent trades / skips from the jsonl the loop appends
     # Build a real per-pair strategy dict (the dashboard's overview calls
