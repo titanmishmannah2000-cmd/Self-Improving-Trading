@@ -303,8 +303,18 @@ def gp_ensemble_signal(pair: str, prices: list[float],
         sig = 1 if z > 0 else -1
 
         fitness = float(ind.get("fitness", 0.0) or 0.0)
+        # B10: if live feedback has annotated this indicator, prefer its
+        # realized-results fitness (falls back to historical corr fitness).
+        live_fitness = ind.get("live_fitness")
+        if isinstance(live_fitness, (int, float)):
+            fitness = float(live_fitness)
         win_rate = float(ind.get("win_rate", 0.5) or 0.5)
         penalty = float(ind.get("_shared_penalty", 1.0) or 1.0)
+        # B10: a 'suppress' flag means the indicator has lost money on paper
+        # (>=4 GP entries, pnl<0, WR<0.4) — zero its weight so it cannot vote
+        # the ensemble into a trade. 'promote' keeps its weight.
+        if ind.get("live_flag") == "suppress":
+            continue
         weight = max(fitness * win_rate * penalty, 0.1 * penalty)
         votes.append((sig * weight, weight, ind.get("name", "?")))
 

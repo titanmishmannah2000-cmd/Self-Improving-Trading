@@ -24,6 +24,7 @@ from hermes_core.engines.entry import (
     gp_ensemble_signal,
     simulate_gp_paper_pnl,
 )
+from hermes_core.engines import entry as entry_mod
 from hermes_core.engines.genetic import FEATURES, _eval_expr, load_discovered_indicators
 
 
@@ -291,3 +292,85 @@ def test_runner_open_trade_carries_entry_type():
     } for pair, pos in summary["open_positions"].items()]
     types = {t["pair"]: t["entry_type"] for t in recent}
     assert types == {"EUR/USD": "gp_ensemble", "GBP/USD": "mean_reversion"}
+
+
+# ── Audit B10: live paper-PnL feeds back into GP discovery fitness ───────────
+def test_b10_live_feedback_relabels_and_suppresses(tmp_path, monkeypatch):
+    """Realized GP PnL must bend discovered-indicator fitness, and a losing
+    indicator must be flagged 'suppress' so it is excluded from the ensemble
+    vote (B10 closes the self-evolving loop)."""
+    import hermes_core.engines.decision_cortex as cx
+
+    # Redirect cortex disk state too (autouse fixture already redirects DISCOVERED_DIR).
+    monkeypatch.setattr(cx, "CORTEX_DIR", tmp_path / "cortex")
+    monkeypatch.setattr(cx, "MEMORY_PATH", tmp_path / "cortex" / "m.json")
+    monkeypatch.setattr(cx, "EXILE_PATH", tmp_path / "cortex" / "e.json")
+
+    _write_discovered("EUR/USD", [
+        {"name": "A_win", "expr": "A_win", "fitness": 0.30, "win_rate": 0.5,
+         "complexity": 2, "nodes": 2, "horizon": 60, "interval": "1d",
+         "source": "genetic"},
+        {"name": "B_lose", "expr": "B_lose", "fitness": 0.40, "win_rate": 0.5,
+         "complexity": 2, "nodes": 2, "horizon": 60, "interval": "1d",
+         "source": "genetic"},
+    ])
+
+    cortex = cx.Cortex()
+    for _ in range(5):
+        cortex.record_indicator_outcome("A_win", +2.4, entry_type="gp_ensemble")
+    for _ in range(5):
+        cortex.record_indicator_outcome("B_lose", -1.6, entry_type="gp_ensemble")
+
+    n = gp.apply_live_feedback("EUR/USD", cortex)
+    assert n == 2
+
+    reloaded = {i["name"]: i for i in gp.load_discovered_indicators("EUR/USD")}
+    assert reloaded["A_win"]["live_flag"] == "promote"
+    assert reloaded["A_win"]["live_fitness"] >= 0.30
+    assert reloaded["B_lose"]["live_flag"] == "suppress"
+    assert reloaded["B_lose"]["live_fitness"] < 0.40
+
+    # The suppressed indicator must NOT be able to vote the ensemble.
+    series = list([100.0] * 120) + [100.0 + i * 2 for i in range(30)]
+    _write_discovered("EUR/USD", [
+        {"name": "A_win", "expr": "price", "fitness": 0.30, "win_rate": 0.5,
+         "complexity": 2, "nodes": 2, "horizon": 60, "interval": "1d",
+         "source": "genetic", "live_flag": "promote", "live_fitness": 0.33},
+        {"name": "C_ok", "expr": "price", "fitness": 0.30, "win_rate": 0.5,
+         "complexity": 2, "nodes": 2, "horizon": 60, "interval": "1d",
+         "source": "genetic", "live_flag": "promote", "live_fitness": 0.33},
+        {"name": "B_lose", "expr": "price", "fitness": 0.40, "win_rate": 0.5,
+         "complexity": 2, "nodes": 2, "horizon": 60, "interval": "1d",
+         "source": "genetic", "live_flag": "suppress", "live_fitness": 0.37},
+    ])
+    sig = entry_mod.gp_ensemble_signal(
+        "EUR/USD", series, strategy={"position_size_r": 0.1},
+        daily_prices=series, promote=True)
+    assert sig is not None
+    fired = sig.meta["gp_indicators"]
+    assert "B_lose" not in fired
+    assert "A_win" in fired and "C_ok" in fired
+
+
+def test_b10_feedback_ignored_until_min_samples(tmp_path, monkeypatch):
+    """With < LIVE_FEEDBACK_MIN_SAMPLES GP entries, live signal is NOT trusted
+    (anti-overfit guard): the indicator stays 'pending' and fitness unchanged."""
+    import hermes_core.engines.decision_cortex as cx
+    monkeypatch.setattr(cx, "CORTEX_DIR", tmp_path / "cortex")
+    monkeypatch.setattr(cx, "MEMORY_PATH", tmp_path / "cortex" / "m.json")
+    monkeypatch.setattr(cx, "EXILE_PATH", tmp_path / "cortex" / "e.json")
+
+    _write_discovered("EUR/USD", [
+        {"name": "A_win", "expr": "A_win", "fitness": 0.30, "win_rate": 0.5,
+         "complexity": 2, "nodes": 2, "horizon": 60, "interval": "1d",
+         "source": "genetic"},
+    ])
+    cortex = cx.Cortex()
+    for _ in range(2):
+        cortex.record_indicator_outcome("A_win", +5.0, entry_type="gp_ensemble")
+
+    n = gp.apply_live_feedback("EUR/USD", cortex)
+    assert n == 0  # nothing re-ranked (samples < min)
+    reloaded = gp.load_discovered_indicators("EUR/USD")[0]
+    assert reloaded.get("live_flag") == "pending"
+    assert reloaded.get("live_fitness") == 0.30  # historical fitness kept

@@ -44,6 +44,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from hermes_core.config import repo_root
+from hermes_core.env import get_env
 
 # ── gates ──────────────────────────────────────────────────────────────────
 OOS_FLOOR = 0.15         # admit if held-out |corr| >= floor. Restored to the
@@ -54,6 +55,19 @@ OOS_FLOOR = 0.15         # admit if held-out |corr| >= floor. Restored to the
 COMPLEXITY_PENALTY = 0.001
 REDUNDANCY_R = 0.8       # |pearson| > this vs an existing indicator -> REJECTED
 PERM_PVALUE_FLOOR = 0.05  # reject candidates whose OOS corr is not better than shuffled-label noise
+
+# ── B10: live paper-PnL → discovery feedback (self-evolving GP) ────────────
+# The GA evolves on HISTORICAL correlation (faithful to the old engine, which
+# also scored by corr, never by live PnL). What was missing: a feedback layer
+# that bends stored fitness toward REALIZED paper results. We only trust live
+# results after LIVE_FEEDBACK_MIN_SAMPLES GP entries for an indicator, so a
+# single lucky/unlucky trade cannot flip the ranking (the overfitting trap the
+# audit flagged). Bonus is small + confidence-scaled so history still dominates.
+LIVE_FEEDBACK_MIN_SAMPLES = 4     # GP entries before live signal is trusted
+LIVE_FEEDBACK_BONUS = 0.05        # max additive bonus to fitness (~|corr| 0.15-0.85)
+LIVE_PNL_SCALE = 10.0             # % PnL at which the tanh bonus saturates
+LIVE_FEEDBACK_INTERVAL_S = int(get_env("LIVE_FEEDBACK_INTERVAL_S", str(
+    max(int(get_env("DISCOVERY_INTERVAL_S", "3600")), 3600))))  # re-rank cadence
 
 DISCOVERED_DIR = repo_root() / "state" / "discovered"
 
@@ -616,6 +630,67 @@ def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
     if admitted:
         _save_discovered(pair, admitted)
     return admitted
+
+
+def apply_live_feedback(pair: str, cortex) -> int:
+    """B10: bend discovered-indicator fitness toward REALIZED paper PnL.
+
+    After the GP brain paper-trades its indicators (B9 credits the firing
+    ones on every close), the cortex holds each indicator's live GP stats.
+    This re-ranks + annotates the persisted discovered indicators so the next
+    ensemble vote (entry.py) favors indicators that actually make money and
+    deprioritizes those that lose.
+
+    Anti-overfit guards (audit-flagged):
+      * live signal is ignored until LIVE_FEEDBACK_MIN_SAMPLES GP entries;
+      * bonus magnitude is small + tanh-scaled by PnL + confidence (sample
+        count), so a few trades can't dominate the historical corr fitness.
+
+    Returns the number of indicators updated. Fail-soft: any error -> 0.
+    """
+    try:
+        if cortex is None:
+            return 0
+        own = load_discovered_indicators(pair, include_shared=False)
+        if not own:
+            return 0
+        updated = 0
+        for ind in own:
+            name = ind.get("name") or ind.get("expr")
+            if not name:
+                continue
+            stats = cortex.indicator_live_stats(name) or {}
+            samples = int(stats.get("attempts", 0))
+            base = float(ind.get("fitness", 0.0) or 0.0)
+            if samples < LIVE_FEEDBACK_MIN_SAMPLES:
+                # Not enough live evidence yet — annotate but don't re-rank.
+                ind.setdefault("live_fitness", round(base, 4))
+                ind.setdefault("live_samples", samples)
+                ind.setdefault("live_flag", "pending")
+                continue
+            wins = int(stats.get("wins", 0))
+            pnl = float(stats.get("pnl", 0.0))
+            wr = wins / samples if samples else 0.0
+            conf = min(1.0, samples / (LIVE_FEEDBACK_MIN_SAMPLES * 2.0))
+            live_adj = LIVE_FEEDBACK_BONUS * math.tanh(pnl / LIVE_PNL_SCALE) * conf
+            ind["live_fitness"] = round(base + live_adj, 4)
+            ind["live_pnl"] = round(pnl, 2)
+            ind["live_wr"] = round(wr, 3)
+            ind["live_samples"] = samples
+            if pnl < 0 and wr < 0.4:
+                ind["live_flag"] = "suppress"   # real losses -> deprioritize
+            elif wr >= 0.6 and pnl > 0:
+                ind["live_flag"] = "promote"
+            else:
+                ind["live_flag"] = "neutral"
+            updated += 1
+        # Re-rank by live_fitness (falls back to historical fitness) and persist.
+        own.sort(key=lambda x: x.get("live_fitness", x.get("fitness", 0.0)),
+                 reverse=True)
+        _save_discovered(pair, own)
+        return updated
+    except Exception:
+        return 0
 
 
 # ── persistence (survives restart) ──────────────────────────────────────────

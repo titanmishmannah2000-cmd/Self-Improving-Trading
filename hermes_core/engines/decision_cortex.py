@@ -163,6 +163,22 @@ class Cortex:
     def get_exiled_indicators(self) -> list[str]:
         return sorted(_load_exiles().keys())
 
+    def indicator_live_stats(self, ind_id: str) -> dict:
+        """Return the GP-entry live stats for an indicator (B9 `gp` sub-block).
+
+        Used by B10 live feedback to bend discovered-indicator fitness toward
+        realized paper PnL. Returns {} when the indicator has no GP record yet.
+        """
+        st = self._indicator_stats.get(ind_id)
+        if not st:
+            return {}
+        gp = st.get("gp", {}) or {}
+        return {
+            "attempts": gp.get("attempts", 0),
+            "wins": gp.get("wins", 0),
+            "pnl": float(gp.get("pnl", 0.0)),
+        }
+
     def summary(self) -> dict:
         by_type: dict[str, dict] = {}
         by_pair: dict[str, dict] = {}

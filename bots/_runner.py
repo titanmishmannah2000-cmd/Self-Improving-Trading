@@ -247,12 +247,17 @@ def _push_prices_threaded(bot: str, prices: dict[str, float]) -> None:
     threading.Thread(target=_push_prices, args=(bot, prices), daemon=True).start()
 
 
-def _discovery_loop(bot: str, pairs: list[str], stop: threading.Event) -> None:
+def _discovery_loop(bot: str, pairs: list[str], stop: threading.Event,
+                    cortex=None) -> None:
     """Background periodic GP discovery (decoupled from the heartbeat cycle).
 
     Runs _maybe_discover for each pair on its own interval so a slow price API
     or heavy GP evolution can NEVER stall the trade loop. Fully fail-soft but
     logs results so discovery activity is observable in the bot's stdout.
+
+    `cortex` is an optional persistent Cortex instance (B10) used to feed real
+    paper-PnL results back into discovered-indicator fitness. When omitted,
+    discovery still runs but live feedback is skipped.
     """
     from hermes_core.engines.genetic import load_discovered_indicators
     interval = max(int(get_env("DISCOVERY_INTERVAL_S", "3600")), 60)
@@ -263,7 +268,7 @@ def _discovery_loop(bot: str, pairs: list[str], stop: threading.Event) -> None:
                 return
             try:
                 from hermes_core.engines.loop import _maybe_discover
-                _maybe_discover(bot, pair)
+                _maybe_discover(bot, pair, cortex=cortex)
                 n = len(load_discovered_indicators(pair))
                 print(f"[hermes][discovery] {bot}/{pair}: discovered={n}",
                       flush=True)
@@ -312,7 +317,16 @@ async def run_bot(bot_name: str) -> None:
     # gate stays False until a volume feed is wired (honest, not faked).
     vol_above = False
     # Background GP discovery — fully decoupled from the heartbeat cycle.
-    _disc = threading.Thread(target=_discovery_loop, args=(bot, pairs, _stop),
+    # A persistent Cortex instance lets B10 feed REAL paper-PnL results back
+    # into discovered-indicator fitness (it reads the on-disk cortex memory).
+    _disc_cortex = None
+    try:
+        from hermes_core.engines.decision_cortex import Cortex
+        _disc_cortex = Cortex()
+    except Exception:
+        _disc_cortex = None
+    _disc = threading.Thread(target=_discovery_loop,
+                             args=(bot, pairs, _stop, _disc_cortex),
                              daemon=True)
     _disc.start()
     try:

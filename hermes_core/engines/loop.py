@@ -254,36 +254,54 @@ def _log_gp_shadow(bot: str, pair: str, prices: list[float], strategy: dict) -> 
         pass
 
 
-def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None) -> None:
-    """Throttled GP discovery for one pair.
+def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
+                    *, cortex=None) -> None:
+    """Throttled GP discovery + live feedback for one pair (B10 closes the loop).
 
-    Runs when no discovered file exists yet, or at most once per
-    DISCOVERY_INTERVAL_S of wall-clock per (bot, pair). Persists admitted
-    indicators to state/discovered/{pair}.json (read by the dashboard).
+    On each throttled pass it:
+      1. (re)discovers indicators if none are stored yet;
+      2. ALWAYS applies live paper-PnL feedback (B10) so persisted indicators
+         are re-ranked toward realized results — this is what makes the GP
+         brain self-evolve rather than sit on its historical-correlation fitness.
+
+    Runs at most once per DISCOVERY_INTERVAL_S of wall-clock per (bot, pair).
+    Persists admitted + re-ranked indicators to state/discovered/{pair}.json
+    (read by the dashboard + entry engine).
 
     CRITICAL: discovery does network + GP evolution and must NEVER block the
     heartbeat cycle. The heavy work runs in a thread with a hard timeout; if it
     stalls, the cycle proceeds and the next attempt retries. Fail-soft.
     """
     from hermes_core.adapters.price import seed_history_interval_sync
-    from hermes_core.engines.genetic import load_discovered_indicators
+    from hermes_core.engines.genetic import (
+        apply_live_feedback, gp_discover, load_discovered_indicators)
     now = time.time()
     key = (bot, pair)
     if key in _DISCOVERY_LAST and (now - _DISCOVERY_LAST[key]) < DISCOVERY_INTERVAL_S:
         return
-    if load_discovered_indicators(pair):
-        _DISCOVERY_LAST[key] = now  # fresh enough; refresh throttle only
-        return
+
+    discovered = bool(load_discovered_indicators(pair))
 
     def _work() -> None:
+        import logging as _logging
+        _log = _logging.getLogger("hermes.discovery")
+        # B10 live feedback: re-rank persisted indicators toward realized PnL.
+        # Runs on every throttled pass (even when re-discovery isn't needed)
+        # so the ensemble keeps learning from closed paper trades.
+        updated = apply_live_feedback(pair, cortex)
+        if updated:
+            _log.info("[discovery] %s: live feedback updated %d indicators",
+                      pair, updated)
+        # (Re)discover only when nothing is stored yet; once we have a
+        # population we maintain it via feedback instead of re-evolving (the GA
+        # is expensive + the audit's anti-overfit rule says don't churn it).
+        if discovered:
+            return
         # GP discovery runs on the OLD engine's working regime: 2y of DAILY
         # bars with a 60-candle forward horizon. The old genetic_discovery.py
         # is explicit that 5m/next-candle "almost never clear, by design" —
         # only the daily/long-horizon objective produces predictive structure.
         # We keep the live trade loop on 5m; discovery uses daily history.
-        import logging as _logging
-        _log = _logging.getLogger("hermes.discovery")
-        from hermes_core.adapters.price import seed_history_interval_sync
         hist = seed_history_interval_sync(pair, interval="1d", period="2y",
                                           max_candles=500)
         series = [c["price"] for c in (hist or [])] or (prices or [])
