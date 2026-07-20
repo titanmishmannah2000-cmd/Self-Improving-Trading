@@ -15,12 +15,13 @@ from hermes_core.engines.exit import evaluate_exit, Exit
 class _CortexStub:
     def __init__(self):
         self.outcomes = []
+        self.ind_credit = []
 
     def record_outcome(self, pair, entry_type, pnl):
         self.outcomes.append((pair, entry_type, pnl))
 
     def record_indicator_outcome(self, ind_id, pnl):
-        pass
+        self.ind_credit.append(ind_id)
 
     def record_entry(self, pair, entry_type):
         pass
@@ -147,3 +148,36 @@ def test_partial_close_is_logged_as_real_close():
     assert "EUR/USD" not in op, "partial_close closes the position"
     assert len(logged) == 1 and logged[0]["exit_reason"] == "partial_close"
     assert logged[0]["entry_type"] == "gp_ensemble"
+
+
+def test_gp_close_credits_only_firing_indicators():
+    """B9: a GP close credits ONLY the indicators that fired on that trade
+    (carried on pos['gp_indicators']), never every discovered indicator for the
+    pair. A non-GP close credits none."""
+    # GP close: position carries exactly two firing indicator ids
+    pos = _make_pos("gp_ensemble")
+    pos["gp_indicators"] = ["EUR_roc20", "EUR_rsi14"]
+    pos["unrealised_pct"] = 1.5
+    ex = evaluate_exit(pos, 0.98, None)  # stop_loss reason
+    assert ex is not None and ex.reason == "stop_loss"
+    cortex = _CortexStub()
+    op = {"EUR/USD": pos}
+    L._process_exit("forex", "EUR/USD", 10, pos, 0.98, ex,
+                    cortex=cortex, reentry={}, open_positions=op,
+                    summary={"exits": []}, alert_fn=None)
+    assert cortex.ind_credit == ["EUR_roc20", "EUR_rsi14"], \
+        f"only firing indicators should be credited, got {cortex.ind_credit}"
+
+    # mean_reversion close: must credit NO indicators
+    pos2 = _make_pos("mean_reversion")
+    pos2["gp_indicators"] = []
+    pos2["unrealised_pct"] = -0.5
+    ex2 = evaluate_exit(pos2, 0.98, None)
+    assert ex2 is not None and ex2.reason == "stop_loss"
+    cortex2 = _CortexStub()
+    op2 = {"GBP/USD": pos2}
+    L._process_exit("forex", "GBP/USD", 11, pos2, 0.98, ex2,
+                    cortex=cortex2, reentry={}, open_positions=op2,
+                    summary={"exits": []}, alert_fn=None)
+    assert cortex2.ind_credit == [], \
+        "non-GP close must credit no indicators"

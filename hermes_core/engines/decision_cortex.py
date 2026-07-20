@@ -116,13 +116,26 @@ class Cortex:
         return max(known, key=known.get)
 
     # ── per-indicator exile system ──────────────────────────────────────────
-    def record_indicator_outcome(self, ind_id: str, pnl: float) -> None:
-        """Track a GP indicator's outcome; auto-exile / reinstate per gates."""
+    def record_indicator_outcome(self, ind_id: str, pnl: float,
+                                 entry_type: str | None = None) -> None:
+        """Track a GP indicator's outcome; auto-exile / reinstate per gates.
+
+        `entry_type` (optional) lets us separate GP-ensemble credit from any
+        other credit so the dashboard can show per-indicator GP-entry WR (B9).
+        """
         st = self._indicator_stats.setdefault(
-            ind_id, {"attempts": 0, "wins": 0, "exiled": False})
+            ind_id, {"attempts": 0, "wins": 0, "pnl": 0.0, "exiled": False,
+                     "gp": {"attempts": 0, "wins": 0, "pnl": 0.0}})
         st["attempts"] += 1
+        st["pnl"] = float(st.get("pnl", 0.0)) + float(pnl)
         if pnl > 0:
             st["wins"] += 1
+        if entry_type == "gp_ensemble":
+            gp = st.setdefault("gp", {"attempts": 0, "wins": 0, "pnl": 0.0})
+            gp["attempts"] += 1
+            gp["pnl"] = float(gp.get("pnl", 0.0)) + float(pnl)
+            if pnl > 0:
+                gp["wins"] += 1
         wr = st["wins"] / st["attempts"]
         exiles = _load_exiles()
         if st["exiled"]:
@@ -173,11 +186,22 @@ class Cortex:
         for ind_id, st in self._indicator_stats.items():
             attempts = st.get("attempts", 0)
             wins = st.get("wins", 0)
+            gp = st.get("gp", {}) or {}
+            # Per-indicator GP-entry WR (what the dashboard's GP-Entry column
+            # shows). Only populated when the indicator fired as a GP entry.
+            gp_block = {}
+            if gp.get("attempts"):
+                gp_block = {
+                    "entries": gp["attempts"],
+                    "wins": gp["wins"],
+                    "pnl": round(gp.get("pnl", 0.0), 2),
+                }
             indicators[ind_id] = {
                 "entries": attempts,
                 "wins": wins,
-                "pnl": 0.0,  # per-indicator PnL not tracked; kept for shape parity
+                "pnl": round(float(st.get("pnl", 0.0)), 2),
                 "exiled": st.get("exiled", False),
+                "by_type": {"gp_ensemble": gp_block} if gp_block else {},
             }
         return {
             "summary": {

@@ -311,6 +311,7 @@ def gp_ensemble_signal(pair: str, prices: list[float],
     if len(votes) < min_active:
         return None
 
+    active_indicators = [v[2] for v in votes]
     total_w = sum(v[1] for v in votes)
     total_ws = sum(v[0] for v in votes)
     strength = max(-1.0, min(1.0, total_ws / max(total_w, 1e-6)))
@@ -328,6 +329,10 @@ def gp_ensemble_signal(pair: str, prices: list[float],
             "gp_strength": round(strength, 4),
             "consensus": consensus,
             "num_active": len(votes),
+            # Firing indicator names — carried on the position so that on close
+            # ONLY these indicators are credited (B9: per-vote indicator credit,
+            # not the whole ensemble blob).
+            "gp_indicators": active_indicators,
             "entry_type": "gp_ensemble" if promote else "shadow",
             "evaluated_on": "daily" if (daily_prices and len(daily_prices) >= 50) else "live",
         },

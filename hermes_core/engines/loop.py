@@ -189,10 +189,16 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
     reentry[pair] = {"last_exit_cycle": cycle}
     del open_positions[pair]
     # [CORTEX] record the outcome under the REAL entry_type;
-    # auto-exile low-WR GP indicators.
+    # auto-exile low-WR GP indicators. B9: credit ONLY the indicators that
+    # actually fired on THIS trade (carried on pos["gp_indicators"]), not every
+    # discovered indicator for the pair (the old code credited all equally).
     with contextlib.suppress(Exception):
         cortex.record_outcome(pair, entry_type, pnl)
-        for ind_id in _discovered_indicator_ids(bot, pair):
+        if entry_type == "gp_ensemble":
+            _credited = pos.get("gp_indicators") or []
+        else:
+            _credited = []
+        for ind_id in _credited:
             cortex.record_indicator_outcome(ind_id, pnl)
     # [S18] Discord/webhook alert on real trade close (fail-soft)
     if alert_fn is not None:
@@ -518,6 +524,9 @@ def run_cycle(
                 "partial_enabled": bool(strategy.get("partial_enabled", False)),
                 "current_stop": stop, "atr": atr,
                 "entry_type": sig.meta.get("entry_type", "mean_reversion"),
+                # B9: firing GP indicator IDs so that on close ONLY these are
+                # credited (per-vote credit, not the whole ensemble blob).
+                "gp_indicators": sig.meta.get("gp_indicators", []),
             }
             # [CORTEX] record the entry (per-type memory; exile persists across cycles)
             with contextlib.suppress(Exception):
