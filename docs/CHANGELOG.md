@@ -79,29 +79,13 @@ Last updated: 2026-07-20
 - `6d614b5` Fix trade-close pipeline (audit #1): only real closes logged with correct keys
 - `e0b4c9e` TEMP: print on real close to confirm new close path executes
 - `0d21b14` TEMP: print on every exit evaluation (prove _process_exit runs)
-- `dba23f9` Remove TEMP close/exit debug prints; keep clean fix
-- `45283dc` Fix Cortex tab (audit #3/B7) part 1: Cortex persists to cortex_memory.json + summary() returns frontend shape
-- `bbec088c` Cortex (B7): replay recent trades.jsonl into Cortex before summary so tab is live immediately
-- `8388e406` TEMP DIAG: print cortex payload (deploy debugging)
-- `9155221` TEMP DIAG: re-add cortex payload print to confirm fix (deploy debugging)
-- `201f3d4` TEMP DIAG: dump raw cortex_json from DB to diagnose no_data
-- `e62225a` TEMP DIAG: return raw cortex_json via response (bypass log buffering)
-- `6b74ae4` Restore real /api/cortex + remove bot TEMP prints; add deploy marker
-- `1d747d7` Fix B7 real bug: bot double-nested cortex ({bot:{bot:summary}}) breaking CortexView; send flat summary (matches Discovered contract)
-- `c35fa6c` TEMP DIAG: print cortex success/except + content
-- `002e76a` TEMP DIAG: /api/version marker to verify dashboard deploy
-- `3b7f7a0` TEMP DIAG: /api/version dumps raw cortex_json from live DB
-- `33fa042` TEMP DIAG: /api/version dumps columns + full error
-- `f2a2854` TEMP DIAG: /api/version dumps raw cortex_json value
-- `c1dddde` TEMP DIAG: simplify /api/version dump
-- `1affb20` TEMP DIAG: /api/version runs exact /api/cortex query
-- `047b181` Fix B7 root cause: remove stale live_compat.compat_cortex() route that shadowed the real DB-backed /api/cortex (it returned no_data because it only counted exiled/indicators, ignoring summary/by_entry_type). Plus stop double-nesting cortex payload.
-- `23527be` Cortex: actually aggregate PnL in record_outcome/summary (was discarded → pnl always 0.0)
+- `d37ee84` Fix Cortex tab incomplete: CortexView read by_entry_type/by_pair from botData.summary (wrong nesting — API sends them as top-level siblings of summary), so the Performance-by-Entry-Type and Per-Pair tables never rendered. Now reads from botData directly. Bundle verified: CortexView chunk contains the tables.
 
 ## Era 5 — Audit (#1 done, B7 done) + remaining items
 - **Audit #1 (CLOSED):** trades never truly closed → closed-trades counter 0, cumulative chart missing, Activity 0, Reports 0. Fixed in `6d614b5` (real-close-only logging with correct keys id/exit_reason/entry_ts). Deployed + verified live. Those 4 tabs now feed off real closed trades.
 - **Audit B7 (CLOSED):** Cortex tab empty. Two real bugs fixed: (1) bot sent cortex double-nested `{bot:{bot:summary}}` (fixed → flat summary, `1d747d7`); (2) a STALE `live_compat.compat_cortex()` route was registered AFTER the real `/api/cortex` and shadowed it, returning `no_data` because it only counted `exiled`/`indicators` (both empty in new cortex) while ignoring `summary`/`by_entry_type` (fixed → removed stale route, `047b181`). P&L now aggregates (`23527be`). VERIFIED LIVE: forex/gold/crypto all return real entries_total + by_entry_type win-rates + PnL.
-- **Remaining (open):** B8 (done in #1 — record_outcome uses true entry_type), B9 (per-vote indicator credit — not yet), B10 (wire live paper PnL back into GA fitness — not yet), X1/X2 (Discovered repopulate + record fields — minor, unverified live).
+- **Audit B7 UI fix (CLOSED):** even with data present, the Cortex tab looked incomplete — the Performance-by-Entry-Type and Per-Pair-Totals tables were coded to read `by_entry_type`/`by_pair` from `botData.summary`, but the API sends them as TOP-LEVEL siblings of `summary`. Fixed in `d37ee84` (read from `botData` directly). Live bundle verified to contain the tables. After refresh the tab shows real entry-type + per-pair win-rate/PnL tables. (Indicators + Policy cards remain empty until B9/B10 land.)
+- **Remaining (open):** B8 (done in #1 — record_outcome uses true entry_type), B9 (per-vote indicator credit — not yet; Indicators card empty until then), B10 (wire live paper PnL back into GA fitness — not yet), X1/X2 (Discovered repopulate + record fields — minor, unverified live).
 
 ---
 
