@@ -127,28 +127,16 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
             continue
     discovered = discovered_pairs
     cortex: dict = {}
-    # Cortex memory persists to disk (D2). Replay recent trade outcomes into a
-    # fresh Cortex so entry-type / per-pair win-rates reflect real history,
-    # not just future in-memory entries. #1's fix makes this accurate: only
-    # records with a real exit_reason count as outcomes, and entry_type is now
-    # correct (was hardcoded mean_reversion before).
+    # Cortex memory persists to disk (D2) in state/cortex/cortex_memory.json.
+    # That file ALREADY holds the full entry/outcome history AND the
+    # per-indicator GP stats (record_indicator_outcome is called on every GP
+    # close). So read the authoritative persisted Cortex directly — do NOT
+    # replay trades.jsonl, which (a) only calls record_outcome/record_entry
+    # and never record_indicator_outcome, and (b) doesn't even carry
+    # gp_indicators — so the per-indicator GP-Entry column was always empty.
     try:
         from hermes_core.engines.decision_cortex import Cortex
-        c = Cortex()
-        for t in _read_jsonl("trades.jsonl", limit=400):
-            et = t.get("entry_type") or "mean_reversion"
-            pair = t.get("pair") or t.get("asset")
-            if not pair:
-                continue
-            if t.get("exit_reason"):  # a real close -> outcome
-                c.record_outcome(pair, et, float(t.get("pnl_pct") or 0.0))
-            else:                      # still open -> record the entry
-                c.record_entry(pair, et)
-        # Send the summary dict directly (NOT keyed by bot). The backend
-        # stores it as cortex_json and /api/cortex keys it by bot from the
-        # URL — same contract as the working Discovered tab. Keying it here
-        # would double-nest ({bot:{bot:summary}}) and break CortexView.
-        cortex = c.summary()
+        cortex = Cortex().summary()
     except Exception:
         cortex = {}
     # recent trades / skips from the jsonl the loop appends

@@ -651,6 +651,15 @@ def apply_live_feedback(pair: str, cortex) -> int:
     try:
         if cortex is None:
             return 0
+        # The cortex passed by the discovery thread is loaded ONCE at startup
+        # and never re-reads the on-disk memory the trade loop writes to. So
+        # read the authoritative persisted stats fresh here (fail-soft: fall
+        # back to the passed instance if a fresh load is unavailable).
+        try:
+            from hermes_core.engines.decision_cortex import Cortex
+            stats_source = Cortex()
+        except Exception:
+            stats_source = cortex
         own = load_discovered_indicators(pair, include_shared=False)
         if not own:
             return 0
@@ -659,7 +668,7 @@ def apply_live_feedback(pair: str, cortex) -> int:
             name = ind.get("name") or ind.get("expr")
             if not name:
                 continue
-            stats = cortex.indicator_live_stats(name) or {}
+            stats = stats_source.indicator_live_stats(name) or {}
             samples = int(stats.get("attempts", 0))
             base = float(ind.get("fitness", 0.0) or 0.0)
             if samples < LIVE_FEEDBACK_MIN_SAMPLES:
