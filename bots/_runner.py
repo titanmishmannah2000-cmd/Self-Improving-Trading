@@ -122,7 +122,14 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
         try:
             inds = load_discovered_indicators(p, include_shared=True)
             if inds:
-                discovered_pairs[p] = inds
+                # Tag bot/pair for the Discovered tab; do not mutate cached dicts.
+                tagged = []
+                for ind in inds:
+                    d = dict(ind) if isinstance(ind, dict) else {"name": str(ind)}
+                    d["_bot"] = bot
+                    d["_pair"] = p
+                    tagged.append(d)
+                discovered_pairs[p] = tagged
         except Exception:
             continue
     discovered = discovered_pairs

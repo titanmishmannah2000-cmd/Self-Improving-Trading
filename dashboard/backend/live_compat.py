@@ -103,6 +103,95 @@ def _read_jsonl(path: Path) -> list[dict]:
 # /api/discovered  ->  {pairs:{pair:[ind]}, ensemble:{...}, total_indicators, total_pairs, degradation}
 # ----------------------------------------------------------------------------
 
+def _enrich_indicator(ind: dict, *, bot: str, pair: str) -> dict:
+    """Normalize a discovered indicator for the dashboard tab.
+
+    Matches fields the entry engine cares about (live_flag / live_fitness /
+    shared penalty) and adds display helpers (uses, bot, pair).
+    """
+    if not isinstance(ind, dict):
+        return {"name": "?", "expr": "", "_bot": bot, "_pair": pair}
+    out = dict(ind)
+    expr = str(out.get("expr") or out.get("expr_str") or "")
+    out["expr"] = expr
+    out.setdefault("name", out.get("expr", "?")[:40] or "?")
+    if not isinstance(out.get("uses"), list):
+        out["uses"] = [
+            k for k in ("volume", "dxy", "vix", "tnx", "spx", "oil", "gold", "btc", "fvx", "eem")
+            if k in expr
+        ]
+    try:
+        out["fitness"] = round(float(out.get("fitness") or 0), 4)
+    except (TypeError, ValueError):
+        out["fitness"] = 0.0
+    try:
+        out["win_rate"] = float(out.get("win_rate") or 0)
+    except (TypeError, ValueError):
+        out["win_rate"] = 0.0
+    try:
+        out["total_pnl"] = round(float(out.get("total_pnl") or 0), 4)
+    except (TypeError, ValueError):
+        out["total_pnl"] = 0.0
+    out["_bot"] = bot
+    out["_pair"] = pair
+    return out
+
+
+def _ensemble_for_pair(inds: list[dict]) -> dict:
+    """Ensemble summary aligned with entry: suppressed indicators do not vote."""
+    active = [i for i in inds if i.get("live_flag") != "suppress"]
+    if not active:
+        return {
+            "status": "no_active_indicators",
+            "signal": 0,
+            "num_indicators": 0,
+            "num_suppressed": len(inds),
+            "multi_dim": 0,
+            "best_fitness": 0,
+            "best_wr": 0,
+        }
+
+    def _f(i, k):
+        try:
+            return float(i.get(k, 0) or 0)
+        except Exception:
+            return 0.0
+
+    tw = sum((_f(i, "fitness") * _f(i, "win_rate")) for i in active if _f(i, "fitness") > 0)
+    bw = sum((_f(i, "fitness") * _f(i, "win_rate")) for i in active if _f(i, "win_rate") > 0.5)
+    signal = ((bw - (tw - bw)) / max(tw, 0.001))
+    return {
+        "signal": round(signal, 3),
+        "num_indicators": len(active),
+        "num_suppressed": sum(1 for i in inds if i.get("live_flag") == "suppress"),
+        "multi_dim": sum(1 for i in active if i.get("uses")),
+        "best_fitness": max((_f(i, "fitness") for i in active), default=0),
+        "best_wr": max((_f(i, "win_rate") for i in active), default=0),
+        "status": "ok",
+    }
+
+
+def _degradation_for_pairs(pairs: dict[str, list]) -> dict:
+    """Synthesize degradation/health stats from live_flag + WR (no separate file)."""
+    out: dict[str, dict] = {}
+    for pair, inds in pairs.items():
+        if not inds:
+            continue
+        suppressed = sum(1 for i in inds if i.get("live_flag") == "suppress")
+        promoted = sum(1 for i in inds if i.get("live_flag") == "promote")
+        shared = sum(1 for i in inds if i.get("_shared_from"))
+        weak = sum(1 for i in inds if 0 < float(i.get("win_rate") or 0) < 0.45)
+        out[pair] = {
+            "suppressed": suppressed,
+            "promoted": promoted,
+            "shared": shared,
+            "weak_wr": weak,
+            "active": len(inds) - suppressed,
+            "total": len(inds),
+        }
+    return out
+
+
 def _build_discovered(bot: str) -> dict:
     # Read from latest_state (SQLite) — the only cross-service channel. The bot
     # pushes discovered as {"EUR/USD":[...], ...}; reshape to the tab schema.
@@ -119,37 +208,19 @@ def _build_discovered(bot: str) -> dict:
             if isinstance(raw, dict):
                 for pair, inds in raw.items():
                     if isinstance(inds, list):
-                        pairs[pair] = inds
+                        pairs[pair] = [
+                            _enrich_indicator(i, bot=bot, pair=pair) for i in inds
+                        ]
     except Exception:
         pass
-    ensemble = {}
-    for pair, inds in pairs.items():
-        if not inds:
-            ensemble[pair] = {"status": "no_indicators", "signal": 0}
-            continue
-        def _f(i, k):
-            try:
-                return float(i.get(k, 0) or 0)
-            except Exception:
-                return 0.0
-        tw = sum((_f(i, "fitness") * _f(i, "win_rate")) for i in inds if _f(i, "fitness") > 0)
-        bw = sum((_f(i, "fitness") * _f(i, "win_rate")) for i in inds if _f(i, "win_rate") > 0.5)
-        signal = ((bw - (tw - bw)) / max(tw, 0.001))
-        ensemble[pair] = {
-            "signal": round(signal, 3),
-            "num_indicators": len(inds),
-            "multi_dim": sum(1 for i in inds if any(
-                k in str(i.get("expr", "")) for k in
-                ["volume", "dxy", "vix", "tnx", "spx", "oil", "gold", "btc", "fvx", "eem"])),
-            "best_fitness": max((_f(i, "fitness") for i in inds), default=0),
-            "best_wr": max((_f(i, "win_rate") for i in inds), default=0),
-        }
+    ensemble = {pair: _ensemble_for_pair(inds) for pair, inds in pairs.items()}
     return {
         "pairs": pairs,
         "ensemble": ensemble,
-        "degradation": {},
+        "degradation": _degradation_for_pairs(pairs),
         "total_indicators": sum(len(v) for v in pairs.values()),
         "total_pairs": len(pairs),
+        "bot": bot,
     }
 
 
@@ -265,17 +336,39 @@ def register(app, ingest_token_getter, valid_bots, on_price_broadcast=None):
 
     @app.get("/api/discovered")
     def compat_discovered():
-        result = {"pairs": {}, "ensemble": {}, "degradation": {}, "total_indicators": 0, "total_pairs": 0}
+        result = {
+            "pairs": {},
+            "ensemble": {},
+            "degradation": {},
+            "bots": {},
+            "total_indicators": 0,
+            "total_pairs": 0,
+        }
+        seen: set[tuple] = set()  # (bot, pair, name, expr) dedupe
         for bot in valid_bots:
             d = _build_discovered(bot)
+            result["bots"][bot] = {
+                "total_indicators": d["total_indicators"],
+                "total_pairs": d["total_pairs"],
+            }
             for p, inds in d["pairs"].items():
                 result["pairs"].setdefault(p, [])
-                result["pairs"][p].extend(inds)
+                for ind in inds:
+                    key = (bot, p, ind.get("name"), ind.get("expr"))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    result["pairs"][p].append(ind)
             for p, e in d["ensemble"].items():
+                # Prefer the owning bot's ensemble; recompute if we merged lists.
                 result["ensemble"][p] = e
             result["degradation"].update(d["degradation"])
-            result["total_indicators"] += d["total_indicators"]
-            result["total_pairs"] = len(result["pairs"])
+        # Recompute ensemble after merge so multi-bot + suppress flags stay aligned.
+        for p, inds in result["pairs"].items():
+            result["ensemble"][p] = _ensemble_for_pair(inds)
+        result["degradation"] = _degradation_for_pairs(result["pairs"])
+        result["total_indicators"] = sum(len(v) for v in result["pairs"].values())
+        result["total_pairs"] = len(result["pairs"])
         return result
 
     @app.get("/api/heartbeat/{bot_name}")

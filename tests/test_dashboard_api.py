@@ -188,6 +188,77 @@ def test_gp_open_trade_surfaces_in_overview():
     assert gp[0].get("unrealised_pct") == 0.32
 
 
+def test_discovered_api_excludes_suppress_from_ensemble_and_exposes_health():
+    """Discovered tab must match entry: live_flag=suppress does not vote in the
+    fitness×WR lean, and degradation counts come from the same indicator list.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    disc = {
+        "EUR/USD": [
+            {
+                "name": "good",
+                "expr": "rsi(close,14)",
+                "fitness": 0.8,
+                "win_rate": 0.6,
+                "total_pnl": 1.2,
+                "live_flag": "promote",
+            },
+            {
+                "name": "bad",
+                "expr": "macd(close)",
+                "fitness": 0.9,
+                "win_rate": 0.7,
+                "total_pnl": -2.0,
+                "live_flag": "suppress",
+            },
+            {
+                "name": "shared_one",
+                "expr": "sma(close,20)",
+                "fitness": 0.5,
+                "win_rate": 0.4,
+                "total_pnl": 0.1,
+                "_shared_from": "GBP/USD",
+            },
+        ],
+    }
+    ts = datetime.now(timezone.utc).isoformat()
+    conn = m.get_conn()
+    conn.execute(
+        """INSERT INTO latest_state
+           (bot, strategy_json, goal_json, heartbeat_json, open_trades_json,
+            discovered_json, cortex_json, flatlined_json, received_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        ("forex", "{}", "{}", "{}", "[]", json.dumps(disc), "{}", "{}", ts),
+    )
+    conn.commit()
+    conn.close()
+
+    r = client.get("/api/discovered")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["total_indicators"] == 3
+    assert "EUR/USD" in body["pairs"]
+    inds = body["pairs"]["EUR/USD"]
+    assert all("_bot" in i for i in inds)
+    assert any(i.get("live_flag") == "suppress" for i in inds)
+
+    ens = body["ensemble"]["EUR/USD"]
+    assert ens["num_indicators"] == 2  # suppress excluded
+    assert ens["num_suppressed"] == 1
+    # Without suppress, signal would be pulled by the strong suppressed row;
+    # with exclude, only good + shared_one vote.
+    assert ens["signal"] is not None
+
+    deg = body["degradation"]["EUR/USD"]
+    assert deg["suppressed"] == 1
+    assert deg["promoted"] == 1
+    assert deg["shared"] == 1
+    assert deg["weak_wr"] == 1
+    assert deg["active"] == 2
+
+
 def test_overview_open_trades_not_filtered_by_age_and_no_ghost_fallback():
     """Live opens must survive >24h entry_ts and must NOT be inferred from
     trades-table rows missing exit_reason (ghost opens that inflated pair cards

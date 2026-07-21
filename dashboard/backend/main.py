@@ -2103,6 +2103,10 @@ def per_version_performance(bot_name: str, pair: Optional[str] = None):
 
 # ═══════════════════════════════════════════════════════════════
 # Discovered Indicators & Degradation Dashboard
+# NOTE: live_compat.register() owns GET /api/discovered (registered earlier).
+# This handler is kept as a filesystem-aware fallback for local tooling that
+# imports discovered_dashboard directly; FastAPI will not serve it while
+# live_compat's route is registered first.
 # ═══════════════════════════════════════════════════════════════
 
 @app.get("/api/discovered")

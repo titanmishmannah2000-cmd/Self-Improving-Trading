@@ -1,7 +1,11 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { SkeletonCard, SkeletonDiscovered } from "./Skeleton.jsx";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { SkeletonDiscovered } from "./Skeleton.jsx";
 
-// Cross-asset drivers an indicator may depend on — each gets its own colour dot.
+/** Plain-language blurb under section headers (same pattern as Cortex). */
+function Help({ children }) {
+  return <p className="discovered-help">{children}</p>;
+}
+
 const ASSET_COLORS = {
   volume: "#6cb2ff",
   dxy: "#f4a259",
@@ -16,55 +20,113 @@ const ASSET_COLORS = {
 };
 const assetColor = (a) => ASSET_COLORS[a] || "#8b93a3";
 
-// Per-indicator quality dot, keyed off out-of-sample win rate.
-function statusColor(ind) {
+function wrQuality(ind) {
   const wr = Number(ind.win_rate || 0);
-  if (wr >= 0.55) return "#3fb950";   // strong
-  if (wr >= 0.45) return "#d9b44a";   // marginal
-  if (wr > 0) return "#e15a6d";        // weak
-  return "#6e7681";                      // no data / seed
+  if (wr >= 0.55) return { color: "#3fb950", label: "strong" };
+  if (wr >= 0.45) return { color: "#d9b44a", label: "marginal" };
+  if (wr > 0) return { color: "#e15a6d", label: "weak" };
+  return { color: "#6e7681", label: ind.source === "discovered" ? "untested" : "seed" };
 }
-const statusLabel = (ind) => {
-  const wr = Number(ind.win_rate || 0);
-  if (wr >= 0.55) return "strong";
-  if (wr >= 0.45) return "marginal";
-  if (wr > 0) return "weak";
-  return ind.source === "discovered" ? "untested" : "seed";
-};
+
+function liveFlagMeta(flag) {
+  if (flag === "suppress") {
+    return {
+      cls: "gp-flag-suppress",
+      label: "suppressed",
+      title: "Live paper results are poor — entry engine skips this indicator (does not vote).",
+    };
+  }
+  if (flag === "promote") {
+    return {
+      cls: "gp-flag-promote",
+      label: "promoted",
+      title: "Live paper results look good — entry prefers this indicator’s weight.",
+    };
+  }
+  if (flag === "neutral" || flag === "pending") {
+    return {
+      cls: "gp-flag-neutral",
+      label: flag,
+      title: "Not enough live feedback yet, or results are mixed.",
+    };
+  }
+  return null;
+}
+
+function signalLabel(signal) {
+  if (signal > 0.3) return { cls: "bullish", text: "leans long" };
+  if (signal < -0.3) return { cls: "bearish", text: "leans short" };
+  return { cls: "neutral", text: "mixed / flat" };
+}
 
 function IndicatorRow({ ind }) {
   const wr = Number(ind.win_rate || 0);
-  const fit = Number(ind.fitness || 0);
+  const histFit = Number(ind.fitness || 0);
+  const liveFit = ind.live_fitness != null ? Number(ind.live_fitness) : null;
+  const fit = liveFit != null && !Number.isNaN(liveFit) ? liveFit : histFit;
   const pnl = Number(ind.total_pnl || 0);
   const uses = Array.isArray(ind.uses) ? ind.uses : [];
+  const q = wrQuality(ind);
+  const flag = liveFlagMeta(ind.live_flag);
+  const suppressed = ind.live_flag === "suppress";
+
   return (
-    <li className="gp-indicator" data-bot={ind._bot}>
-      <span className="gp-dot" style={{ background: statusColor(ind) }} title={statusLabel(ind)} />
+    <li
+      className={`gp-indicator${suppressed ? " gp-indicator-suppressed" : ""}`}
+      data-bot={ind._bot}
+    >
+      <span className="gp-dot" style={{ background: q.color }} title={q.label} />
       <div className="gp-body">
         <div className="gp-name" title={ind.expr}>
-          {ind.name || ind.expr || JSON.stringify(ind)}
+          {ind.name || ind.expr || "—"}
         </div>
         <div className="gp-stats">
-          <span className="gp-stat" title="Out-of-sample win ratio">
-            <b className={wr >= 0.55 ? "pc-up" : wr > 0 ? "pc-down" : ""}>
-              {wr > 0 ? (wr * 100).toFixed(1) + "%" : "—"}
-            </b> win
+          <span className="gp-stat" title="Out-of-sample win rate on held-out candles (discovery math)">
+            <b className={wr >= 0.55 ? "pc-up" : wr > 0 && wr < 0.45 ? "pc-down" : ""}>
+              {wr > 0 ? `${(wr * 100).toFixed(1)}%` : "—"}
+            </b>{" "}
+            win
           </span>
-          <span className="gp-stat" title="Fitness score">fit <b>{fit.toFixed(3)}</b></span>
-          <span className="gp-stat" title="Total P&L (OOS)">
-            PnL <b className={pnl >= 0 ? "pc-up" : "pc-down"}>
-              {pnl >= 0 ? "+" : ""}{pnl.toFixed(2)}%
+          <span
+            className="gp-stat"
+            title={
+              liveFit != null
+                ? "Live-adjusted fitness (entry uses this when present)"
+                : "Historical OOS correlation fitness"
+            }
+          >
+            fit <b>{fit.toFixed(3)}</b>
+            {liveFit != null && liveFit !== histFit ? (
+              <span className="gp-fit-note"> live</span>
+            ) : null}
+          </span>
+          <span className="gp-stat" title="Cumulative OOS PnL % from discovery evaluation">
+            PnL{" "}
+            <b className={pnl >= 0 ? "pc-up" : "pc-down"}>
+              {pnl >= 0 ? "+" : ""}
+              {pnl.toFixed(2)}%
             </b>
           </span>
+          {flag && (
+            <span className={`gp-flag ${flag.cls}`} title={flag.title}>
+              {flag.label}
+            </span>
+          )}
+          {ind._shared_from && (
+            <span
+              className="gp-shared"
+              title="Borrowed from a related pair (entry applies a shared penalty)"
+            >
+              shared ← {ind._shared_from}
+            </span>
+          )}
+          {ind._bot && <span className="gp-bot-tag">{ind._bot}</span>}
           {ind.source && (
             <span className={`gp-src gp-src-${ind.source}`}>{ind.source}</span>
           )}
-          {ind.discovered_at && ind.discovered_at !== "unknown" && (
-            <span className="gp-when">{ind.discovered_at}</span>
-          )}
         </div>
         {uses.length > 0 && (
-          <div className="gp-assets" title="Cross-asset drivers this indicator uses">
+          <div className="gp-assets" title="Cross-asset drivers in the expression">
             {uses.map((a) => (
               <span key={a} className="gp-asset">
                 <span className="gp-asset-dot" style={{ background: assetColor(a) }} />
@@ -73,8 +135,43 @@ function IndicatorRow({ ind }) {
             ))}
           </div>
         )}
+        {suppressed && (
+          <div className="gp-suppress-note">
+            Not voting on live entries — fix live WR / wait for more samples, or let GP rediscover.
+          </div>
+        )}
       </div>
     </li>
+  );
+}
+
+function DegCard({ pair, deg }) {
+  if (!deg) return null;
+  const { suppressed = 0, promoted = 0, shared = 0, weak_wr = 0, active = 0, total = 0 } = deg;
+  return (
+    <div className="deg-card">
+      <div className="deg-card-pair">{pair}</div>
+      <div className="deg-card-stats">
+        <span title="Indicators that still vote">
+          <b>{active}</b> active
+        </span>
+        <span title="live_flag=suppress — entry skips these">
+          <b className={suppressed ? "pc-down" : ""}>{suppressed}</b> suppressed
+        </span>
+        <span title="live_flag=promote — preferred weight">
+          <b className={promoted ? "pc-up" : ""}>{promoted}</b> promoted
+        </span>
+        <span title="OOS win rate under 45%">
+          <b className={weak_wr ? "pc-down" : ""}>{weak_wr}</b> weak WR
+        </span>
+        <span title="Borrowed from a shared group pair">
+          <b>{shared}</b> shared
+        </span>
+        <span>
+          <b>{total}</b> total
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -82,6 +179,7 @@ export default function DiscoveredView({ apiBase, isActive = true }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [botFilter, setBotFilter] = useState("all");
 
   const fetchData = useCallback(async () => {
     try {
@@ -89,7 +187,9 @@ export default function DiscoveredView({ apiBase, isActive = true }) {
       if (!r.ok) throw new Error(`API ${r.status}`);
       setData(await r.json());
       setError(null);
-    } catch (e) { setError(e.message); }
+    } catch (e) {
+      setError(e.message);
+    }
     setLoading(false);
   }, [apiBase]);
 
@@ -97,7 +197,9 @@ export default function DiscoveredView({ apiBase, isActive = true }) {
     if (!isActive) return;
     fetchData();
     const iv = setInterval(fetchData, 30000);
-    const refresh = () => { fetchData(); };
+    const refresh = () => {
+      fetchData();
+    };
     document.addEventListener("visibilitychange", refresh);
     window.addEventListener("focus", refresh);
     return () => {
@@ -107,69 +209,268 @@ export default function DiscoveredView({ apiBase, isActive = true }) {
     };
   }, [fetchData, isActive]);
 
-  if (loading) return <SkeletonDiscovered />;
-  if (error) return <div className="discovered"><p className="error">{error} — <button className="retry-inline" onClick={fetchData}>retry</button></p></div>;
-  if (!data || data.total_indicators === 0)
-    return <div className="discovered"><h2>Discovered</h2><p className="detail-muted">No discovered indicators yet. GP runs weekly or when stuck.</p></div>;
+  const botNames = useMemo(() => {
+    const fromBots = Object.keys(data?.bots || {});
+    if (fromBots.length) return fromBots.sort();
+    const s = new Set();
+    Object.values(data?.pairs || {}).forEach((inds) => {
+      (inds || []).forEach((i) => {
+        if (i?._bot) s.add(i._bot);
+      });
+    });
+    return [...s].sort();
+  }, [data]);
 
-  const pairs = data.pairs || {};
+  const filteredPairs = useMemo(() => {
+    const pairs = data?.pairs || {};
+    if (botFilter === "all") return pairs;
+    const out = {};
+    for (const [pair, inds] of Object.entries(pairs)) {
+      const kept = (inds || []).filter((i) => i._bot === botFilter);
+      if (kept.length) out[pair] = kept;
+    }
+    return out;
+  }, [data, botFilter]);
+
+  if (loading) return <SkeletonDiscovered />;
+  if (error) {
+    return (
+      <div className="discovered">
+        <p className="error">
+          {error} —{" "}
+          <button className="retry-inline" onClick={fetchData}>
+            retry
+          </button>
+        </p>
+      </div>
+    );
+  }
+
+  const totalInd =
+    botFilter === "all"
+      ? data?.total_indicators || 0
+      : Object.values(filteredPairs).reduce((n, inds) => n + inds.length, 0);
+  const totalPairs = Object.keys(filteredPairs).length;
+
+  if (!data || totalInd === 0) {
+    return (
+      <div className="discovered">
+        <div className="discovered-head">
+          <h2>Discovered</h2>
+          <p className="discovered-subtitle">
+            Genetic programming indicators the entry engine can vote with
+          </p>
+        </div>
+        <div className="discovered-empty">
+          <Help>
+            No indicators yet. GP discovery runs on a schedule (and when the bot is stuck).
+            Until a pair has admitted indicators, the{" "}
+            <strong>GP Brain / gp_ensemble</strong> entry style has nothing to vote on for
+            that pair — mean reversion and RSI can still trade. Check bot heartbeats and
+            that <code>discovered/</code> state is being pushed on ingest.
+          </Help>
+        </div>
+      </div>
+    );
+  }
+
   const ensemble = data.ensemble || {};
-  const sorted = Object.keys(pairs).sort((a, b) => {
+  const degradation = data.degradation || {};
+  const sorted = Object.keys(filteredPairs).sort((a, b) => {
     const sa = Math.abs(ensemble[a]?.signal || 0);
     const sb = Math.abs(ensemble[b]?.signal || 0);
     if (sa !== sb) return sb - sa;
     return a.localeCompare(b);
   });
 
+  const globalSuppressed = Object.values(filteredPairs).reduce(
+    (n, inds) => n + inds.filter((i) => i.live_flag === "suppress").length,
+    0,
+  );
+  const globalShared = Object.values(filteredPairs).reduce(
+    (n, inds) => n + inds.filter((i) => i._shared_from).length,
+    0,
+  );
+
   return (
     <section className="discovered">
-      <h2>Discovered</h2>
-      <p className="discovered-count">
-        {data.total_indicators} indicators across {data.total_pairs} pairs
-        {data.total_indicators > 0 && (
-          <span className="discovered-legend">
-            <span className="lg"><i style={{ background: "#3fb950" }} /> strong</span>
-            <span className="lg"><i style={{ background: "#d9b44a" }} /> marginal</span>
-            <span className="lg"><i style={{ background: "#e15a6d" }} /> weak</span>
-            <span className="lg"><i style={{ background: "#6e7681" }} /> seed/untested</span>
+      <div className="discovered-head">
+        <h2>Discovered</h2>
+        <p className="discovered-subtitle">
+          Genetic programming indicators the entry engine can vote with
+        </p>
+      </div>
+
+      <div className="discovered-intro report-card">
+        <Help>
+          Each row is an admitted expression from GP discovery (OOS gates, permutation test,
+          walk-forward). The live <strong>gp_ensemble</strong> entry uses the same list
+          (including shared-group neighbors), skips <strong>suppressed</strong> indicators,
+          and prefers <strong>live_fitness</strong> when present. Numbers here are discovery /
+          paper feedback — not a live candle vote.
+        </Help>
+        <Help>
+          <strong>What to do:</strong> many suppressed or weak-WR rows → expect fewer GP
+          entries; wait for live feedback or a rediscovery cycle. Empty pair → GP Brain
+          cannot open on that pair until discovery admits something.
+        </Help>
+      </div>
+
+      {botNames.length > 1 && (
+        <div className="discovered-bot-tabs" role="tablist" aria-label="Filter by bot">
+          <button
+            type="button"
+            className={`discovered-bot-tab${botFilter === "all" ? " active" : ""}`}
+            onClick={() => setBotFilter("all")}
+          >
+            All
+          </button>
+          {botNames.map((b) => (
+            <button
+              key={b}
+              type="button"
+              className={`discovered-bot-tab${botFilter === b ? " active" : ""}`}
+              onClick={() => setBotFilter(b)}
+            >
+              {b}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="discovered-summary">
+        <div className="discovered-stat">
+          <span className="discovered-stat-num">{totalInd}</span>
+          <span className="discovered-stat-label">indicators</span>
+        </div>
+        <div className="discovered-stat">
+          <span className="discovered-stat-num">{totalPairs}</span>
+          <span className="discovered-stat-label">pairs</span>
+        </div>
+        <div className="discovered-stat">
+          <span className={`discovered-stat-num${globalSuppressed ? " pc-down" : ""}`}>
+            {globalSuppressed}
           </span>
-        )}
+          <span className="discovered-stat-label">suppressed</span>
+        </div>
+        <div className="discovered-stat">
+          <span className="discovered-stat-num">{globalShared}</span>
+          <span className="discovered-stat-label">shared</span>
+        </div>
+      </div>
+
+      <p className="discovered-count">
+        <span className="discovered-legend">
+          <span className="lg">
+            <i style={{ background: "#3fb950" }} /> strong (≥55% WR)
+          </span>
+          <span className="lg">
+            <i style={{ background: "#d9b44a" }} /> marginal
+          </span>
+          <span className="lg">
+            <i style={{ background: "#e15a6d" }} /> weak (&lt;45%)
+          </span>
+          <span className="lg">
+            <i style={{ background: "#6e7681" }} /> seed / untested
+          </span>
+        </span>
       </p>
+      <Help>
+        Dot color is <strong>out-of-sample win rate</strong> from discovery — how often the
+        signal would have been right on held-out candles. Fitness is correlation strength;
+        when a <em>live</em> tag appears, entry uses that adjusted score instead.
+      </Help>
+
+      <h3 className="discovered-section-title">Per pair</h3>
+      <Help>
+        The badge is a fitness×win-rate lean of <strong>non-suppressed</strong> indicators
+        (same suppress rule as entry). It is a portfolio-quality hint, not the live z-score
+        consensus that opens trades. Bullish / bearish thresholds are ±0.3.
+      </Help>
 
       {sorted.map((pair) => {
-        const inds = Array.isArray(pairs[pair]) ? pairs[pair] : [];
+        const inds = filteredPairs[pair] || [];
         if (!inds.length) return null;
         const ens = ensemble[pair] || {};
-        const signal = ens.signal || 0;
-        const sigClass = signal > 0.3 ? "bullish" : signal < -0.3 ? "bearish" : "neutral";
-        // tally quality across this pair's indicators
+        // Recompute lean locally when filtered so UI matches visible rows.
+        const active = inds.filter((i) => i.live_flag !== "suppress");
+        let signal = ens.signal || 0;
+        if (botFilter !== "all") {
+          const tw = active.reduce((s, i) => {
+            const f = Number(i.fitness || 0);
+            const w = Number(i.win_rate || 0);
+            return s + (f > 0 ? f * w : 0);
+          }, 0);
+          const bw = active.reduce((s, i) => {
+            const f = Number(i.fitness || 0);
+            const w = Number(i.win_rate || 0);
+            return s + (w > 0.5 ? f * w : 0);
+          }, 0);
+          signal = tw > 0 ? (bw - (tw - bw)) / tw : 0;
+        }
+        const sig = signalLabel(signal);
         const strong = inds.filter((i) => Number(i.win_rate || 0) >= 0.55).length;
-        const weak = inds.filter((i) => { const w = Number(i.win_rate || 0); return w > 0 && w < 0.45; }).length;
+        const weak = inds.filter((i) => {
+          const w = Number(i.win_rate || 0);
+          return w > 0 && w < 0.45;
+        }).length;
+        const suppressed = inds.filter((i) => i.live_flag === "suppress").length;
+        const multi = ens.multi_dim || active.filter((i) => (i.uses || []).length).length;
+
         return (
           <div className="discovered-pair" key={pair}>
             <div className="discovered-pair-head">
               <span className="discovered-pair-name">{pair}</span>
-              <span className={`signal-badge signal-${sigClass}`}>
-                {signal > 0 ? "+" : ""}{Number(signal).toFixed(3)}
+              <span
+                className={`signal-badge signal-${sig.cls}`}
+                title={`${sig.text} — fitness×WR lean of active indicators`}
+              >
+                {signal > 0 ? "+" : ""}
+                {Number(signal).toFixed(3)}
+                <span className="signal-hint">{sig.text}</span>
               </span>
               <span className="discovered-pair-meta">
                 {inds.length} indicators
+                {active.length !== inds.length && (
+                  <span className="dq">{active.length} voting</span>
+                )}
                 {strong > 0 && <span className="dq dq-strong">{strong}★</span>}
                 {weak > 0 && <span className="dq dq-weak">{weak}⚠</span>}
-                {ens.multi_dim ? <span className="dq">{ens.multi_dim} cross-asset</span> : null}
+                {suppressed > 0 && (
+                  <span className="dq dq-weak" title="Skipped by entry engine">
+                    {suppressed} suppressed
+                  </span>
+                )}
+                {multi ? <span className="dq">{multi} cross-asset</span> : null}
               </span>
             </div>
             <ul className="gp-indicators" data-testid="gp-indicators">
-              {inds.map((ind, i) => <IndicatorRow key={i} ind={ind} />)}
+              {inds.map((ind, i) => (
+                <IndicatorRow key={`${ind.name}-${ind.expr}-${i}`} ind={ind} />
+              ))}
             </ul>
           </div>
         );
       })}
 
-      {data.degradation && Object.keys(data.degradation).length > 0 && (
+      {Object.keys(degradation).length > 0 && (
         <div className="discovered-deg">
-          <div className="dc-label">Degradation Tracking</div>
-          <pre className="discovered-deg-json">{JSON.stringify(data.degradation, null, 2)}</pre>
+          <h3 className="discovered-section-title">Health by pair</h3>
+          <Help>
+            Counts derived from the same indicator list entry uses:{" "}
+            <strong>suppressed</strong> = live_flag suppress (no vote);{" "}
+            <strong>promoted</strong> = live_flag promote; <strong>weak WR</strong> = OOS
+            win rate under 45%; <strong>shared</strong> = borrowed from a group neighbor
+            (entry applies a shared penalty). Act when suppressed ≫ active on a pair you
+            expect GP Brain to trade.
+          </Help>
+          <div className="deg-grid">
+            {sorted
+              .filter((p) => degradation[p])
+              .map((p) => (
+                <DegCard key={p} pair={p} deg={degradation[p]} />
+              ))}
+          </div>
         </div>
       )}
     </section>
