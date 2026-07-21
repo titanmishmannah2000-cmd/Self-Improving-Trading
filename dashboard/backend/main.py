@@ -93,6 +93,47 @@ def _count_closed_trades(conn, bot: str, valid_pairs: list | None = None) -> int
     return n
 
 
+# First trading day of THIS Self-Improving Trading project (not the prior Hermes bot).
+# Override with PROJECT_TRADE_EPOCH if you ever need to re-scope.
+PROJECT_TRADE_EPOCH = os.getenv("PROJECT_TRADE_EPOCH", "2026-07-20T00:00:00Z")
+
+
+def purge_legacy_dashboard_rows(conn) -> dict:
+    """Remove leftover rows from the previous Hermes bot on the shared Railway volume.
+
+    This project's closed trades use ids like ``forex:EUR/USD:…`` and start on
+    2026-07-20. The old bot used ``trade_<n>`` ids and earlier timestamps; those
+    inflated Live/Reports closed counts (100+) while this project only has ~tens.
+    """
+    epoch = PROJECT_TRADE_EPOCH
+    stats = {
+        "trades_legacy_id": conn.execute(
+            "DELETE FROM trades WHERE id LIKE 'trade_%'"
+        ).rowcount,
+        "trades_before_epoch": conn.execute(
+            """
+            DELETE FROM trades WHERE
+              (entry_ts IS NOT NULL AND entry_ts != '' AND entry_ts < ?)
+              OR (
+                (entry_ts IS NULL OR entry_ts = '')
+                AND exit_ts IS NOT NULL AND exit_ts != '' AND exit_ts < ?
+              )
+            """,
+            (epoch, epoch),
+        ).rowcount,
+        "hypotheses_before_epoch": conn.execute(
+            "DELETE FROM hypotheses WHERE ts IS NOT NULL AND ts != '' AND ts < ?",
+            (epoch,),
+        ).rowcount,
+        "skips_before_epoch": conn.execute(
+            "DELETE FROM skips WHERE ts IS NOT NULL AND ts != '' AND ts < ?",
+            (epoch,),
+        ).rowcount,
+    }
+    conn.commit()
+    return stats
+
+
 # ── Wilson Score Interval ──
 
 def wilson_score_interval(wins: int, total: int, confidence: float = 0.95):
@@ -2826,8 +2867,14 @@ try:
     if dt or dh or ds:
         conn.commit()
         print(f"[CLEANUP] Removed {dt} trades + {dh} hypotheses + {ds} skips (gold pairs under forex)", flush=True)
+    purged = purge_legacy_dashboard_rows(conn)
+    if any(purged.values()):
+        print(
+            f"[CLEANUP] Purged legacy Hermes rows (epoch={PROJECT_TRADE_EPOCH}): {purged}",
+            flush=True,
+        )
     conn.close()
-except Exception:
-    pass
+except Exception as _cleanup_exc:
+    print(f"[CLEANUP] skipped: {_cleanup_exc}", flush=True)
 
-# deploy-tag: xag-quarantine-v2 (force rebuild)
+# deploy-tag: purge-legacy-hermes-v1 (force rebuild — drop old bot trades from volume DB)

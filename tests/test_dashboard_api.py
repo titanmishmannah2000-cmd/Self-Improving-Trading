@@ -339,12 +339,73 @@ def test_per_version_uses_entry_type_when_strategy_version_missing():
     assert any(v.get("version") == "gp_ensemble" for v in versions), versions
 
 
-def test_overview_closed_trades_is_lifetime_not_recent_window():
-    """Live pulse must use lifetime unique closed count, not len(recent_trades).
+def test_purge_legacy_hermes_trades_keeps_this_project_only():
+    """Shared Railway volume must not keep the previous Hermes bot's trades.
 
-    Regression: counting exit_reason rows inside the last-300 window (and
-    duplicate ids) inflated PortfolioPulse 'closed' (e.g. 58) vs Reports.
+    Old ids were ``trade_*`` / pre-2026-07-20; this project uses ``forex:PAIR:…``.
     """
+    import json
+
+    conn = m.get_conn()
+    epoch = m.PROJECT_TRADE_EPOCH
+    rows = [
+        ("trade_111", "forex", "EUR/USD", "2026-07-10T00:00:00Z", "stop_loss"),
+        ("forex:EUR/USD:1", "forex", "EUR/USD", "2026-07-20T12:00:00Z", "profit_target"),
+        ("forex:GBP/USD:2", "forex", "GBP/USD", "2026-07-21T12:00:00Z", "time_exit"),
+        ("trade_222", "gold", "XAU/USD", "2026-07-15T00:00:00Z", "stop_loss"),
+        ("gold:XAU/USD:9", "gold", "XAU/USD", "2026-07-21T00:00:00Z", "profit_target"),
+    ]
+    for tid, bot, pair, ts, reason in rows:
+        raw = {"id": tid, "pair": pair, "exit_reason": reason, "pnl_pct": 0.1}
+        conn.execute(
+            "INSERT INTO trades (id, bot, pair, entry_price, entry_ts, exit_ts, exit_reason, pnl_pct, raw_json) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (tid, bot, pair, 1.0, ts, ts, reason, 0.1, json.dumps(raw)),
+        )
+    conn.execute(
+        "INSERT INTO hypotheses (bot, ts, pair, variable, old_value, new_value, reasoning, mode, raw_json) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        ("forex", "2026-07-10T00:00:00Z", "EUR/USD", "x", "1", "2", "old", "paper", "{}"),
+    )
+    conn.commit()
+    purged = m.purge_legacy_dashboard_rows(conn)
+    assert purged["trades_legacy_id"] >= 2
+    left = {r["id"] for r in conn.execute("SELECT id FROM trades").fetchall()}
+    assert left == {"forex:EUR/USD:1", "forex:GBP/USD:2", "gold:XAU/USD:9"}
+    assert conn.execute("SELECT COUNT(*) c FROM hypotheses").fetchone()["c"] == 0
+    conn.close()
+
+    # Overview closed count must match this project only.
+    conn = m.get_conn()
+    conn.execute(
+        """INSERT INTO latest_state
+           (bot, strategy_json, goal_json, heartbeat_json, open_trades_json,
+            discovered_json, cortex_json, flatlined_json, received_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        ("forex", json.dumps({"EUR/USD": {}, "GBP/USD": {}}), "{}", "{}", "[]",
+         "{}", "{}", "{}", epoch),
+    )
+    conn.execute(
+        """INSERT INTO latest_state
+           (bot, strategy_json, goal_json, heartbeat_json, open_trades_json,
+            discovered_json, cortex_json, flatlined_json, received_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        ("gold", json.dumps({"XAU/USD": {}}), "{}", "{}", "[]",
+         "{}", "{}", "{}", epoch),
+    )
+    conn.commit()
+    conn.close()
+    o = client.get("/api/overview").json()
+    assert o["bots"]["forex"]["closed_trades"] == 2
+    assert o["bots"]["gold"]["closed_trades"] == 1
+    assert o["totals"]["closed_trades"] == 3
+    lt = client.get("/api/lifetime-summary").json()
+    assert lt["bots"]["forex"]["closed_trades"] == 2
+    assert lt["bots"]["gold"]["closed_trades"] == 1
+
+
+def test_overview_closed_trades_is_lifetime_not_recent_window():
+    """Live pulse must use lifetime unique closed count, not len(recent_trades)."""
     import json
     from datetime import datetime, timezone
 

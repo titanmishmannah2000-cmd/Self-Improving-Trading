@@ -1208,9 +1208,8 @@ function PortfolioPulse({ overview }) {
     }
   }
 
-  // Lifetime closed trades from overview totals (DB count) — same basis as
-  // Reports. Never count the recent_trades window (that produced mismatched
-  // "closed" totals like 58 vs lifetime 139).
+  // Lifetime closed for THIS project (overview.totals) — same basis as Reports.
+  // Prefer API totals; never invent numbers from unrelated / legacy DB rows.
   const botsList = Object.values(overview?.bots || {});
   let closedCount = overview?.totals?.closed_trades;
   if (closedCount == null) {
@@ -1220,7 +1219,7 @@ function PortfolioPulse({ overview }) {
         0,
       );
     } else {
-      // Pre-upgrade API: approximate from the recent window until backend ships.
+      // Pre-upgrade API fallback: recent window with exit_reason.
       closedCount = botsList.reduce(
         (n, b) => n + (b.recent_trades || []).filter((t) => t.exit_reason).length,
         0,
