@@ -238,7 +238,9 @@ class Cortex:
             }
         return {
             "summary": {
-                "entries_total": len(self._entries),
+                # Closed outcomes only — UI labels this "completed".
+                "entries_total": sum(1 for e in self._entries if e.get("outcome") is not None),
+                "entries_open": sum(1 for e in self._entries if e.get("outcome") is None),
                 "exiled_indicators": len(self.get_exiled_indicators()),
                 "indicators_tracked": len(indicators),
                 "best_entry_type": self.best_entry_type(),
@@ -249,4 +251,9 @@ class Cortex:
             "by_entry_type": by_type,
             "by_pair": by_pair,
             "type_wr": {t: self.entry_type_wr(t) for t in VALID_ENTRY_TYPES},
+            "gates": {
+                "exile": f"GP indicator WR < {EXILE_WR:.0%} after ≥{EXILE_MIN_ATTEMPTS} attempts → exiled",
+                "reinstate": f"After {EXILE_DECAY_ENTRIES} entries, reinstate if WR ≥ {REINSTATE_WR:.0%}",
+                "best_entry": "Router picks the entry type with the higher known win-rate",
+            },
         }

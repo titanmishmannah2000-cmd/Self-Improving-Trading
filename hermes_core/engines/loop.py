@@ -38,6 +38,7 @@ from hermes_core.engines.decision_cortex import Cortex
 from hermes_core.engines.entry import evaluate_entry
 from hermes_core.engines.exit import evaluate_exit
 from hermes_core.engines.genetic import discover as gp_discover
+from hermes_core.engines.policy_engine import PolicyEngine
 from hermes_core.engines.risk import (
     MAX_POSITION_SIZE,
     check_rr_guard,
@@ -390,6 +391,12 @@ def run_cycle(
     chart_contexts: dict[str, str] = {}
     regimes: dict[str, str] = {}          # pair -> 'trend'|'range' (dashboard regime cards)
     cortex = Cortex(bot)                   # per-cycle; exile SET persists to disk
+    # [GUARD L35] evaluate policy once per cycle from cortex WRs, then apply
+    # suppressions before opening new positions.
+    try:
+        policy = PolicyEngine().evaluate(cycle, pairs, cortex=cortex)
+    except Exception:  # noqa: BLE001 — fail-open: never block trading on policy I/O
+        policy = None
 
     for pair in pairs:
         # --- fetch (fail-soft; failures counted toward circuit breaker) -----
@@ -543,6 +550,12 @@ def run_cycle(
                 _log_skip(bot, pair, cycle, "no_signal")
                 summary["skips"] += 1
                 continue
+            # [GUARD L35] policy may bench GP or MR when the other type is clearly better.
+            _etype = sig.meta.get("entry_type", "mean_reversion")
+            if policy is not None and policy.is_suppressed(pair, _etype):
+                _log_skip(bot, pair, cycle, f"policy_suppress:{_etype}")
+                summary["skips"] += 1
+                continue
             # RR guard (S6) — reject R:R < 1.0 before committing
             sl = float(strategy["stop_loss_pct"])
             tp = float(strategy["profit_target_pct"])
@@ -561,7 +574,7 @@ def run_cycle(
                 "held_cycles": 0, "breakeven_set": False, "partial_done": False,
                 "partial_enabled": bool(strategy.get("partial_enabled", False)),
                 "current_stop": stop, "atr": atr,
-                "entry_type": sig.meta.get("entry_type", "mean_reversion"),
+                "entry_type": _etype,
                 # B9: firing GP indicator IDs so that on close ONLY these are
                 # credited (per-vote credit, not the whole ensemble blob).
                 "gp_indicators": sig.meta.get("gp_indicators", []),

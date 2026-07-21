@@ -127,16 +127,30 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
             continue
     discovered = discovered_pairs
     cortex: dict = {}
-    # Cortex memory persists to disk (D2) in state/cortex/cortex_memory.json.
-    # That file ALREADY holds the full entry/outcome history AND the
-    # per-indicator GP stats (record_indicator_outcome is called on every GP
-    # close). So read the authoritative persisted Cortex directly — do NOT
-    # replay trades.jsonl, which (a) only calls record_outcome/record_entry
-    # and never record_indicator_outcome, and (b) doesn't even carry
-    # gp_indicators — so the per-indicator GP-Entry column was always empty.
+    # Cortex memory persists per-bot under HERMES_STATE_ROOT/{bot}/state/cortex/.
+    # Always bind to THIS bot — Cortex() alone defaults to HERMES_BOT_NAME which
+    # can be wrong if a helper process reads another bot's state.
     try:
         from hermes_core.engines.decision_cortex import Cortex
-        cortex = Cortex().summary()
+        from hermes_core.engines.policy_engine import PolicyEngine
+        cx = Cortex(bot=bot)
+        cortex = cx.summary()
+        try:
+            pol = PolicyEngine().evaluate(
+                max(cycle, 0), list(cfg.get("pairs") or []), cortex=cx
+            )
+            cortex["policy"] = {
+                **pol.to_dict(),
+                "version": 1,
+                "gates": {
+                    "suppress_gp": "Bench GP when MR WR ≥ 40% and GP WR < 30%",
+                    "suppress_mr": "Bench MR when GP WR ≥ 50%",
+                    "priority_discovery": "≥2 exiled indicators → prioritize GP rediscovery",
+                    "rollback": "Flag rollback when MR WR < 30% after ≥10 trades",
+                },
+            }
+        except Exception:
+            pass
     except Exception:
         cortex = {}
     # recent trades / skips from the jsonl the loop appends
