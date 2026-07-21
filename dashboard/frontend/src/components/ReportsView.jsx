@@ -89,18 +89,39 @@ export default function ReportsView({ apiBase, isActive = true }) {
 
   const data = tab === "daily" ? daily : tab === "lifetime" ? lifetime : rangeData;
 
+  const summaryLine = (() => {
+    if (!data?.bots) return null;
+    let closed = 0;
+    let pnl = 0;
+    for (const b of Object.values(data.bots)) {
+      closed += Number(b?.closed_trades) || 0;
+      pnl += Number(b?.total_pnl_pct) || 0;
+    }
+    if (closed === 0) {
+      return tab === "daily"
+        ? "No finished trades today yet — quiet days are normal."
+        : "No finished trades in this window yet.";
+    }
+    const dir = pnl >= 0 ? "Up" : "Down";
+    return `${dir} ${Math.abs(pnl).toFixed(2)}% across ${closed} finished trade${closed === 1 ? "" : "s"}.`;
+  })();
+
   return (
     <div className="reports">
       <div className="reports-head">
         <div className="reports-tabs">
           <button className={`rtab ${tab === "daily" ? "rtab-active" : ""}`} onClick={() => { setTab("daily"); setRangeData(null); }}>Today</button>
-          <button className={`rtab ${tab === "lifetime" ? "rtab-active" : ""}`} onClick={() => { setTab("lifetime"); setRangeData(null); }}>Lifetime</button>
-          <button className={`rtab ${tab === "custom" ? "rtab-active" : ""}`} onClick={() => setTab("custom")}>Custom Range</button>
+          <button className={`rtab ${tab === "lifetime" ? "rtab-active" : ""}`} onClick={() => { setTab("lifetime"); setRangeData(null); }}>All time</button>
+          <button className={`rtab ${tab === "custom" ? "rtab-active" : ""}`} onClick={() => setTab("custom")}>Custom</button>
         </div>
         <div className="reports-actions">
-          <button className="copy-btn" onClick={handleCopy}>{copied ? "Copied ✓" : "Copy summary for analysis"}</button>
+          <button className="copy-btn" onClick={handleCopy}>{copied ? "Copied ✓" : "Copy summary"}</button>
         </div>
       </div>
+
+      {summaryLine && (
+        <p className="reports-summary-line">{summaryLine}</p>
+      )}
 
       {tab === "custom" && (
         <div className="range-picker">
@@ -117,9 +138,8 @@ export default function ReportsView({ apiBase, isActive = true }) {
       {loading && !loadError && !data && tab !== "custom" && <div className="reports-grid">{[1,2].map(i => <SkeletonReportCard key={i} />)}</div>}
       {loadError && (
         <div className="reports-error">
-          <p className="reports-error-msg">⚠ Failed to load reports: {loadError}</p>
-          <p className="reports-error-hint">Make sure the backend API is running at <strong>{apiBase}</strong> and the Reports endpoint is accessible.</p>
-          <p className="reports-error-hint">The page will retry automatically every 60 seconds.</p>
+          <p className="reports-error-msg">Couldn't load results: {loadError}</p>
+          <p className="reports-error-hint">Make sure the dashboard server is running. This page retries every 60 seconds.</p>
         </div>
       )}
 
@@ -131,28 +151,28 @@ export default function ReportsView({ apiBase, isActive = true }) {
             return (
               <div className="report-card" key={bot}>
                 <div className="report-card-head">
-                  <span className="report-bot-name">{bot === "forex" ? "Forex Bot" : bot === "gold" ? "Gold Bot" : "Crypto Bot"}</span>
+                  <span className="report-bot-name">{bot === "forex" ? "Currencies" : bot === "gold" ? "Metals" : "Crypto"}</span>
                   {tab === "lifetime" && b.tracking_since && <span className="report-since">since {new Date(b.tracking_since).toLocaleDateString()}</span>}
                 </div>
                 <div className="report-stats">
-                  <div className="rstat"><span className="rstat-num">{b.closed_trades}</span><span className="rstat-label">closed</span></div>
-                  <div className="rstat"><span className={`rstat-num ${b.total_pnl_pct >= 0 ? "pc-up" : "pc-down"}`}>{fmtPct(b.total_pnl_pct)}</span><span className="rstat-label">total P&L</span></div>
-                  <div className="rstat"><span className={`rstat-num ${b.win_rate_pct >= 50 ? "pc-up" : "pc-down"}`}>{b.win_rate_pct}%{b.low_confidence ? <span className="vm-lc" title="Low confidence">*</span> : ""}</span><span className="rstat-label">win rate</span></div>
-                  <div className="rstat"><span className="rstat-num">{b.avg_win_pct > 0 ? "+" : ""}{b.avg_win_pct}/{b.avg_loss_pct}</span><span className="rstat-label">avg W/L</span></div>
-                  {tab === "lifetime" && <div className="rstat"><span className="rstat-num">{b.total_reflections}</span><span className="rstat-label">reflections</span></div>}
-                  {tab === "daily" && <div className="rstat"><span className="rstat-num">{b.reflections_today ?? 0}</span><span className="rstat-label">reflections today</span></div>}
-                  {tab === "custom" && <div className="rstat"><span className="rstat-num">{b.reflections_in_range ?? 0}</span><span className="rstat-label">reflections</span></div>}
+                  <div className="rstat"><span className="rstat-num">{b.closed_trades}</span><span className="rstat-label">finished</span></div>
+                  <div className="rstat"><span className={`rstat-num ${b.total_pnl_pct >= 0 ? "pc-up" : "pc-down"}`}>{fmtPct(b.total_pnl_pct)}</span><span className="rstat-label">total result</span></div>
+                  <div className="rstat"><span className={`rstat-num ${b.win_rate_pct >= 50 ? "pc-up" : "pc-down"}`}>{b.win_rate_pct}%{b.low_confidence ? <span className="vm-lc" title="Low confidence">*</span> : ""}</span><span className="rstat-label">wins</span></div>
+                  <div className="rstat"><span className="rstat-num">{b.avg_win_pct > 0 ? "+" : ""}{b.avg_win_pct}/{b.avg_loss_pct}</span><span className="rstat-label">avg win/loss</span></div>
+                  {tab === "lifetime" && <div className="rstat"><span className="rstat-num">{b.total_reflections}</span><span className="rstat-label">self-improves</span></div>}
+                  {tab === "daily" && <div className="rstat"><span className="rstat-num">{b.reflections_today ?? 0}</span><span className="rstat-label">tweaks today</span></div>}
+                  {tab === "custom" && <div className="rstat"><span className="rstat-num">{b.reflections_in_range ?? 0}</span><span className="rstat-label">tweaks</span></div>}
                 </div>
                 {Object.keys(b.by_pair || {}).length > 0 && (
                   <div className="report-bypair">
                     {Object.entries(b.by_pair).map(([pair, d]) => (
-                      <div className="rbp-row" key={pair}><span className="rbp-pair">{pair}</span><span className="rbp-trades">{d.trades}t</span><span className={`rbp-pnl ${d.total_pnl_pct >= 0 ? "pc-up" : "pc-down"}`}>{fmtPct(d.total_pnl_pct)}</span><span className="rbp-wr">{d.win_rate_pct}% win</span></div>
+                      <div className="rbp-row" key={pair}><span className="rbp-pair">{pair}</span><span className="rbp-trades">{d.trades} trades</span><span className={`rbp-pnl ${d.total_pnl_pct >= 0 ? "pc-up" : "pc-down"}`}>{fmtPct(d.total_pnl_pct)}</span><span className="rbp-wr">{d.win_rate_pct}% wins</span></div>
                     ))}
                   </div>
                 )}
                 {(tab === "daily" || tab === "custom") && b.reflections_detail?.length > 0 && (
                   <div className="report-reflections">
-                    <div className="dc-label">Reflections {tab === "custom" ? "in range" : "today"}</div>
+                    <div className="dc-label">Settings tweaks {tab === "custom" ? "in range" : "today"}</div>
                     {b.reflections_detail.map((r, i) => <div className="rrefl-row" key={i}><span className="rrefl-pair">{r.pair}</span><span className="rrefl-change">{r.variable}: {r.old} → {r.new}</span></div>)}
                   </div>
                 )}

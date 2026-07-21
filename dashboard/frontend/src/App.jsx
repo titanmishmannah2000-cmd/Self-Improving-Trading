@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
+import React, { useState, useEffect, useCallback, useRef, useContext, createContext, lazy, Suspense } from "react";
 import {
   XAxis, YAxis, Tooltip, Label,
   ResponsiveContainer, ReferenceLine, Area, AreaChart,
@@ -16,7 +16,26 @@ const DiscoveredView = lazy(() => import("./DiscoveredView.jsx"));
 const AuditView = lazy(() => import("./AuditView.jsx"));
 const CortexView = lazy(() => import("./CortexView.jsx"));
 
-const TAB_KEYS = ["live", "activity", "reports", "discovered", "cortex", "audit", "alerts", "heartbeat", "flatline"];
+const WATCHER_TABS = ["live", "activity", "reports", "alerts"];
+const ADVANCED_ONLY_TABS = ["discovered", "cortex", "audit", "heartbeat", "flatline"];
+const TAB_KEYS = [...WATCHER_TABS.slice(0, 3), ...ADVANCED_ONLY_TABS.slice(0, 3), "alerts", ...ADVANCED_ONLY_TABS.slice(3)];
+
+const TAB_LABELS = {
+  live: { watcher: "Now", advanced: "Live" },
+  activity: { watcher: "What happened", advanced: "Activity" },
+  reports: { watcher: "Results", advanced: "Reports" },
+  alerts: { watcher: "Notices", advanced: "Alerts" },
+  discovered: { watcher: "Discovered", advanced: "Discovered" },
+  cortex: { watcher: "Cortex", advanced: "Cortex" },
+  audit: { watcher: "Audit", advanced: "Audit" },
+  heartbeat: { watcher: "Heartbeat", advanced: "Heartbeat" },
+  flatline: { watcher: "Flatline", advanced: "Flatline" },
+};
+
+const UiModeContext = createContext({ isWatcher: true, uiMode: "watcher" });
+function useUiMode() {
+  return useContext(UiModeContext);
+}
 
 // ───────────────────────────── Config ─────────────────────────────
 const POLL_MS = 15000;
@@ -62,17 +81,41 @@ function getMarketCountdown(marketClosed) {
 
 const PAIR_META = {
   // Forex
-  "EUR/USD":  { bot: "forex", color: "#D4745C", timezone: "London/NY" },
-  "GBP/USD":  { bot: "forex", color: "#c9a36a", timezone: "London/NY" },
-  "AUD/USD":  { bot: "forex", color: "#5B7C99", timezone: "Sydney/Tokyo" },
-  "GBP/JPY":  { bot: "forex", color: "#9B6B9E", timezone: "London/Tokyo" },
+  "EUR/USD":  { bot: "forex", color: "#D4745C", timezone: "London/NY", plain: "Euro vs US Dollar" },
+  "GBP/USD":  { bot: "forex", color: "#c9a36a", timezone: "London/NY", plain: "British Pound vs US Dollar" },
+  "AUD/USD":  { bot: "forex", color: "#5B7C99", timezone: "Sydney/Tokyo", plain: "Australian Dollar vs US Dollar" },
+  "GBP/JPY":  { bot: "forex", color: "#9B6B9E", timezone: "London/Tokyo", plain: "British Pound vs Japanese Yen" },
   // Commodities
-  "XAU/USD":  { bot: "gold", color: "#D4AF37", timezone: "24h" },
-  "XAG/USD":  { bot: "gold", color: "#C0C0C0", timezone: "24h" },
+  "XAU/USD":  { bot: "gold", color: "#D4AF37", timezone: "24h", plain: "Gold" },
+  "XAG/USD":  { bot: "gold", color: "#C0C0C0", timezone: "24h", plain: "Silver" },
   // Crypto
-  "BTC/USD":  { bot: "crypto", color: "#F7931A", timezone: "24h" },
-  "ETH/USD":  { bot: "crypto", color: "#627EEA", timezone: "24h" },
+  "BTC/USD":  { bot: "crypto", color: "#F7931A", timezone: "24h", plain: "Bitcoin" },
+  "ETH/USD":  { bot: "crypto", color: "#627EEA", timezone: "24h", plain: "Ethereum" },
 };
+
+const BOT_PLAIN = { forex: "Forex bot", gold: "Gold bot", crypto: "Crypto bot" };
+
+function plainRegime(regime) {
+  if (regime === "BULL") return "Trending up";
+  if (regime === "BEAR") return "Trending down";
+  if (regime === "NEUTRAL") return "Sideways";
+  return regime || "—";
+}
+
+function plainStrategy(strategyType) {
+  if (strategyType === "mean_reversion") return "Buy dips";
+  if (strategyType === "rsi_momentum") return "Catch rebounds";
+  return strategyType || "—";
+}
+
+function plainExit(reason) {
+  if (!reason) return "closed";
+  const r = String(reason).toLowerCase();
+  if (r.includes("stop") || r === "s") return "hit safety stop";
+  if (r.includes("target") || r === "t" || r.includes("profit")) return "took profit";
+  if (r.includes("time") || r === "x" || r.includes("timeout")) return "time limit reached";
+  return reason.replace(/_/g, " ");
+}
 
 // ───────────────────────── Learning glossary ─────────────────────────
 
@@ -206,6 +249,20 @@ function ThemeToggle() {
   );
 }
 
+function ModeToggle({ uiMode, setUiMode }) {
+  const isWatcher = uiMode === "watcher";
+  return (
+    <button
+      className={`mode-toggle ${isWatcher ? "mode-watcher" : "mode-advanced"}`}
+      onClick={() => setUiMode(isWatcher ? "advanced" : "watcher")}
+      title={isWatcher ? "Show Advanced operator tools" : "Back to simple Watcher view"}
+      aria-pressed={!isWatcher}
+    >
+      {isWatcher ? "Watcher" : "Advanced"}
+    </button>
+  );
+}
+
 function holdTime(cycles) {
   if (!cycles) return "—";
   const mins = cycles;
@@ -216,36 +273,39 @@ function holdTime(cycles) {
 }
 
 function humanizeSkip(reason) {
-  if (!reason) return "no signal yet";
+  if (!reason) return "waiting for a clear opportunity";
   const r = String(reason);
   // Prefixed dynamic reasons from the live loop
   if (r.startsWith("policy_suppress:")) {
-    return `policy benched ${r.slice("policy_suppress:".length)}`;
+    return `paused by safety rules (${r.slice("policy_suppress:".length)})`;
   }
   if (r.startsWith("gp_intel_suppress:")) {
-    return `GP lockout — ${r.slice("gp_intel_suppress:".length)}`;
+    return `AI paused this idea for now (${r.slice("gp_intel_suppress:".length)})`;
   }
-  if (r.startsWith("param_gate:")) return `param out of range (${r.slice("param_gate:".length)})`;
-  if (r.startsWith("chart_error:")) return "chart context error";
-  if (r.startsWith("fetch_error:")) return "price feed error";
-  if (r.startsWith("indicator_error:")) return "indicator error";
-  if (r.startsWith("strategy_error:")) return "strategy load error";
+  if (r.startsWith("param_gate:")) return `settings out of safe range (${r.slice("param_gate:".length)})`;
+  if (r.startsWith("chart_error:")) return "couldn't read the chart right now";
+  if (r.startsWith("fetch_error:")) return "price feed hiccup";
+  if (r.startsWith("indicator_error:")) return "measurement error — skipping safely";
+  if (r.startsWith("strategy_error:")) return "strategy file issue — skipping safely";
   const map = {
-    volume_below_avg: "low volume",
-    bear_regime: "bear market",
-    chart_downtrend_quality_filter: "downtrend, quality too low",
-    chart_hard_block: "chart says avoid/downtrend",
-    reentry_cooldown: "re-entry cooldown (stop-loss)",
-    adx_below_threshold: "no trend (ranging)",
-    mr_no_signal: "conditions not aligned",
-    fear_greed_high: "extreme greed",
-    funding_rate_high: "overleveraged longs",
-    quality_below_min: "quality too low",
-    no_signal: "no entry signal",
-    no_candle: "no candle / stale feed",
-    rr_guard: "reward:risk below 1.0",
-    flat_price: "flat / stale prices",
-    bb_bandwidth: "bands too tight (no edge)",
+    volume_below_avg: "market too quiet",
+    bear_regime: "market trending down",
+    chart_downtrend_quality_filter: "chart looks weak — waiting for better setup",
+    chart_hard_block: "chart says avoid for now",
+    reentry_cooldown: "cooling off after a stop-loss",
+    adx_below_threshold: "no clear trend yet",
+    mr_no_signal: "conditions not aligned yet",
+    fear_greed_high: "market looking too greedy",
+    funding_rate_high: "too many leveraged longs",
+    quality_below_min: "setup quality too low",
+    no_signal: "no clear entry yet",
+    no_candle: "waiting for fresh price data",
+    rr_guard: "reward isn't worth the risk yet",
+    flat_price: "price barely moving",
+    bb_bandwidth: "price range too tight for an edge",
+    session_filter: "waiting for a more active trading session",
+    stale_data: "price data looks stale",
+    market_closed: "market is closed",
   };
   return map[r] || r.replace(/_/g, " ");
 }
@@ -378,6 +438,7 @@ function botHasPipelineGap(botName, overview) {
 // ───────────────────────── Pair card ─────────────────────────
 
 function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPaused, livePrice }) {
+  const { isWatcher } = useUiMode();
   const meta = PAIR_META[pair] || {};
   // Live opens come ONLY from recent_open_trades (data.openTrades). Never treat
   // a closed-history row missing exit_reason as an open — that caused cards to
@@ -390,7 +451,7 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
   const pnl = openTrade?._unrealised_pct ?? openTrade?.pnl_pct ?? openTrade?.unrealised_pct ?? null;
   const isUp = pnl !== null && pnl > 0;
 
-  const strategyLabel = strategy === "mean_reversion" ? "Mean Reversion" : "RSI Momentum";
+  const strategyLabel = isWatcher ? plainStrategy(strategy) : (strategy === "mean_reversion" ? "Mean Reversion" : "RSI Momentum");
   const sessions = meta?.timezone === "24h" ? ["24h"] : sessionStatus();
   const [fresh, setFresh] = useState(false);
   useEffect(() => {
@@ -428,35 +489,59 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
     }
   }, [openTrade?.id]);
 
+  let statusKey = "watching";
+  let statusLabel = "Watching";
+  if (botPaused) { statusKey = "paused"; statusLabel = "Paused"; }
+  else if (openTrade) { statusKey = "in-trade"; statusLabel = "In a trade"; }
+  else if (lastSkip) { statusKey = "waiting"; statusLabel = "Waiting for better conditions"; }
+
+  const waitReason = lastSkip && !openTrade ? humanizeSkip(lastSkip.reason_skipped) : null;
+
   return (
     <div
-      className={`pair-card ${openTrade ? "pair-card-in-trade" : ""} ${entryFlash ? "pair-card-flash" : ""} ${isSelected ? "pair-card-sel" : ""} ${botPaused ? "pair-card-disabled" : ""}`}
+      className={`pair-card ${isWatcher ? "pair-card-story" : ""} ${openTrade ? "pair-card-in-trade" : ""} ${entryFlash ? "pair-card-flash" : ""} ${isSelected ? "pair-card-sel" : ""} ${botPaused ? "pair-card-disabled" : ""}`}
       data-testid="pair-card"
       data-bot={meta.bot}
+      data-status={statusKey}
       role="button"
       tabIndex={0}
-      aria-label={`${pair}${openTrade ? ", in position" : ""}${botPaused ? ", paused" : ""}`}
+      aria-label={`${meta.plain || pair}${openTrade ? ", in a trade" : ""}${botPaused ? ", paused" : ""}`}
       aria-pressed={isSelected}
       onClick={() => onSelect(pair)}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(pair); } }}
       style={{ "--accent": meta.color }}
     >
+      {sparkLine && isWatcher && (
+        <div className="pc-spark-bg" aria-hidden="true">
+          <svg width="100%" height="100%" viewBox="0 0 72 22" preserveAspectRatio="none">
+            <polyline fill="none" stroke={sparkLine.clr} strokeWidth="1.2" opacity="0.22" points={sparkLine.pts} />
+          </svg>
+        </div>
+      )}
       {botPaused && <span className="pair-disabled-badge">Paused</span>}
       {openTrade && <span className="pc-trade-badge-abs" title="In position" />}
+
       <div className="pc-head">
         <div className="pc-pair-group">
-          <span className="pc-pair">{pair}</span>
-          <span className="pc-session-badge" title={`Active: ${sessions.join(", ")}`}>
-            {sessions.length > 0 ? "🟢" : "⚪"} {sessions[0] || "Off"}
-          </span>
-        </div>
-        <div className="pc-strategies">
-          <span className={`pc-strategy pc-strategy-${strategy}`}>{strategyLabel}</span>
-          {openTrade?.entry_type === "gp_ensemble" && (
-            <span className="pc-strategy pc-strategy-gp_ensemble" title="Entry generated by the GP genetic-programming brain (paper)">GP Brain</span>
+          <span className="pc-pair">{isWatcher ? (meta.plain || pair) : pair}</span>
+          {isWatcher && <span className="pc-pair-code">{pair}</span>}
+          {!isWatcher && (
+            <span className="pc-session-badge" title={`Active: ${sessions.join(", ")}`}>
+              {sessions.length > 0 ? "🟢" : "⚪"} {sessions[0] || "Off"}
+            </span>
           )}
         </div>
+        {!isWatcher && (
+          <div className="pc-strategies">
+            <span className={`pc-strategy pc-strategy-${strategy}`}>{strategyLabel}</span>
+            {openTrade?.entry_type === "gp_ensemble" && (
+              <span className="pc-strategy pc-strategy-gp_ensemble" title="Entry generated by the GP genetic-programming brain (paper)">GP Brain</span>
+            )}
+          </div>
+        )}
       </div>
+
+      <div className={`pc-status-chip pc-status-${statusKey}`}>{statusLabel}</div>
 
       <div className="pc-status">
         {openTrade ? (
@@ -465,29 +550,42 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
             <span className="pc-held">{holdTime(openTrade.held_cycles ?? openTrade.hold_cycles)}</span>
           </>
         ) : (
-          <span className="pc-watching">Watching</span>
+          <span className="pc-watching">{isWatcher ? "Looking for a good moment" : "Watching"}</span>
         )}
       </div>
 
-      <div className="pc-indicators">
-        <span className="pc-ind-label">Regime</span>
-        <span className="pc-ind-val" style={{ color: regimeColor(regime) }}>{regime || "—"}</span>
-        <span className="pc-ind-label">Price</span>
-        <span className="pc-ind-val pc-price">{livePrice !== undefined && livePrice !== null ? fmtPrice(livePrice, pair) : "—"}</span>
-      </div>
+      {isWatcher ? (
+        <div className="pc-indicators pc-indicators-story">
+          <span className="pc-ind-label">Price</span>
+          <span className="pc-ind-val pc-price">{livePrice !== undefined && livePrice !== null ? fmtPrice(livePrice, pair) : "—"}</span>
+          {isWatcher && strategyLabel && (
+            <>
+              <span className="pc-ind-label">Approach</span>
+              <span className="pc-ind-val">{strategyLabel}</span>
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="pc-indicators">
+          <span className="pc-ind-label">Regime</span>
+          <span className="pc-ind-val" style={{ color: regimeColor(regime) }}>{regime || "—"}</span>
+          <span className="pc-ind-label">Price</span>
+          <span className="pc-ind-val pc-price">{livePrice !== undefined && livePrice !== null ? fmtPrice(livePrice, pair) : "—"}</span>
+        </div>
+      )}
 
-      <FilterChain strategy_type={strategy} lastSkip={!openTrade ? lastSkip : null} />
+      {!isWatcher && <FilterChain strategy_type={strategy} lastSkip={!openTrade ? lastSkip : null} />}
 
-      {lastSkip && !openTrade && livePrice === undefined && (
+      {waitReason && (
         <div className="pc-skip-reason">
-          Blocked by:{" "}
+          {isWatcher ? "Why waiting: " : "Blocked by: "}
           <GlossaryTerm id={skipToGlossary(lastSkip.reason_skipped)}>
-            {humanizeSkip(lastSkip.reason_skipped)}
+            {waitReason}
           </GlossaryTerm>
         </div>
       )}
 
-      {sparkLine && (
+      {sparkLine && !isWatcher && (
         <div className="pc-spark" onClick={(e) => { e.stopPropagation(); onSelect(pair); }}>
           <svg width={72} height={22} viewBox="0 0 72 22">
             <polyline fill="none" stroke={sparkLine.clr} strokeWidth="1.5" points={sparkLine.pts} />
@@ -501,7 +599,7 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
           <span className={lastClosed.pnl_pct > 0 ? "pc-up" : "pc-down"}>
             {fmtPct(lastClosed.pnl_pct)}
           </span>{" "}
-          ({lastClosed.exit_reason})
+          ({isWatcher ? plainExit(lastClosed.exit_reason) : lastClosed.exit_reason})
         </div>
       )}
     </div>
@@ -511,6 +609,7 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
 // ───────────────────────── SparkChart (detail panel) ─────────────────────────
 
 function SparkChart({ pair, meta }) {
+  const { isWatcher } = useUiMode();
   const [prices, setPrices] = useState(null);
   const [err, setErr] = useState(false);
   useEffect(() => {
@@ -529,7 +628,11 @@ function SparkChart({ pair, meta }) {
   const chartData = prices.map((p, i) => ({ i: i + 1, p }));
   return (
     <div className="detail-spark">
-      <div className="dc-label">Price (5m · last {prices.length}) — {dir} {chg}%</div>
+      <div className="dc-label">
+        {isWatcher
+          ? `Recent price move — ${dir} ${chg}%`
+          : `Price (5m · last ${prices.length}) — ${dir} ${chg}%`}
+      </div>
       <ResponsiveContainer width="100%" height={150}>
         <AreaChart data={chartData}>
           <defs>
@@ -546,47 +649,46 @@ function SparkChart({ pair, meta }) {
         </AreaChart>
       </ResponsiveContainer>
       <div className="spark-explain">
-        <p><strong>Direction:</strong> {dir} · {chg}% over {prices.length} candles.</p>
-        <p>The line is colored <strong className="pc-up">green</strong> if the last candle is higher than the first (net upward). <strong style={{color:COLORS.down}}>Red</strong> means net downward. This is the overall direction — a green line can have dips in the middle.</p>
+        <p><strong>Direction:</strong> {dir} · {chg}% over the last few hours.</p>
+        <p>Green means the price ended higher than it started. Red means it ended lower. The line can wiggle either way in the middle.</p>
 
-        <details>
-          <summary>📖 What am I looking at?</summary>
-          <p>This chart shows the <strong>closing price</strong> of {pair} for each 5-minute candle. Each dot on the line is one price point — the final price traders agreed on for that 5-minute window.</p>
-          <p>Think of it like a <strong>heartbeat monitor</strong> for the market. When the line is rising, buyers are in control. When it's falling, sellers are pushing price down. Flat lines mean indecision — no one is sure which way to go.</p>
+        <details open={!isWatcher}>
+          <summary>What am I looking at?</summary>
+          <p>This chart shows the closing price of {PAIR_META[pair]?.plain || pair} every 5 minutes — like a heartbeat monitor for the market.</p>
+          <p>Rising line → buyers in control. Falling line → sellers pushing down. Flat → indecision.</p>
         </details>
 
         <details>
-          <summary>🤖 How does the bot use this?</summary>
-          <p>The bot reads every single one of these price points to make decisions:</p>
+          <summary>How does the bot use this?</summary>
+          <p>The bot reads these prices to decide when to act:</p>
           <ul>
-            <li><strong>Mean Reversion (EUR/USD, GBP/USD, GBP/JPY):</strong> Waits for price to dip toward the bottom Bollinger Band. When price touches it and RSI is low, the bot buys, expecting price to snap back toward the middle.</li>
-            <li><strong>RSI Momentum (AUD/USD):</strong> Waits for RSI to drop below its threshold with negative momentum. The bot buys expecting the downtrend to exhaust.</li>
+            <li><strong>Buy dips</strong> (Euro, Pound pairs): waits for price to drop toward the bottom of its recent range, then looks for a bounce.</li>
+            <li><strong>Catch rebounds</strong> (Australian Dollar): waits for a short-term oversold moment, then looks for a snap-back.</li>
           </ul>
         </details>
 
-        <details>
-          <summary>🔢 The numbers</summary>
-          <ul>
-            <li><strong>Lowest:</strong> {mn.toFixed(5)} &nbsp; <strong>Highest:</strong> {mx.toFixed(5)}</li>
-            <li><strong>Net change:</strong> {chg}%</li>
-            <li><strong>Candles shown:</strong> {prices.length} × 5m = ~{Math.round(prices.length * 5 / 60)} hours</li>
-            <li><strong>Dashed line:</strong> Midpoint — quick visual for top/bottom half of range.</li>
-          </ul>
-        </details>
+        {!isWatcher && (
+          <>
+            <details>
+              <summary>The numbers</summary>
+              <ul>
+                <li><strong>Lowest:</strong> {mn.toFixed(5)} &nbsp; <strong>Highest:</strong> {mx.toFixed(5)}</li>
+                <li><strong>Net change:</strong> {chg}%</li>
+                <li><strong>Candles shown:</strong> {prices.length} × 5m = ~{Math.round(prices.length * 5 / 60)} hours</li>
+                <li><strong>Dashed line:</strong> Midpoint — quick visual for top/bottom half of range.</li>
+              </ul>
+            </details>
 
-        <details>
-          <summary>⚠️ When to worry</summary>
-          <ul>
-            <li><strong>Flat line:</strong> Market is closed (weekend). Stale-data guard blocks entries.</li>
-            <li><strong>Sharp drops below BB lower:</strong> MR buy could get stopped out quickly. Tight ATR stop limits damage to ~0.3%.</li>
-            <li><strong>No candles updating:</strong> yfinance data could be stale. Bot's same-candle guard skips cycles.</li>
-          </ul>
-        </details>
-
-        <details>
-          <summary>🎯 What to watch for</summary>
-          <p>If price dips toward the bottom of its range while RSI drops into the 40s, a trade may be near. Check the <strong>Filter Chain</strong> on the pair card.</p>
-        </details>
+            <details>
+              <summary>When to worry</summary>
+              <ul>
+                <li><strong>Flat line:</strong> Market is closed (weekend). Stale-data guard blocks entries.</li>
+                <li><strong>Sharp drops:</strong> A buy could get stopped out quickly — the bot keeps losses small (~0.3%).</li>
+                <li><strong>No candles updating:</strong> Price feed may be stale; the bot skips those cycles.</li>
+              </ul>
+            </details>
+          </>
+        )}
       </div>
     </div>
   );
@@ -594,24 +696,29 @@ function SparkChart({ pair, meta }) {
 
 // ───────────────────────── Detail panel ─────────────────────────
 
-function DetailPanel({ pair, botData, strategyParams }) {
+function DetailPanel({ pair, botData, strategyParams, lastSkip }) {
+  const { isWatcher } = useUiMode();
   const [maximized, setMaximized] = useState(false);
   const [versions, setVersions] = useState(null);
+  const [showNumbers, setShowNumbers] = useState(false);
 
   useEffect(() => {
     if (!pair) return;
+    setShowNumbers(!isWatcher);
     const bot = PAIR_META[pair]?.bot || "forex";
     fetch(`${API_BASE}/api/per-version/${bot}?pair=${encodeURIComponent(pair)}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => setVersions(d?.versions || null))
       .catch(() => setVersions(null));
-  }, [pair]);
+  }, [pair, isWatcher]);
 
   if (!pair) {
     return (
       <div className="detail-empty">
         <div className="detail-empty-mark">↑</div>
-        <p>Click any pair to see the full story — what the bot is watching, why it acted (or didn't), current strategy parameters, and what each number means. Click the expand button to get a full-screen detailed report.</p>
+        <p>{isWatcher
+          ? "Click any card above to see the story — what the bot is doing, why it's waiting or trading, and how it's doing."
+          : "Click any pair to see the full story — what the bot is watching, why it acted (or didn't), current strategy parameters, and what each number means."}</p>
       </div>
     );
   }
@@ -623,7 +730,9 @@ function DetailPanel({ pair, botData, strategyParams }) {
   const openTrade = openTrades[0] || null;
   const closedTrades = trades.filter((t) => t.exit_reason).slice(-10).reverse();
   const strategy = strategyParams?.[pair] || {};
-  const strategyLabel = strategy.strategy_type === "mean_reversion" ? "Mean Reversion" : "RSI Momentum";
+  const strategyLabel = isWatcher
+    ? plainStrategy(strategy.strategy_type)
+    : (strategy.strategy_type === "mean_reversion" ? "Mean Reversion" : "RSI Momentum");
 
   const chartData = closedTrades
     .slice()
@@ -639,6 +748,20 @@ function DetailPanel({ pair, botData, strategyParams }) {
   const stdPnl = pnls.length >= 2 ? Math.sqrt(pnls.reduce((s, p) => s + (p - avgPnl) ** 2, 0) / (pnls.length - 1)) : 0;
   const sharpe = stdPnl > 0 ? (avgPnl / stdPnl).toFixed(2) : "—";
   const maxDD = pnls.length ? Math.min(...pnls).toFixed(2) : "—";
+  const winRate = pnls.length ? ((pnls.filter(p => p > 0).length / pnls.length) * 100).toFixed(0) : 0;
+
+  const unreal = openTrade ? (openTrade._unrealised_pct ?? openTrade.unrealised_pct) : null;
+  let storyHeadline = "Watching for the next opportunity";
+  let storyBody = lastSkip
+    ? `Right now the bot is waiting because: ${humanizeSkip(lastSkip.reason_skipped)}.`
+    : "Nothing looks clear enough yet — the bot is patiently watching prices.";
+  if (openTrade) {
+    const dir = unreal != null && unreal >= 0 ? "up" : "down";
+    storyHeadline = unreal != null
+      ? `In a trade — currently ${dir} ${fmtPct(unreal)}`
+      : "In a trade";
+    storyBody = `Opened at ${fmtPrice(openTrade.entry_price, pair)}. Held for ${holdTime(openTrade.held_cycles ?? openTrade.hold_cycles)}. A safety stop is set so a bad move can't run away.`;
+  }
 
   return (
     <>
@@ -652,52 +775,78 @@ function DetailPanel({ pair, botData, strategyParams }) {
         </button>
 
         <div className="detail-title">
-          <h3>{pair}</h3>
+          <h3>{isWatcher ? (meta?.plain || pair) : pair}</h3>
+          {isWatcher && <span className="pc-pair-code detail-pair-code">{pair}</span>}
           <span className={`pc-strategy pc-strategy-${strategy.strategy_type}`}>{strategyLabel}</span>
-          {openTrade?.entry_type === "gp_ensemble" && (
+          {!isWatcher && openTrade?.entry_type === "gp_ensemble" && (
             <span className="pc-strategy pc-strategy-gp_ensemble" title="Entry generated by the GP genetic-programming brain (paper)">GP Brain</span>
           )}
         </div>
 
-        <div className="detail-params">
-          <div className="dc-label">Strategy Parameters</div>
-          <div className="params-grid">
-            <div className="param-item">
-              <span className="param-label"><GlossaryTerm id="rsi">RSI Threshold</GlossaryTerm></span>
-              <span className="param-val">{strategy.entry?.threshold || strategy.entry?.mr_entry_rsi || "—"}</span>
-            </div>
-            <div className="param-item">
-              <span className="param-label">Stop Loss</span>
-              <span className="param-val">{strategy.stop_loss_pct}%</span>
-            </div>
-            <div className="param-item">
-              <span className="param-label">Profit Target</span>
-              <span className="param-val">{strategy.profit_target_pct}%</span>
-            </div>
-            <div className="param-item">
-              <span className="param-label">Position Size</span>
-              <span className="param-val">{strategy.position_size_r}</span>
-            </div>
-            <div className="param-item">
-              <span className="param-label">ATR Multiplier</span>
-              <span className="param-val">{strategy.atr_multiplier}×</span>
-            </div>
-            <div className="param-item">
-              <span className="param-label">Time Exit</span>
-              <span className="param-val">{strategy.time_exit_cycles}c ({holdTime(strategy.time_exit_cycles)})</span>
-            </div>
-            <div className="param-item">
-              <span className="param-label">ADX Threshold</span>
-              <span className="param-val">{strategy.adx_threshold}</span>
-            </div>
-            <div className="param-item">
-              <span className="param-label">Version</span>
-              <span className="param-val">v{strategy.version}</span>
-            </div>
-          </div>
+        <div className="detail-story">
+          <div className="detail-story-headline">{storyHeadline}</div>
+          <p className="detail-story-body">{storyBody}</p>
+          {isWatcher && (
+            <p className="detail-story-why">
+              <strong>Why the bot cares:</strong>{" "}
+              {strategy.strategy_type === "mean_reversion"
+                ? "It looks for prices that dipped too far, then bets on a bounce back toward normal."
+                : "It looks for short-term exhaustion, then bets on a rebound."}
+            </p>
+          )}
         </div>
 
-        {versions && versions.length > 0 && (
+        {(!isWatcher || showNumbers) && (
+          <div className="detail-params">
+            <div className="dc-label">{isWatcher ? "Settings" : "Strategy Parameters"}</div>
+            <div className="params-grid">
+              <div className="param-item">
+                <span className="param-label"><GlossaryTerm id="rsi">{isWatcher ? "Entry sensitivity" : "RSI Threshold"}</GlossaryTerm></span>
+                <span className="param-val">{strategy.entry?.threshold || strategy.entry?.mr_entry_rsi || "—"}</span>
+              </div>
+              <div className="param-item">
+                <span className="param-label"><GlossaryTerm id="stop_loss">Safety stop</GlossaryTerm></span>
+                <span className="param-val">{strategy.stop_loss_pct}%</span>
+              </div>
+              <div className="param-item">
+                <span className="param-label">Profit target</span>
+                <span className="param-val">{strategy.profit_target_pct}%</span>
+              </div>
+              <div className="param-item">
+                <span className="param-label">Position size</span>
+                <span className="param-val">{strategy.position_size_r}</span>
+              </div>
+              {!isWatcher && (
+                <>
+                  <div className="param-item">
+                    <span className="param-label">ATR Multiplier</span>
+                    <span className="param-val">{strategy.atr_multiplier}×</span>
+                  </div>
+                  <div className="param-item">
+                    <span className="param-label">Time Exit</span>
+                    <span className="param-val">{strategy.time_exit_cycles}c ({holdTime(strategy.time_exit_cycles)})</span>
+                  </div>
+                  <div className="param-item">
+                    <span className="param-label">ADX Threshold</span>
+                    <span className="param-val">{strategy.adx_threshold}</span>
+                  </div>
+                </>
+              )}
+              <div className="param-item">
+                <span className="param-label">Version</span>
+                <span className="param-val">v{strategy.version}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {isWatcher && (
+          <button className="detail-numbers-toggle" onClick={() => setShowNumbers((s) => !s)}>
+            {showNumbers ? "Hide the numbers" : "Show the numbers"}
+          </button>
+        )}
+
+        {!isWatcher && versions && versions.length > 0 && (
           <div className="detail-versions">
             <div className="dc-label">Version History (this pair)</div>
             <div className="versions-mini">
@@ -728,30 +877,34 @@ function DetailPanel({ pair, botData, strategyParams }) {
 
         {openTrade ? (
           <div className="detail-position">
-            <div className="dc-label">Open Position</div>
+            <div className="dc-label">{isWatcher ? "Open trade" : "Open Position"}</div>
             <div className="dp-row">
               <span>Entry</span>
               <span className="mono">{fmtPrice(openTrade.entry_price, pair)}</span>
             </div>
             <div className="dp-row">
-              <span><GlossaryTerm id="atr">Stop loss</GlossaryTerm></span>
+              <span><GlossaryTerm id="stop_loss">Safety stop</GlossaryTerm></span>
               <span className="mono dp-stop">
                 {fmtPrice(openTrade._stop_price ?? openTrade.stop_price, pair)}
               </span>
             </div>
-            <div className="dp-row">
-              <span><GlossaryTerm id="rsi">RSI at entry</GlossaryTerm></span>
-              <span className="mono">{safeVal(openTrade.entry_rsi)}</span>
-            </div>
-            <div className="dp-row">
-              <span><GlossaryTerm id="regime">Regime at entry</GlossaryTerm></span>
-              <span className="mono">{safeVal(openTrade.entry_regime)}</span>
-            </div>
-            <div className="dp-row">
-              <span><GlossaryTerm id="quality_score">Quality score</GlossaryTerm></span>
-              <span className="mono">{safeVal(openTrade.entry_quality_score)}/10</span>
-            </div>
-            {openTrade.entry_type === "gp_ensemble" && (
+            {(!isWatcher || showNumbers) && (
+              <>
+                <div className="dp-row">
+                  <span><GlossaryTerm id="rsi">Momentum at entry</GlossaryTerm></span>
+                  <span className="mono">{safeVal(openTrade.entry_rsi)}</span>
+                </div>
+                <div className="dp-row">
+                  <span><GlossaryTerm id="regime">Market mood at entry</GlossaryTerm></span>
+                  <span className="mono">{isWatcher ? plainRegime(openTrade.entry_regime) : safeVal(openTrade.entry_regime)}</span>
+                </div>
+                <div className="dp-row">
+                  <span><GlossaryTerm id="quality_score">Setup quality</GlossaryTerm></span>
+                  <span className="mono">{safeVal(openTrade.entry_quality_score)}/10</span>
+                </div>
+              </>
+            )}
+            {!isWatcher && openTrade.entry_type === "gp_ensemble" && (
               <div className="dp-row">
                 <span>Engine</span>
                 <span className="mono dp-gp">GP Brain · paper</span>
@@ -761,11 +914,11 @@ function DetailPanel({ pair, botData, strategyParams }) {
               <span>Held</span>
               <span className="mono">{holdTime(openTrade.held_cycles ?? openTrade.hold_cycles)}</span>
             </div>
-            {(openTrade._unrealised_pct ?? openTrade.unrealised_pct) !== undefined && (
+            {unreal !== undefined && unreal !== null && (
               <div className="dp-row">
-                <span>Unrealised P&L</span>
-                <span className={`mono ${(openTrade._unrealised_pct ?? openTrade.unrealised_pct) >= 0 ? "pc-up" : "pc-down"}`}>
-                  {fmtPct(openTrade._unrealised_pct ?? openTrade.unrealised_pct)}
+                <span>{isWatcher ? "Open result so far" : "Unrealised P&L"}</span>
+                <span className={`mono ${unreal >= 0 ? "pc-up" : "pc-down"}`}>
+                  {fmtPct(unreal)}
                 </span>
               </div>
             )}
@@ -778,59 +931,53 @@ function DetailPanel({ pair, botData, strategyParams }) {
           </div>
         ) : closedTrades.length > 0 ? (
           <div className="detail-position">
-            <div className="dc-label">Last Trade Entry</div>
+            <div className="dc-label">{isWatcher ? "Last finished trade" : "Last Trade Entry"}</div>
             <div className="dp-row">
               <span>Entry</span>
               <span className="mono">{fmtPrice(closedTrades[0].entry_price, pair)}</span>
             </div>
-            <div className="dp-row">
-              <span><GlossaryTerm id="rsi">RSI at entry</GlossaryTerm></span>
-              <span className="mono">{safeVal(closedTrades[0].entry_rsi)}</span>
-            </div>
-            <div className="dp-row">
-              <span><GlossaryTerm id="regime">Regime at entry</GlossaryTerm></span>
-              <span className="mono">{safeVal(closedTrades[0].entry_regime)}</span>
-            </div>
-            <div className="dp-row">
-              <span><GlossaryTerm id="quality_score">Quality score</GlossaryTerm></span>
-              <span className="mono">{safeVal(closedTrades[0].entry_quality_score)}/10</span>
-            </div>
-            <div className="dp-row">
-              <span>Exit</span>
-              <span className="mono">{closedTrades[0].exit_reason} · {fmtPct(closedTrades[0].pnl_pct)}</span>
-            </div>
-            {closedTrades[0].chart_context && (
-              <div className="dp-chart-note">
-                <span className="dp-chart-label">Chart read at entry</span>
-                <p>{closedTrades[0].chart_context}</p>
-              </div>
+            {(!isWatcher || showNumbers) && (
+              <>
+                <div className="dp-row">
+                  <span><GlossaryTerm id="rsi">Momentum at entry</GlossaryTerm></span>
+                  <span className="mono">{safeVal(closedTrades[0].entry_rsi)}</span>
+                </div>
+                <div className="dp-row">
+                  <span><GlossaryTerm id="regime">Market mood</GlossaryTerm></span>
+                  <span className="mono">{isWatcher ? plainRegime(closedTrades[0].entry_regime) : safeVal(closedTrades[0].entry_regime)}</span>
+                </div>
+              </>
             )}
+            <div className="dp-row">
+              <span>Result</span>
+              <span className="mono">{isWatcher ? plainExit(closedTrades[0].exit_reason) : closedTrades[0].exit_reason} · {fmtPct(closedTrades[0].pnl_pct)}</span>
+            </div>
           </div>
         ) : (
-          <p className="detail-muted">No open position — the bot is watching for the next signal.</p>
+          <p className="detail-muted">No open trade — the bot is watching for the next opportunity.</p>
         )}
 
-        {closedTrades.length > 0 && (
+        {closedTrades.length > 0 && (!isWatcher || showNumbers) && (
           <div className="detail-perf">
-            <div className="dc-label">Performance (last {closedTrades.length} closed)</div>
+            <div className="dc-label">{isWatcher ? `Recent results (${closedTrades.length} trades)` : `Performance (last ${closedTrades.length} closed)`}</div>
             <div className="perf-stats">
+              {!isWatcher && (
+                <div className="perf-stat">
+                  <span className="perf-label"><GlossaryTerm id="sharpe">Sharpe</GlossaryTerm></span>
+                  <span className="perf-val">{sharpe}</span>
+                </div>
+              )}
               <div className="perf-stat">
-                <span className="perf-label"><GlossaryTerm id="sharpe">Sharpe</GlossaryTerm></span>
-                <span className="perf-val">{sharpe}</span>
-              </div>
-              <div className="perf-stat">
-                <span className="perf-label">Max Single Loss</span>
+                <span className="perf-label">Worst single loss</span>
                 <span className="perf-val pc-down">{maxDD}%</span>
               </div>
               <div className="perf-stat">
-                <span className="perf-label">Avg PnL</span>
+                <span className="perf-label">Average result</span>
                 <span className={`perf-val ${avgPnl >= 0 ? "pc-up" : "pc-down"}`}>{fmtPct(avgPnl)}</span>
               </div>
               <div className="perf-stat">
-                <span className="perf-label">Win Rate</span>
-                <span className="perf-val">
-                  {pnls.length ? ((pnls.filter(p => p > 0).length / pnls.length) * 100).toFixed(0) : 0}%
-                </span>
+                <span className="perf-label">Wins</span>
+                <span className="perf-val">{winRate}%</span>
               </div>
             </div>
           </div>
@@ -838,7 +985,7 @@ function DetailPanel({ pair, botData, strategyParams }) {
 
         {chartData.length > 1 && (
           <div className="detail-chart">
-            <div className="dc-label">Cumulative P&L — last {chartData.length} closed trades</div>
+            <div className="dc-label">{isWatcher ? "Running total of recent results" : `Cumulative P&L — last ${chartData.length} closed trades`}</div>
             <ResponsiveContainer width="100%" height={140}>
               <AreaChart data={chartData}>
                 <defs>
@@ -871,12 +1018,12 @@ function DetailPanel({ pair, botData, strategyParams }) {
         <SparkChart pair={pair} meta={meta} />
 
         <div className="detail-recent">
-          <div className="dc-label">Recent closed trades</div>
-          {closedTrades.length === 0 && <p className="detail-muted">No closed trades yet for this pair.</p>}
+          <div className="dc-label">{isWatcher ? "Recent finished trades" : "Recent closed trades"}</div>
+          {closedTrades.length === 0 && <p className="detail-muted">No finished trades yet for this market.</p>}
           {closedTrades.map((t, i) => (
             <div className="dr-row" key={i}>
               <span className={t.pnl_pct > 0 ? "pc-up" : "pc-down"}>{fmtPct(t.pnl_pct)}</span>
-              <span className="dr-reason">{t.exit_reason}</span>
+              <span className="dr-reason">{isWatcher ? plainExit(t.exit_reason) : t.exit_reason}</span>
               <span className="dr-held">{holdTime(t.hold_cycles)}</span>
             </div>
           ))}
@@ -1102,18 +1249,23 @@ function SkipAnalysis({ apiBase, initialBot = "forex" }) {
 // ───────────────────────── Activity feed ─────────────────────────
 
 function ActivityFeed({ overview }) {
+  const { isWatcher } = useUiMode();
   const events = [];
 
   for (const [botName, bot] of Object.entries(overview?.bots || {})) {
+    const botLabel = isWatcher ? (BOT_PLAIN[botName] || botName) : botName;
     for (const t of bot.recent_trades || []) {
       const pair = t.pair || t.asset;
+      const pairLabel = isWatcher ? (PAIR_META[pair]?.plain || pair) : pair;
       const etype = t.entry_type || t.strategy_version || "";
       if (t.exit_reason) {
         events.push({
           ts: t.exit_ts || t.ts,
           type: "close",
           bot: botName,
-          text: `${botName} · ${pair} closed ${fmtPct(t.pnl_pct)} (${t.exit_reason}${etype ? ` · ${etype}` : ""})`,
+          text: isWatcher
+            ? `${botLabel} finished ${pairLabel}: ${fmtPct(t.pnl_pct)} (${plainExit(t.exit_reason)})`
+            : `${botName} · ${pair} closed ${fmtPct(t.pnl_pct)} (${t.exit_reason}${etype ? ` · ${etype}` : ""})`,
           good: t.pnl_pct > 0,
         });
       }
@@ -1121,33 +1273,43 @@ function ActivityFeed({ overview }) {
     for (const t of bot.recent_open_trades || []) {
       const pair = t.pair || t.asset;
       if (!pair) continue;
+      const pairLabel = isWatcher ? (PAIR_META[pair]?.plain || pair) : pair;
       const etype = t.entry_type || "entry";
       events.push({
         ts: t.entry_ts || t.ts,
         type: "entry",
         bot: botName,
-        text: `${botName} · ${pair} open @ ${fmtPrice(t.entry_price, pair)} (${etype})`,
+        text: isWatcher
+          ? `${botLabel} opened a trade on ${pairLabel} @ ${fmtPrice(t.entry_price, pair)}`
+          : `${botName} · ${pair} open @ ${fmtPrice(t.entry_price, pair)} (${etype})`,
         good: null,
       });
     }
     for (const s of (bot.recent_skips || []).slice(-30)) {
       const reason = s.reason_skipped || s.reason;
+      const pair = s.pair || "?";
+      const pairLabel = isWatcher ? (PAIR_META[pair]?.plain || pair) : pair;
       events.push({
         ts: s.ts,
         type: "skip",
         bot: botName,
-        text: `${botName} · ${s.pair || "?"} skipped — ${humanizeSkip(reason)}`,
+        text: isWatcher
+          ? `${botLabel} skipped ${pairLabel} — ${humanizeSkip(reason)}`
+          : `${botName} · ${pair} skipped — ${humanizeSkip(reason)}`,
         good: null,
       });
     }
     for (const h of bot.recent_hypotheses || []) {
       const oldV = h.old_value ?? h.old;
       const newV = h.new_value ?? h.new;
+      const pair = h.pair || "?";
       events.push({
         ts: h.ts,
         type: "reflect",
         bot: botName,
-        text: `Reflection (${botName}/${h.pair || "?"}): ${h.variable || "?"} ${safeVal(oldV)} → ${safeVal(newV)}`,
+        text: isWatcher
+          ? `${botLabel} adjusted settings for ${PAIR_META[pair]?.plain || pair}`
+          : `Reflection (${botName}/${pair}): ${h.variable || "?"} ${safeVal(oldV)} → ${safeVal(newV)}`,
         good: null,
       });
     }
@@ -1161,15 +1323,17 @@ function ActivityFeed({ overview }) {
 
   return (
     <div className="feed">
-      <div className="feed-title">Activity</div>
+      <div className="feed-title">{isWatcher ? "What happened" : "Activity"}</div>
       <p className="activity-help">
-        Live closes, opens, recent skips, and reflection proposals from all bots (via overview
-        ingest). Skips are sampled; full breakdown is under <strong>Skip Analysis</strong>.
+        {isWatcher
+          ? "A plain-language feed of opens, closes, and waits across all bots."
+          : "Live closes, opens, recent skips, and reflection proposals from all bots. Skips are sampled; full breakdown is under Skip Analysis."}
       </p>
       {events.length === 0 && (
         <p className="detail-muted">
-          No activity yet — waiting on bot ingest (trades / opens / skips). Check Heartbeat if
-          this stays empty.
+          {isWatcher
+            ? "Nothing yet — the bots are quiet. That's normal when markets are closed or conditions aren't clear."
+            : "No activity yet — waiting on bot ingest (trades / opens / skips). Check Heartbeat if this stays empty."}
         </p>
       )}
       {events.slice(0, 40).map((e, i) => (
@@ -1187,7 +1351,8 @@ function ActivityFeed({ overview }) {
 
 // ───────────────────────── Portfolio pulse ─────────────────────────
 
-function PortfolioPulse({ overview }) {
+function StatusHero({ overview, marketClosed, botStatus }) {
+  const { isWatcher } = useUiMode();
   let totalPnl = 0;
   let openCount = 0;
   let gpOpenCount = 0;
@@ -1228,24 +1393,68 @@ function PortfolioPulse({ overview }) {
   }
 
   const avgPnl = openCount ? totalPnl / openCount : 0;
+  const pausedCount = ["forex", "gold", "crypto"].filter((b) => botStatus?.[b] === "paused").length;
+
+  let verdict = "All quiet — bots are watching";
+  let mood = "calm";
+  if (marketClosed) {
+    verdict = "Paused — market closed";
+    mood = "closed";
+  } else if (pausedCount === 3) {
+    verdict = "All bots paused";
+    mood = "paused";
+  } else if (openCount === 0) {
+    verdict = pausedCount > 0
+      ? `Watching carefully · ${pausedCount} bot${pausedCount === 1 ? "" : "s"} paused`
+      : "All quiet — bots are watching";
+    mood = "calm";
+  } else if (avgPnl > 0.15) {
+    verdict = `${openCount} trade${openCount === 1 ? "" : "s"} open — looking good`;
+    mood = "up";
+  } else if (avgPnl < -0.15) {
+    verdict = `${openCount} trade${openCount === 1 ? "" : "s"} open — down a little`;
+    mood = "down";
+  } else {
+    verdict = `${openCount} trade${openCount === 1 ? "" : "s"} open — roughly flat`;
+    mood = "flat";
+  }
+
+  const aria = isWatcher
+    ? `${verdict}. ${openCount} open trades, ${closedCount} finished. Open trades are ${fmtPct(avgPnl)} on average.`
+    : `Portfolio: ${openCount} open positions, ${closedCount} closed trades, average ${fmtPct(avgPnl)}`;
 
   return (
-    <div className="pulse" role="status" aria-live="polite" aria-label={`Portfolio: ${openCount} open positions, ${closedCount} closed trades, average ${fmtPct(avgPnl)}`}>
+    <div className={`pulse status-hero status-hero-${mood}`} role="status" aria-live="polite" aria-label={aria} data-tour="hero">
       <div className="pulse-main">
-        <div className="pulse-label">Portfolio pulse</div>
-        <div className={`pulse-num ${avgPnl >= 0 ? "pc-up" : "pc-down"}`}>{fmtPct(avgPnl)}</div>
-        <div className="pulse-sub">avg across {openCount} open position{openCount === 1 ? "" : "s"}</div>
+        <div className="pulse-label">{isWatcher ? "How are things?" : "Portfolio pulse"}</div>
+        <div className="status-hero-verdict">{verdict}</div>
+        {openCount > 0 ? (
+          <>
+            <div className={`pulse-num ${avgPnl >= 0 ? "pc-up" : "pc-down"}`}>{fmtPct(avgPnl)}</div>
+            <div className="pulse-sub">
+              {isWatcher
+                ? `open trades are ${avgPnl >= 0 ? "up" : "down"} ${Math.abs(avgPnl).toFixed(2)}% on average`
+                : `avg across ${openCount} open position${openCount === 1 ? "" : "s"}`}
+            </div>
+          </>
+        ) : (
+          <div className="pulse-sub status-hero-empty-note">
+            {isWatcher
+              ? "No money is at risk right now — waiting for a clear setup is normal."
+              : "No open positions"}
+          </div>
+        )}
       </div>
       <div className="pulse-stats">
         <div className="pulse-stat">
           <span className="ps-num">{openCount}</span>
-          <span className="ps-label">open</span>
+          <span className="ps-label">{isWatcher ? "in a trade" : "open"}</span>
         </div>
         <div className="pulse-stat" title="Lifetime unique closed trades (all bots), same basis as Reports">
           <span className="ps-num">{closedCount}</span>
-          <span className="ps-label">closed</span>
+          <span className="ps-label">{isWatcher ? "finished" : "closed"}</span>
         </div>
-        {gpOpenCount > 0 && (
+        {!isWatcher && gpOpenCount > 0 && (
           <div className="pulse-stat pulse-stat-gp">
             <span className="ps-num">{gpOpenCount}</span>
             <span className="ps-label">GP brain</span>
@@ -1256,9 +1465,12 @@ function PortfolioPulse({ overview }) {
   );
 }
 
+
+
+
 // ───────────────────────── Chat assistant ─────────────────────────
 
-function ChatPopup() {
+function ChatPopup({ tourStep, onTourChatOpen }) {
   const [open, setOpen] = useState(false);
   const [msg, setMsg] = useState("");
   const [chat, setChat] = useState([]);
@@ -1266,8 +1478,22 @@ function ChatPopup() {
   const bottomRef = useRef(null);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chat]);
 
-  const send = async () => {
-    const q = msg.trim();
+  const starters = [
+    "Are we making money?",
+    "Why isn't EUR/USD trading?",
+    "What should I look at next?",
+  ];
+
+  const openChat = () => {
+    setOpen((o) => {
+      const next = !o;
+      if (next && onTourChatOpen) onTourChatOpen();
+      return next;
+    });
+  };
+
+  const send = async (preset) => {
+    const q = (preset || msg).trim();
     if (!q || busy || q.length > 500) return;
     setMsg("");
     setChat((p) => [...p, { who: "user", text: q }]);
@@ -1288,19 +1514,36 @@ function ChatPopup() {
 
   return (
     <>
-      <button className="chat-fab" onClick={() => setOpen((o) => !o)}>{open ? "×" : "💬"}</button>
+      <button
+        className={`chat-fab ${tourStep === 2 ? "tour-highlight" : ""}`}
+        onClick={openChat}
+        data-tour="chat"
+      >
+        {open ? "×" : "💬"}
+      </button>
       {open && (
         <div className="chat-panel">
           <div className="chat-header">Ask the bot</div>
           <div className="chat-body">
-            {chat.length === 0 && <p className="chat-empty">Ask anything — trade duration, strategy, performance…</p>}
+            {chat.length === 0 && (
+              <div className="chat-empty">
+                <p>Ask anything in plain English — no trading jargon needed.</p>
+                <div className="chat-starters">
+                  {starters.map((s) => (
+                    <button key={s} type="button" className="chat-starter" onClick={() => send(s)} disabled={busy}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {chat.map((c, i) => <div key={i} className={`chat-bubble ${c.who}`}>{c.text}</div>)}
             <div ref={bottomRef} />
           </div>
           <div className="chat-input-row">
             <input className="chat-input" value={msg} onChange={(e) => setMsg(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && send()} placeholder="Ask about your trades..." disabled={busy} />
-            <button className="chat-send" onClick={send} disabled={busy || !msg.trim()}>{busy ? "..." : "→"}</button>
+              onKeyDown={(e) => e.key === "Enter" && send()} placeholder="Ask about your bots..." disabled={busy} />
+            <button className="chat-send" onClick={() => send()} disabled={busy || !msg.trim()}>{busy ? "..." : "→"}</button>
           </div>
         </div>
       )}
@@ -1346,24 +1589,36 @@ function AlertBanner({ alerts, dismiss, onViewAll }) {
 }
 
 function AlertsView({ alerts, dismiss }) {
+  const { isWatcher } = useUiMode();
   if (!alerts.length) {
     return (
       <div className="alerts-empty">
         <div className="detail-empty-mark">✓</div>
-        <p>No active alerts. The dashboard watches for patterns like a pair losing every trade for a day and will surface them here the moment they happen.</p>
+        <p>
+          {isWatcher
+            ? "Nothing to worry about. Hermes watches for unusual patterns and will tell you here if something needs attention."
+            : "No active alerts. The dashboard watches for patterns like a pair losing every trade for a day and will surface them here the moment they happen."}
+        </p>
       </div>
     );
   }
   return (
     <div className="alerts-list">
+      {isWatcher && (
+        <p className="activity-help">Things Hermes wants you to know — usually a market that needs a closer look.</p>
+      )}
       {alerts.map((a) => (
         <div className={`alert-row alert-row-${a.severity}`} key={a.key}>
           <div className="alert-row-main">
             <span className="alert-row-title">{a.title}</span>
-            <span className="alert-row-detail">{a.detail}</span>
+            <span className="alert-row-detail">
+              {isWatcher
+                ? (a.detail || "").replace(/filters\/strategy/gi, "settings").replace(/review/gi, "take a look at")
+                : a.detail}
+            </span>
           </div>
           <div className="alert-row-meta">
-            <span className="alert-row-bot">{a.bot}</span>
+            <span className="alert-row-bot">{isWatcher ? (BOT_PLAIN[a.bot] || a.bot) : a.bot}</span>
             <button className="alert-row-dismiss" onClick={() => dismiss(a.key)}>Dismiss</button>
           </div>
         </div>
@@ -1374,30 +1629,49 @@ function AlertsView({ alerts, dismiss }) {
 
 // ───────────────────────── Onboarding ─────────────────────────
 
-function OnboardingBanner() {
-  const [visible, setVisible] = useState(() => localStorage.getItem("hermes_onboarded") !== "1");
+const TOUR_STEPS = [
+  {
+    title: "Start here",
+    body: "This status strip answers the big question: are your bots healthy, and is any money in a trade right now?",
+    target: "hero",
+  },
+  {
+    title: "Click a market card",
+    body: "Each card is one market the bot watches. Tap any card to see the plain-language story behind it.",
+    target: "cards",
+  },
+  {
+    title: "Ask anytime",
+    body: "Stuck on a word or wonder what to do next? Open the chat button and ask in everyday English.",
+    target: "chat",
+  },
+];
 
-  if (!visible) return null;
+function OnboardingTour({ step, onNext, onSkip, selectedPair }) {
+  useEffect(() => {
+    if (step === 1 && selectedPair) onNext();
+  }, [selectedPair, step, onNext]);
 
-  const dismiss = () => {
-    localStorage.setItem("hermes_onboarded", "1");
-    setVisible(false);
-  };
+  if (step < 0 || step >= TOUR_STEPS.length) return null;
+  const s = TOUR_STEPS[step];
+  const isLast = step === TOUR_STEPS.length - 1;
 
   return (
-    <div className="onboard-banner" role="dialog" aria-label="Welcome to Hermes">
-      <div className="onboard-content">
-        <h2>👋 Welcome to Hermes</h2>
-        <p>This is your self-improving paper trading dashboard. Each pair card shows what the bot is watching — click one for full details.</p>
-        <p>Look for the <span className="gdot-inline">?</span> icons — click them anytime to learn what a trading term means. No prior knowledge needed.</p>
-        <div className="onboard-tabs">
-          <span><strong>Live</strong> — active trades & strategy</span>
-          <span><strong>Activity</strong> — trade feed & version history</span>
-          <span><strong>Reports</strong> — daily, lifetime & custom range</span>
-          <span><strong>Cortex</strong> — AI decision engine internals</span>
-          <span><strong>Audit</strong> — code/risk self-review</span>
+    <div className={`tour-coach tour-coach-${s.target}`} role="dialog" aria-label="Welcome tour">
+      <div className="tour-coach-inner">
+        <div className="tour-step-count">Step {step + 1} of {TOUR_STEPS.length}</div>
+        <h2>{s.title}</h2>
+        <p>{s.body}</p>
+        <div className="tour-actions">
+          <button type="button" className="tour-skip" onClick={onSkip}>Skip tour</button>
+          {!isLast && step !== 1 && (
+            <button type="button" className="tour-next" onClick={onNext}>Next →</button>
+          )}
+          {isLast && (
+            <button type="button" className="tour-next" onClick={onSkip}>Got it — let's go</button>
+          )}
+          {step === 1 && <span className="tour-hint">Click any market card above to continue</span>}
         </div>
-        <button className="onboard-dismiss" onClick={dismiss}>Got it — take me to the dashboard →</button>
       </div>
     </div>
   );
@@ -1689,6 +1963,40 @@ export default function App() {
   const { alerts, dismiss } = useAlerts(API_BASE);
   const [botStatus, setBotStatus] = useState({});
   const [perVersion, setPerVersion] = useState({});
+  const [uiMode, setUiModeState] = useState(() => {
+    const saved = localStorage.getItem("hermes_ui_mode");
+    return saved === "advanced" ? "advanced" : "watcher";
+  });
+  const [tourStep, setTourStep] = useState(() =>
+    localStorage.getItem("hermes_onboarded") === "1" ? -1 : 0
+  );
+
+  const isWatcher = uiMode === "watcher";
+  const visibleTabs = isWatcher ? WATCHER_TABS : TAB_KEYS;
+
+  const setUiMode = useCallback((next) => {
+    setUiModeState(next);
+    localStorage.setItem("hermes_ui_mode", next);
+    if (next === "watcher") {
+      setView((v) => (ADVANCED_ONLY_TABS.includes(v) ? "live" : v));
+    }
+  }, []);
+
+  const finishTour = useCallback(() => {
+    localStorage.setItem("hermes_onboarded", "1");
+    setTourStep(-1);
+  }, []);
+
+  const advanceTour = useCallback(() => {
+    setTourStep((s) => {
+      if (s < 0) return s;
+      if (s >= TOUR_STEPS.length - 1) {
+        localStorage.setItem("hermes_onboarded", "1");
+        return -1;
+      }
+      return s + 1;
+    });
+  }, []);
 
   const detailRef = useRef(null);
 
@@ -1791,12 +2099,17 @@ export default function App() {
     const handler = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
       const idx = parseInt(e.key);
-      if (idx >= 1 && idx <= TAB_KEYS.length) { setView(TAB_KEYS[idx - 1]); return; }
+      if (idx >= 1 && idx <= visibleTabs.length) { setView(visibleTabs[idx - 1]); return; }
       if (e.key === "Escape") { setSelectedPair(null); return; }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [visibleTabs]);
+
+  // Drop off Advanced-only tabs when switching to Watcher
+  useEffect(() => {
+    if (isWatcher && ADVANCED_ONLY_TABS.includes(view)) setView("live");
+  }, [isWatcher, view]);
 
   const pairData = {};
   const liveRegimes = {};
@@ -1837,16 +2150,19 @@ export default function App() {
   if (mode === "login") return <LoginScreen onLogin={login} />;
 
   return (
-    <div className="app" role="main">
+    <UiModeContext.Provider value={{ isWatcher, uiMode }}>
+    <div className={`app ${isWatcher ? "app-watcher" : "app-advanced"}`} role="main">
       <header className="app-header">
         <div>
           <h1>Hermes</h1>
-          <p className="app-sub">self-improving trading system — live monitor</p>
+          <p className="app-sub">
+            {isWatcher ? "your trading bots at a glance" : "self-improving trading system — live monitor"}
+          </p>
         </div>
         <div className="app-status">
           <div className="view-toggle" role="tablist" aria-label="Dashboard sections">
-            {["live","activity","reports","discovered","cortex","audit","alerts","heartbeat","flatline"].map((tab) => {
-              const label = tab.charAt(0).toUpperCase() + tab.slice(1);
+            {visibleTabs.map((tab) => {
+              const label = TAB_LABELS[tab]?.[isWatcher ? "watcher" : "advanced"] || tab;
               const isActive = view === tab;
               return (
                 <button
@@ -1858,7 +2174,7 @@ export default function App() {
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setView(tab); } }}
                 >
                   {tab === "alerts" ? (
-                    <>Alerts{alerts.length > 0 ? <span className="vtab-badge">{alerts.length}</span> : null}</>
+                    <>{label}{alerts.length > 0 ? <span className="vtab-badge">{alerts.length}</span> : null}</>
                   ) : label}
                 </button>
               );
@@ -1869,12 +2185,20 @@ export default function App() {
           ) : (
             <span className="status-ok">● live · updated {lastFetch ? timeAgo(lastFetch.toISOString()) : "—"}</span>
           )}
+          <ModeToggle uiMode={uiMode} setUiMode={setUiMode} />
           <button className="auth-signout" onClick={logout}>Sign out</button>
           <ThemeToggle />
         </div>
       </header>
 
-      {view !== "alerts" && <OnboardingBanner />}
+      {view !== "alerts" && tourStep >= 0 && (
+        <OnboardingTour
+          step={tourStep}
+          onNext={advanceTour}
+          onSkip={finishTour}
+          selectedPair={selectedPair}
+        />
+      )}
       {view !== "alerts" && <AlertBanner alerts={alerts} dismiss={dismiss} onViewAll={() => setView("alerts")} />}
 
       {view === "live" ? (
@@ -1883,7 +2207,7 @@ export default function App() {
               const cd = getMarketCountdown(true);
               return (
                 <div className="market-closed-banner">
-                  <span>⏸</span> Forex market closed — bot is waiting for next session
+                  <span>⏸</span> {isWatcher ? "Forex market closed — bots are waiting for the next open" : "Forex market closed — bot is waiting for next session"}
                   {cd && <span className="market-countdown">{cd.text}</span>}
                 </div>
               );
@@ -1899,10 +2223,14 @@ export default function App() {
               );
             })()}
 
-          {!overview ? <SkeletonPortfolio /> : <PortfolioPulse overview={overview} />}
+          {!overview ? (
+            <SkeletonPortfolio />
+          ) : (
+            <StatusHero overview={overview} marketClosed={marketClosed} botStatus={botStatus} />
+          )}
 
-          <section className="bot-section">
-            <BotToggle botName="forex" label="Foreign Exchange" staleDays={overview?.bots?.forex?.live_indicators?.discovery_stale_days} />
+          <section className={`bot-section ${tourStep === 1 ? "tour-highlight-section" : ""}`} data-tour="cards">
+            <BotToggle botName="forex" label={isWatcher ? "Currencies" : "Foreign Exchange"} staleDays={overview?.bots?.forex?.live_indicators?.discovery_stale_days} />
             <div className="cards-grid" role="list" aria-label="Forex pairs">
               {!overview ? (
                 Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
@@ -1924,7 +2252,7 @@ export default function App() {
           </section>
 
           <section className="bot-section">
-            <BotToggle botName="gold" label="Gold" staleDays={overview?.bots?.gold?.live_indicators?.discovery_stale_days} />
+            <BotToggle botName="gold" label={isWatcher ? "Metals" : "Gold"} staleDays={overview?.bots?.gold?.live_indicators?.discovery_stale_days} />
             <div className="cards-grid" role="list" aria-label="Gold pairs">
               {!overview ? (
                 Array.from({ length: 2 }).map((_, i) => <SkeletonCard key={i} />)
@@ -1965,8 +2293,13 @@ export default function App() {
                 />
               )))}
             </div>
-            {overview && botHasPipelineGap("crypto", overview) && (
+            {overview && !isWatcher && botHasPipelineGap("crypto", overview) && (
               <PipelineGap bot="crypto" />
+            )}
+            {overview && isWatcher && botHasPipelineGap("crypto", overview) && (
+              <div className="calm-empty">
+                <p>Crypto is still warming up — nothing wrong, just waiting for a full data pipeline.</p>
+              </div>
             )}
           </section>
 
@@ -1978,19 +2311,30 @@ export default function App() {
 
           {view === "live" && selectedPair && (
             <section className="lower-grid-full" ref={detailRef}>
-              <DetailPanel pair={selectedPair} botData={selectedBotData} strategyParams={strategyParams?.pairs} />
+              <DetailPanel
+                pair={selectedPair}
+                botData={selectedBotData}
+                strategyParams={strategyParams?.pairs}
+                lastSkip={pairData[selectedPair]?.lastSkip}
+              />
             </section>
           )}
         </>
       ) : view === "activity" ? (
         <div className="activity-page">
           <div className="activity-page-tabs">
-            <button className={`ltab ${subTab === "activity" ? "ltab-active" : ""}`} onClick={() => setSubTab("activity")}>Activity</button>
-            <button className={`ltab ${subTab === "skips" ? "ltab-active" : ""}`} onClick={() => setSubTab("skips")}>Skip Analysis</button>
-            <button className={`ltab ${subTab === "versions" ? "ltab-active" : ""}`} onClick={() => setSubTab("versions")}>Versions</button>
+            <button className={`ltab ${subTab === "activity" ? "ltab-active" : ""}`} onClick={() => setSubTab("activity")}>
+              {isWatcher ? "Feed" : "Activity"}
+            </button>
+            {!isWatcher && (
+              <>
+                <button className={`ltab ${subTab === "skips" ? "ltab-active" : ""}`} onClick={() => setSubTab("skips")}>Skip Analysis</button>
+                <button className={`ltab ${subTab === "versions" ? "ltab-active" : ""}`} onClick={() => setSubTab("versions")}>Versions</button>
+              </>
+            )}
           </div>
           <div className="activity-page-content">
-            {subTab === "activity" ? (
+            {subTab === "activity" || isWatcher ? (
               <ActivityFeed overview={overview} />
             ) : subTab === "versions" ? (
               <VersionView perVersion={perVersion} />
@@ -2005,30 +2349,40 @@ export default function App() {
       <div className={`tab-panel ${view === "reports" ? "tab-active" : "tab-hidden"}`}>
         <ReportsView apiBase={API_BASE} isActive={view === "reports"} />
       </div>
-      <div className={`tab-panel ${view === "discovered" ? "tab-active" : "tab-hidden"}`}>
-        <Suspense fallback={<SkeletonCard />}><DiscoveredView apiBase={API_BASE} isActive={view === "discovered"} /></Suspense>
-      </div>
-      <div className={`tab-panel ${view === "cortex" ? "tab-active" : "tab-hidden"}`}>
-        <Suspense fallback={<SkeletonCard />}><CortexView apiBase={API_BASE} isActive={view === "cortex"} /></Suspense>
-      </div>
-      <div className={`tab-panel ${view === "audit" ? "tab-active" : "tab-hidden"}`}>
-        <Suspense fallback={<SkeletonCard />}><AuditView apiBase={API_BASE} isActive={view === "audit"} /></Suspense>
-      </div>
-      <div className={`tab-panel ${view === "heartbeat" ? "tab-active" : "tab-hidden"}`}>
-        <HeartbeatView apiBase={API_BASE} />
-      </div>
-      <div className={`tab-panel ${view === "flatline" ? "tab-active" : "tab-hidden"}`}>
-        <FlatlineView apiBase={API_BASE} />
-      </div>
+      {!isWatcher && (
+        <>
+          <div className={`tab-panel ${view === "discovered" ? "tab-active" : "tab-hidden"}`}>
+            <Suspense fallback={<SkeletonCard />}><DiscoveredView apiBase={API_BASE} isActive={view === "discovered"} /></Suspense>
+          </div>
+          <div className={`tab-panel ${view === "cortex" ? "tab-active" : "tab-hidden"}`}>
+            <Suspense fallback={<SkeletonCard />}><CortexView apiBase={API_BASE} isActive={view === "cortex"} /></Suspense>
+          </div>
+          <div className={`tab-panel ${view === "audit" ? "tab-active" : "tab-hidden"}`}>
+            <Suspense fallback={<SkeletonCard />}><AuditView apiBase={API_BASE} isActive={view === "audit"} /></Suspense>
+          </div>
+          <div className={`tab-panel ${view === "heartbeat" ? "tab-active" : "tab-hidden"}`}>
+            <HeartbeatView apiBase={API_BASE} />
+          </div>
+          <div className={`tab-panel ${view === "flatline" ? "tab-active" : "tab-hidden"}`}>
+            <FlatlineView apiBase={API_BASE} />
+          </div>
+        </>
+      )}
       {view === "alerts" ? (
         <AlertsView alerts={alerts} dismiss={dismiss} />
       ) : null}
 
       <footer className="app-footer">
-        Paper trading only · {view === "live" ? `refreshes every ${POLL_MS / 1000}s` : "auto-refreshing"} · click any{" "}
-        <span className="gdot gdot-inline">?</span> to learn what a term means
+        Paper trading only · {view === "live" ? `refreshes every ${POLL_MS / 1000}s` : "auto-refreshing"}
+        {isWatcher
+          ? " · switch to Advanced anytime for operator tools"
+          : <> · click any <span className="gdot gdot-inline">?</span> to learn what a term means</>}
       </footer>
-      <ChatPopup />
+      <ChatPopup
+        tourStep={tourStep}
+        onTourChatOpen={() => { if (tourStep === 2) finishTour(); }}
+      />
     </div>
+    </UiModeContext.Provider>
   );
 }
