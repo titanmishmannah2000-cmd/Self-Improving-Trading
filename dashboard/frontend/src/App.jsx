@@ -1190,16 +1190,11 @@ function ActivityFeed({ overview }) {
 function PortfolioPulse({ overview }) {
   let totalPnl = 0;
   let openCount = 0;
-  let closedCount = 0;
   let gpOpenCount = 0;
   // Deduplicate by bot+pair so a bad push can't inflate the pulse.
   const seenOpen = new Set();
 
   for (const [botName, bot] of Object.entries(overview?.bots || {})) {
-    // Closed trades: only rows that carry an exit_reason.
-    for (const t of bot.recent_trades || []) {
-      if (t.exit_reason) closedCount++;
-    }
     // Open positions: recent_open_trades is the ONLY authoritative live-open list.
     for (const t of bot.recent_open_trades || []) {
       const pair = t.pair || t.asset;
@@ -1213,10 +1208,30 @@ function PortfolioPulse({ overview }) {
     }
   }
 
+  // Lifetime closed trades from overview totals (DB count) — same basis as
+  // Reports. Never count the recent_trades window (that produced mismatched
+  // "closed" totals like 58 vs lifetime 139).
+  const botsList = Object.values(overview?.bots || {});
+  let closedCount = overview?.totals?.closed_trades;
+  if (closedCount == null) {
+    if (botsList.some((b) => b?.closed_trades != null)) {
+      closedCount = botsList.reduce(
+        (n, b) => n + (Number(b?.closed_trades) || 0),
+        0,
+      );
+    } else {
+      // Pre-upgrade API: approximate from the recent window until backend ships.
+      closedCount = botsList.reduce(
+        (n, b) => n + (b.recent_trades || []).filter((t) => t.exit_reason).length,
+        0,
+      );
+    }
+  }
+
   const avgPnl = openCount ? totalPnl / openCount : 0;
 
   return (
-    <div className="pulse" role="status" aria-live="polite" aria-label={`Portfolio: ${openCount} open positions, average ${fmtPct(avgPnl)}`}>
+    <div className="pulse" role="status" aria-live="polite" aria-label={`Portfolio: ${openCount} open positions, ${closedCount} closed trades, average ${fmtPct(avgPnl)}`}>
       <div className="pulse-main">
         <div className="pulse-label">Portfolio pulse</div>
         <div className={`pulse-num ${avgPnl >= 0 ? "pc-up" : "pc-down"}`}>{fmtPct(avgPnl)}</div>
@@ -1227,7 +1242,7 @@ function PortfolioPulse({ overview }) {
           <span className="ps-num">{openCount}</span>
           <span className="ps-label">open</span>
         </div>
-        <div className="pulse-stat">
+        <div className="pulse-stat" title="Lifetime unique closed trades (all bots), same basis as Reports">
           <span className="ps-num">{closedCount}</span>
           <span className="ps-label">closed</span>
         </div>

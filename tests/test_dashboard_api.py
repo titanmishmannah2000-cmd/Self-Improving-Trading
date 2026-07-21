@@ -88,12 +88,28 @@ def test_unknown_bot_404():
 
 def test_overview_both():
     c = client
-    c.post("/api/ingest/forex", json=VALID_RECORD, headers=TOKEN)
-    c.post("/api/ingest/gold", json=dict(VALID_RECORD, id="G1"), headers=TOKEN)
+    # `trades` on overview is lifetime CLOSED count — ingest must carry exit_reason.
+    closed_fx = dict(
+        VALID_RECORD,
+        exit_reason="profit_target",
+        exit_ts="2026-01-01T00:00:00Z",
+    )
+    closed_gd = dict(
+        VALID_RECORD,
+        id="G1",
+        pair="XAU/USD",
+        exit_reason="stop_loss",
+        exit_ts="2026-01-01T00:00:00Z",
+    )
+    c.post("/api/ingest/forex", json=closed_fx, headers=TOKEN)
+    c.post("/api/ingest/gold", json=closed_gd, headers=TOKEN)
     o = c.get("/api/overview").json()
     assert "forex" in o and "gold" in o
     assert o["forex"]["trades"] >= 1
     assert o["gold"]["trades"] >= 1
+    assert o["totals"]["closed_trades"] >= 2
+    assert o["bots"]["forex"]["closed_trades"] >= 1
+    assert o["bots"]["gold"]["closed_trades"] >= 1
 
 
 def test_persist_restart():
@@ -321,6 +337,47 @@ def test_per_version_uses_entry_type_when_strategy_version_missing():
     body = client.get("/api/per-version/forex").json()
     versions = body.get("versions") or []
     assert any(v.get("version") == "gp_ensemble" for v in versions), versions
+
+
+def test_overview_closed_trades_is_lifetime_not_recent_window():
+    """Live pulse must use lifetime unique closed count, not len(recent_trades).
+
+    Regression: counting exit_reason rows inside the last-300 window (and
+    duplicate ids) inflated PortfolioPulse 'closed' (e.g. 58) vs Reports.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    ts = datetime.now(timezone.utc).isoformat()
+    conn = m.get_conn()
+    # Seed strategy so EUR/USD is a valid pair for forex.
+    conn.execute(
+        """INSERT INTO latest_state
+           (bot, strategy_json, goal_json, heartbeat_json, open_trades_json,
+            discovered_json, cortex_json, flatlined_json, received_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        ("forex", json.dumps({"EUR/USD": {}, "GBP/USD": {}}), "{}", "{}", "[]",
+         "{}", "{}", "{}", ts),
+    )
+    for tid, pair, entry, reason in [
+        ("c1", "EUR/USD", 1.1, "stop_loss"),
+        ("c2", "EUR/USD", 1.1, "profit_target"),
+        ("c3", "GBP/USD", 1.3, "time_exit"),
+        ("bad_xag", "XAG/USD", 4100.0, "stop_loss"),  # wrong bot pair / contaminated
+    ]:
+        raw = {"id": tid, "pair": pair, "exit_reason": reason, "pnl_pct": 0.1, "entry_price": entry}
+        conn.execute(
+            "INSERT INTO trades (id, bot, pair, entry_price, entry_ts, exit_ts, exit_reason, pnl_pct, raw_json) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (tid, "forex", pair, entry, ts, ts, reason, 0.1, json.dumps(raw)),
+        )
+    conn.commit()
+    conn.close()
+
+    o = client.get("/api/overview").json()
+    assert o["bots"]["forex"]["closed_trades"] == 3, o["bots"]["forex"]
+    assert o["totals"]["closed_trades"] == 3
+    assert o["forex"]["trades"] == 3  # alias aligned with closed
 
 
 def test_overview_open_trades_not_filtered_by_age_and_no_ghost_fallback():

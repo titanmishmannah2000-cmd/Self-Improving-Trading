@@ -12,11 +12,15 @@ const AUTH_VALID = { valid: true };
 function mockOverview() {
   return {
     ts: new Date().toISOString(),
+    totals: { closed_trades: 2, open_trades: 0 },
     bots: {
       forex: {
         recent_trades: [{ pair: "EUR/USD", exit_reason: "tp", pnl_pct: 1.0, exit_ts: "2026-01-01T00:00:00Z" }],
         recent_skips: [],
         recent_hypotheses: [],
+        recent_open_trades: [],
+        closed_trades: 1,
+        open_count: 0,
         heartbeat: { cycle: 1 },
         _received_at: "2026-01-01T00:00:00Z",
       },
@@ -24,6 +28,9 @@ function mockOverview() {
         recent_trades: [{ pair: "XAU/USD", exit_reason: "sl", pnl_pct: -0.5, exit_ts: "2026-01-01T00:00:00Z" }],
         recent_skips: [],
         recent_hypotheses: [],
+        recent_open_trades: [],
+        closed_trades: 1,
+        open_count: 0,
         heartbeat: { cycle: 1 },
         _received_at: "2026-01-01T00:00:00Z",
       },
@@ -31,6 +38,9 @@ function mockOverview() {
         recent_trades: [],
         recent_skips: [],
         recent_hypotheses: [],
+        recent_open_trades: [],
+        closed_trades: 0,
+        open_count: 0,
         heartbeat: {},
       },
     },

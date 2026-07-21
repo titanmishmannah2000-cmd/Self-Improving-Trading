@@ -54,6 +54,45 @@ CONTAMINATED_PAIR = "XAG/USD"
 CONTAMINATED_ENTRY_MAX = 1000.0
 
 
+def _is_contaminated_trade(r) -> bool:
+    """True if this trade must be excluded from dashboard aggregates."""
+    if isinstance(r, dict):
+        tid = r.get("id")
+        pair = r.get("pair")
+        entry = r.get("entry_price") or r.get("entry") or 0
+    else:
+        tid = r["id"]
+        pair = r["pair"]
+        entry = r["entry_price"] or 0
+    if tid in CONTAMINATED_TRADE_IDS:
+        return True
+    if pair == CONTAMINATED_PAIR and (entry or 0) > CONTAMINATED_ENTRY_MAX:
+        return True
+    return False
+
+
+def _count_closed_trades(conn, bot: str, valid_pairs: list | None = None) -> int:
+    """Lifetime unique closed trades for ``bot`` (DB source of truth for the Live pulse)."""
+    rows = conn.execute(
+        "SELECT id, pair, entry_price, exit_reason FROM trades "
+        "WHERE bot=? AND exit_reason IS NOT NULL AND exit_reason != ''",
+        (bot,),
+    ).fetchall()
+    seen: set[str] = set()
+    n = 0
+    for r in rows:
+        if _is_contaminated_trade(r):
+            continue
+        if valid_pairs is not None and r["pair"] not in valid_pairs:
+            continue
+        tid = r["id"]
+        if tid in seen:
+            continue
+        seen.add(tid)
+        n += 1
+    return n
+
+
 # ── Wilson Score Interval ──
 
 def wilson_score_interval(wins: int, total: int, confidence: float = 0.95):
@@ -718,6 +757,21 @@ def overview():
         # Filter trades to only show valid pairs (clean up stale data)
         if valid_pairs:
             trades = [t for t in trades if t["pair"] in valid_pairs]
+        # Deduplicate by id (newest first) so re-ingests don't inflate the feed.
+        _seen_ids: set[str] = set()
+        _uniq_trades = []
+        for t in trades:
+            if t["id"] in _seen_ids or _is_contaminated_trade(t):
+                continue
+            _seen_ids.add(t["id"])
+            _uniq_trades.append(t)
+        trades = _uniq_trades
+
+        # Lifetime closed count (NOT the recent-300 window) — Live pulse source of truth.
+        closed_trades = _count_closed_trades(
+            conn, bot, valid_pairs if valid_pairs else None,
+        )
+
         hyps = conn.execute(
             "SELECT * FROM hypotheses WHERE bot=? ORDER BY ts DESC LIMIT 30", (bot,)
         ).fetchall()
@@ -737,6 +791,16 @@ def overview():
         open_trades = open_trades if isinstance(open_trades, list) else []
         # Drop malformed entries without a pair so the pulse/cards stay aligned.
         open_trades = [t for t in open_trades if isinstance(t, dict) and (t.get("pair") or t.get("asset"))]
+        # Deduplicate live opens by pair (one position per pair).
+        _seen_open_pairs: set[str] = set()
+        _uniq_opens = []
+        for t in open_trades:
+            pair = t.get("pair") or t.get("asset")
+            if pair in _seen_open_pairs:
+                continue
+            _seen_open_pairs.add(pair)
+            _uniq_opens.append(t)
+        open_trades = _uniq_opens
         if open_trades:
             live_by_id = {r["id"]: r for r in conn.execute(
                 "SELECT * FROM trades WHERE bot=? AND exit_ts IS NULL", (bot,)).fetchall()}
@@ -769,6 +833,8 @@ def overview():
             "_received_at": state_row["received_at"] if state_row else None,
             "recent_trades": [row_to_trade(r) for r in reversed(trades)],
             "recent_open_trades": open_trades,
+            "closed_trades": closed_trades,
+            "open_count": len(open_trades),
             "recent_hypotheses": [dict(json.loads(r["raw_json"])) for r in reversed(hyps)],
             "recent_skips": [dict(json.loads(r["raw_json"])) for r in reversed(skips)],
             "live_indicators": {
@@ -783,9 +849,20 @@ def overview():
         }
 
     conn.close()
+    total_closed = 0
+    total_open = 0
     for bot in VALID_BOTS:
         data = result["bots"][bot]
-        result[bot] = {**data, "trades": len(data.get("recent_trades", []))}
+        closed_n = int(data.get("closed_trades") or 0)
+        open_n = int(data.get("open_count") or 0)
+        total_closed += closed_n
+        total_open += open_n
+        # `trades` = lifetime closed (aligned with Reports / pulse), not recent window size.
+        result[bot] = {**data, "trades": closed_n}
+    result["totals"] = {
+        "closed_trades": total_closed,
+        "open_trades": total_open,
+    }
     return result
 
 
@@ -890,14 +967,17 @@ def _summarize(rows, label: str) -> dict:
     # Quarantine: exclude trades contaminated by known bugs from WR/PnL aggregates
     # (raw rows preserved, just not counted). XAG/USD 2026-07-10/11 were priced
     # off XAU/USD — bug fixed in 42a2688. See user ruling 2026-07-14.
-    CONTAM = CONTAMINATED_TRADE_IDS
-    rows = [r for r in rows if r["id"] not in CONTAM]
-    # Safety net: drop any XAG/USD row entered gold-priced (>1000) — see above.
-    rows = [
-        r for r in rows
-        if not (r.get("pair") == CONTAMINATED_PAIR
-                and (r.get("entry_price") or r.get("entry") or 0) > CONTAMINATED_ENTRY_MAX)
-    ]
+    rows = [r for r in rows if not _is_contaminated_trade(r)]
+    # Deduplicate by id so re-ingests cannot inflate closed counts.
+    seen: set[str] = set()
+    deduped = []
+    for r in rows:
+        tid = r["id"]
+        if tid in seen:
+            continue
+        seen.add(tid)
+        deduped.append(r)
+    rows = deduped
     closed = [r for r in rows if r["exit_reason"]]
     pnls = [r["pnl_pct"] for r in closed if r["pnl_pct"] is not None]
     wins = [p for p in pnls if p > 0]
