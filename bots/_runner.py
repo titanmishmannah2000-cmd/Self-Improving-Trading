@@ -149,20 +149,24 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
         except Exception:
             continue
     # Live open positions (persisted across cycles in run_bot) -> dashboard.
+    # Use the REAL id/entry_ts from the position — never invent fresh ones each
+    # cycle (that broke held-time display and made the dashboard's staleness
+    # filter meaningless). entry_type must travel intact for the GP Brain badge.
     open_positions = (summary or {}).get("open_positions") or {}
     recent_open_trades = [
         {
-            "id": f"{bot}:{pair}:{int(time.time())}",
+            "id": pos.get("id") or f"{bot}:{pair}:{int(time.time())}",
             "bot": bot,
             "pair": pair,
             "entry_type": pos.get("entry_type", "mean_reversion"),
             "entry_price": pos.get("entry_price"),
             "size": pos.get("size"),
-            "entry_ts": _now_iso(),
+            "entry_ts": pos.get("entry_ts") or _now_iso(),
             "stop_loss_pct": pos.get("stop_loss_pct"),
             "profit_target_pct": pos.get("profit_target_pct"),
             "held_cycles": pos.get("held_cycles", 0),
             "unrealised_pct": pos.get("unrealised_pct"),
+            "gp_indicators": pos.get("gp_indicators") or [],
         }
         for pair, pos in open_positions.items()
     ]

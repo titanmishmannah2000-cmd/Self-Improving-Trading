@@ -297,18 +297,18 @@ def test_runner_open_trade_carries_entry_type():
     import importlib
     runner = importlib.import_module("bots._runner")
     summary = {"open_positions": {
-        "EUR/USD": {"entry_price": 1.1, "size": 0.1, "entry_type": "gp_ensemble",
-                    "stop_loss_pct": 1.0, "profit_target_pct": 2.0},
-        "GBP/USD": {"entry_price": 1.3, "size": 0.1, "entry_type": "mean_reversion",
+        "EUR/USD": {"id": "forex:EUR/USD:1", "entry_ts": "2026-01-01T00:00:00+00:00",
+                    "entry_price": 1.1, "size": 0.1, "entry_type": "gp_ensemble",
+                    "stop_loss_pct": 1.0, "profit_target_pct": 2.0, "held_cycles": 5},
+        "GBP/USD": {"id": "forex:GBP/USD:1", "entry_ts": "2026-01-01T00:00:00+00:00",
+                    "entry_price": 1.3, "size": 0.1, "entry_type": "mean_reversion",
                     "stop_loss_pct": 1.0, "profit_target_pct": 2.0},
     }}
-    # Build the open-trades block exactly like _push_state does (no network).
-    import time as _t
     recent = [{
-        "id": f"gold:{pair}:{int(_t.time())}", "bot": "gold", "pair": pair,
+        "id": pos.get("id") or f"gold:{pair}:x", "bot": "gold", "pair": pair,
         "entry_type": pos.get("entry_type", "mean_reversion"),
         "entry_price": pos.get("entry_price"), "size": pos.get("size"),
-        "entry_ts": runner._now_iso(),
+        "entry_ts": pos.get("entry_ts") or runner._now_iso(),
         "stop_loss_pct": pos.get("stop_loss_pct"),
         "profit_target_pct": pos.get("profit_target_pct"),
         "held_cycles": pos.get("held_cycles", 0),
@@ -316,6 +316,10 @@ def test_runner_open_trade_carries_entry_type():
     } for pair, pos in summary["open_positions"].items()]
     types = {t["pair"]: t["entry_type"] for t in recent}
     assert types == {"EUR/USD": "gp_ensemble", "GBP/USD": "mean_reversion"}
+    # Real entry_ts preserved (not overwritten with "now")
+    assert recent[0]["entry_ts"] == "2026-01-01T00:00:00+00:00"
+    assert recent[0]["id"] == "forex:EUR/USD:1"
+    assert recent[0]["held_cycles"] == 5
 
 
 # ── Audit B10: live paper-PnL feeds back into GP discovery fitness ───────────

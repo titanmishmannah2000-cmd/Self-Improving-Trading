@@ -521,11 +521,13 @@ async def ingest(bot_name: str, request: Request):
         upsert_hypotheses(conn, bot_name, hyps)
         upsert_skips(conn, bot_name, skips)
 
-        # Clean stale open trades before storing (bots may push dated entries)
+        # Live open positions from the bot are AUTHORITATIVE for "what is open
+        # now". Do NOT filter by entry_ts age — a trade held >24h is still open.
+        # (The old 24h cutoff silently dropped long-held positions once the
+        # runner started sending real entry timestamps.)
         open_trades = payload.get("recent_open_trades", [])
-        if open_trades:
-            cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-            open_trades = [t for t in open_trades if (t.get("entry_ts") or "") > cutoff]
+        if not isinstance(open_trades, list):
+            open_trades = []
 
         conn.execute(
             """
@@ -703,17 +705,12 @@ def overview():
         strategy = strategy or {}
         # Open trades: the bot pushes its CURRENT open_positions every cycle as
         # recent_open_trades (carrying entry_type, e.g. 'gp_ensemble' for the GP
-        # brain). Treat that push as authoritative for "what is open now" — it
-        # is always fresh (entry_ts set each cycle). We keep the 24h staleness
-        # cutoff, but we NO LONGER discard pushed open trades just because they
-        # aren't (yet) rows in the trades table: open positions are only written
-        # to trades on EXIT, so a live open position would never match and was
-        # being silently dropped. Enrich with trades-table entry_type if present.
+        # brain). That list is the ONLY source of truth for live opens — never
+        # infer opens from trades-table rows missing exit_reason (ghost opens).
         open_trades = json.loads(state_row["open_trades_json"]) if state_row and state_row["open_trades_json"] else []
-        open_trades = open_trades or []
-        if open_trades:
-            cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-            open_trades = [t for t in open_trades if (t.get("entry_ts") or "") > cutoff]
+        open_trades = open_trades if isinstance(open_trades, list) else []
+        # Drop malformed entries without a pair so the pulse/cards stay aligned.
+        open_trades = [t for t in open_trades if isinstance(t, dict) and (t.get("pair") or t.get("asset"))]
         if open_trades:
             live_by_id = {r["id"]: r for r in conn.execute(
                 "SELECT * FROM trades WHERE bot=? AND exit_ts IS NULL", (bot,)).fetchall()}
@@ -725,12 +722,13 @@ def overview():
                             t["entry_type"] = json.loads(src["raw_json"]).get("entry_type")
                         except Exception:
                             pass
-        if not open_trades:
-            live = conn.execute(
-                "SELECT * FROM trades WHERE bot=? AND exit_ts IS NULL ORDER BY entry_ts DESC",
-                (bot,),
-            ).fetchall()
-            open_trades = [row_to_trade(r) for r in live]
+                # Normalize aliases the frontend already understands.
+                t.setdefault("pair", t.get("asset"))
+                if t.get("unrealised_pct") is None and t.get("_unrealised_pct") is not None:
+                    t["unrealised_pct"] = t["_unrealised_pct"]
+        # No fallback to trades WHERE exit_ts IS NULL — those rows are often
+        # legacy ingest ghosts and caused pair cards to show "in trade" while
+        # PortfolioPulse (which only counts recent_open_trades) disagreed.
 
         result["bots"][bot] = {
             "strategy": strategy,

@@ -353,8 +353,11 @@ function botHasPipelineGap(botName, overview) {
 
 function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPaused, livePrice }) {
   const meta = PAIR_META[pair] || {};
+  // Live opens come ONLY from recent_open_trades (data.openTrades). Never treat
+  // a closed-history row missing exit_reason as an open — that caused cards to
+  // show "in trade" / GP Brain while PortfolioPulse counted fewer opens.
+  const openTrade = (data?.openTrades && data.openTrades[0]) || null;
   const trades = data?.trades || [];
-  const openTrade = trades.find((t) => t.exit_reason == null || t.exit_reason === undefined || t.exit_reason === "");
   const lastClosed = [...trades].reverse().find((t) => t.exit_reason);
   const lastSkip = data?.lastSkip;
 
@@ -433,7 +436,7 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
         {openTrade ? (
           <>
             <span className={`pc-pnl ${isUp ? "pc-up" : "pc-down"}`}>{fmtPct(pnl)}</span>
-            <span className="pc-held">{holdTime(openTrade.hold_cycles)}</span>
+            <span className="pc-held">{holdTime(openTrade.held_cycles ?? openTrade.hold_cycles)}</span>
           </>
         ) : (
           <span className="pc-watching">Watching</span>
@@ -590,9 +593,9 @@ function DetailPanel({ pair, botData, strategyParams }) {
   const meta = PAIR_META[pair];
   const trades = (botData?.recent_trades || []).filter((t) => (t.pair || t.asset) === pair);
   const openTrades = (botData?.recent_open_trades || []).filter((t) => (t.asset || t.pair) === pair);
-  const allPairTrades = [...openTrades.map(t => ({ ...t, exit_reason: null })), ...trades];
-  const openTrade = allPairTrades.find((t) => !t.exit_reason);
-  const closedTrades = allPairTrades.filter((t) => t.exit_reason).slice(-10).reverse();
+  // Live open = recent_open_trades only. Closed history = exit_reason present.
+  const openTrade = openTrades[0] || null;
+  const closedTrades = trades.filter((t) => t.exit_reason).slice(-10).reverse();
   const strategy = strategyParams?.[pair] || {};
   const strategyLabel = strategy.strategy_type === "mean_reversion" ? "Mean Reversion" : "RSI Momentum";
 
@@ -730,7 +733,7 @@ function DetailPanel({ pair, botData, strategyParams }) {
             )}
             <div className="dp-row">
               <span>Held</span>
-              <span className="mono">{holdTime(openTrade.hold_cycles)}</span>
+              <span className="mono">{holdTime(openTrade.held_cycles ?? openTrade.hold_cycles)}</span>
             </div>
             {(openTrade._unrealised_pct ?? openTrade.unrealised_pct) !== undefined && (
               <div className="dp-row">
@@ -1063,16 +1066,21 @@ function PortfolioPulse({ overview }) {
   let openCount = 0;
   let closedCount = 0;
   let gpOpenCount = 0;
+  // Deduplicate by bot+pair so a bad push can't inflate the pulse.
+  const seenOpen = new Set();
 
-  for (const bot of Object.values(overview?.bots || {})) {
-    // Closed trades: only rows in trades.jsonl that carry an exit_reason.
-    // (Open-log rows there have no exit_reason and would double-count the
-    // live positions already in recent_open_trades — so we ignore them here.)
+  for (const [botName, bot] of Object.entries(overview?.bots || {})) {
+    // Closed trades: only rows that carry an exit_reason.
     for (const t of bot.recent_trades || []) {
       if (t.exit_reason) closedCount++;
     }
-    // Open positions: recent_open_trades is the authoritative live-open list.
+    // Open positions: recent_open_trades is the ONLY authoritative live-open list.
     for (const t of bot.recent_open_trades || []) {
+      const pair = t.pair || t.asset;
+      if (!pair) continue;
+      const key = `${botName}:${pair}`;
+      if (seenOpen.has(key)) continue;
+      seenOpen.add(key);
       openCount++;
       totalPnl += t._unrealised_pct ?? t.unrealised_pct ?? t.pnl_pct ?? 0;
       if (t.entry_type === "gp_ensemble") gpOpenCount++;
@@ -1590,21 +1598,25 @@ export default function App() {
     // Per-pair live price snapshot (bot pushes this each cycle via heartbeat).
     const prices = bot?.prices || bot?.heartbeat?.prices || {};
     Object.assign(livePrices, prices);
-      }
-      const marketClosed = Object.values(overview?.bots || {}).some(
-        (bot) => bot?.live_indicators?.market_closed || bot?.heartbeat?.market_closed
-      );
-      for (const [botName, bot] of Object.entries(overview?.bots || {})) {
+  }
+  const marketClosed = Object.values(overview?.bots || {}).some(
+    (bot) => bot?.live_indicators?.market_closed || bot?.heartbeat?.market_closed
+  );
+  for (const [botName, bot] of Object.entries(overview?.bots || {})) {
     const trades = bot.recent_trades || [];
     const skips = bot.recent_skips || [];
     const openTrades = bot.recent_open_trades || [];
     for (const pair of Object.keys(PAIR_META)) {
       if (PAIR_META[pair].bot !== botName) continue;
-      const pTrades = trades.filter((t) => (t.pair || t.asset) === pair);
+      // Closed history only — never merge no-exit ghosts into "open".
+      const pTrades = trades.filter((t) => (t.pair || t.asset) === pair && t.exit_reason);
       const pOpen = openTrades.filter((t) => (t.asset || t.pair) === pair);
       const pSkips = skips.filter((s) => s.pair === pair);
-      const allTrades = [...pOpen.map(t => ({ ...t, exit_reason: null })), ...pTrades];
-      pairData[pair] = { trades: allTrades, lastSkip: pSkips[pSkips.length - 1] };
+      pairData[pair] = {
+        trades: pTrades,
+        openTrades: pOpen,
+        lastSkip: pSkips[pSkips.length - 1],
+      };
     }
   }
 

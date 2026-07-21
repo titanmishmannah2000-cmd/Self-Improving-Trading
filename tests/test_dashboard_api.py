@@ -186,3 +186,58 @@ def test_gp_open_trade_surfaces_in_overview():
     assert gp, f"GP open trade dropped from overview: {open_trades}"
     assert gp[0]["pair"] == "XAU/USD"
     assert gp[0].get("unrealised_pct") == 0.32
+
+
+def test_overview_open_trades_not_filtered_by_age_and_no_ghost_fallback():
+    """Live opens must survive >24h entry_ts and must NOT be inferred from
+    trades-table rows missing exit_reason (ghost opens that inflated pair cards
+    while PortfolioPulse under-counted).
+    """
+    import json
+    import tempfile as _tf
+    from datetime import datetime, timedelta, timezone
+
+    import dashboard.backend.main as mm
+
+    d = _tf.mkdtemp()
+    mm.DB_PATH = f"{d}/dash.db"
+    mm.init_db()
+    conn = mm.get_conn()
+    for _col in ("discovered_json", "cortex_json", "flatlined_json", "open_trades_json"):
+        try:
+            conn.execute(f"ALTER TABLE latest_state ADD COLUMN {_col} TEXT DEFAULT '{{}}'")
+        except Exception:
+            pass
+
+    old_ts = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+    opens = [
+        {"id": "forex:EUR/USD:1", "pair": "EUR/USD", "entry_type": "gp_ensemble",
+         "entry_ts": old_ts, "entry_price": 1.1, "held_cycles": 100},
+        {"id": "forex:GBP/USD:1", "pair": "GBP/USD", "entry_type": "gp_ensemble",
+         "entry_ts": old_ts, "entry_price": 1.3, "held_cycles": 80},
+        {"id": "forex:AUD/USD:1", "pair": "AUD/USD", "entry_type": "mean_reversion",
+         "entry_ts": old_ts, "entry_price": 0.7, "held_cycles": 50},
+    ]
+    # Ghost: trades row with no exit — must NOT appear as a live open.
+    conn.execute(
+        "INSERT INTO trades (id, bot, pair, entry_price, entry_ts, exit_reason, raw_json) "
+        "VALUES (?,?,?,?,?,?,?)",
+        ("ghost", "forex", "GBP/JPY", 1.5, old_ts, None,
+         json.dumps({"id": "ghost", "pair": "GBP/JPY", "entry_type": "gp_ensemble"})),
+    )
+    conn.execute(
+        """INSERT INTO latest_state
+           (bot, strategy_json, goal_json, heartbeat_json, open_trades_json,
+            discovered_json, cortex_json, flatlined_json, received_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        ("forex", json.dumps({"EUR/USD": {}, "GBP/USD": {}, "AUD/USD": {}, "GBP/JPY": {}}),
+         "{}", "{}", json.dumps(opens), "{}", "{}", "{}",
+         datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    o = mm.overview()
+    live = o["bots"]["forex"]["recent_open_trades"]
+    pairs = {t["pair"] for t in live}
+    assert pairs == {"EUR/USD", "GBP/USD", "AUD/USD"}
+    assert "GBP/JPY" not in pairs  # ghost excluded
+    assert sum(1 for t in live if t.get("entry_type") == "gp_ensemble") == 2
