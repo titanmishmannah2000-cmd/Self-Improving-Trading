@@ -36,7 +36,15 @@ def _tmp_discovered(tmp_path, monkeypatch):
 
 
 def _write_discovered(pair: str, inds: list[dict]) -> None:
-    gp._save_discovered(pair, inds)
+    # Item 9/15: ensemble requires backtest_approved; default True in tests
+    # unless a case explicitly sets False/omits for reject coverage.
+    stamped = []
+    for ind in inds:
+        row = dict(ind)
+        if "backtest_approved" not in row:
+            row["backtest_approved"] = True
+        stamped.append(row)
+    gp._save_discovered(pair, stamped)
 
 
 # ── Task A: cross-pair sharing ──────────────────────────────────────────────

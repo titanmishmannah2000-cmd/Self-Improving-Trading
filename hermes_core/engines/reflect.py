@@ -12,25 +12,29 @@ Decision tree (blueprint Section 7 Engine 2 / line 544, line 730, L45):
   * confidence gate:       self-assigned 0.40 (fixed for the pure rule tree).
 
 Discipline (S9 contract, roadmap 8.1-8.2):
-  * SHADOW-ONLY / APPROVAL-GATED. layer1_rule_based NEVER mutates the live
-    strategy; combined_reflect only LOGS a proposal to state/hypotheses.jsonl.
-    The actual YAML edit + version bump is a separate, user-approved step
-    (Phase 10 backtest validates before anything ships live).
+  * layer1_rule_based NEVER mutates the live strategy; combined_reflect only
+    LOGS a proposal to state/hypotheses.jsonl.
+  * Live deploy is gated by run_reflection_pipeline: L2 (when score>=65) then
+    backtest_with_history; on approve, apply_strategy_change writes YAML +
+    version. Set REFLECT_AUTO_DEPLOY=0 to stop at approved_pending_deploy.
   * Every proposal is reconstructable: hypotheses.jsonl records
     pair, variable, old -> new, reason, confidence, and the trade stats that
     produced it.
 
-Functions (blueprint Phase 9 build target):
+Functions (blueprint Phase 9 build target + live latch):
   layer1_rule_based(pair, trades, goal, strategy) -> tuple | None
   combined_reflect(pair, trades, goal, chart_context="", ...) -> list[dict]
+  maybe_reflect_pair / run_reflection_pipeline / apply_strategy_change
+  _is_reflection_done / _mark_reflection_done
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
-from hermes_core.config import load_config
-from hermes_core.state.paths import hypotheses_path
+from hermes_core.config import load_config, load_strategy_for_pair
+from hermes_core.state.paths import hypotheses_path, reflection_latch_path
 
 STOP_FLOOR = 0.5          # [GUARD L45] stop_loss_pct never goes below this
 STOP_TIGHTEN = 0.3        # DD breach -> tighten by this much
@@ -352,3 +356,269 @@ def call_llm_consensus(
         score, L2_MIN_SCORE if score < L2_UNANIMOUS_SCORE else L2_UNANIMOUS_SCORE,
         votes_yes, reached, required, confidence, decision, reasons,
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Live latch + reflect → L2 → backtest → deploy (wired from the trade loop)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _load_reflection_latches(bot: str = "forex") -> dict:
+    path = reflection_latch_path(bot)
+    try:
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {}
+
+
+def _save_reflection_latches(latches: dict, bot: str = "forex") -> None:
+    path = reflection_latch_path(bot)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(latches), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _is_reflection_done(pair: str, closed_count: int, bot: str = "forex") -> bool:
+    """True if we already reflected at this exact closed-trade count for `pair`."""
+    entry = _load_reflection_latches(bot).get(pair)
+    if entry is None:
+        return False
+    return entry.get("reflected_count") == closed_count
+
+
+def _mark_reflection_done(pair: str, closed_count: int, bot: str = "forex") -> None:
+    latches = _load_reflection_latches(bot)
+    latches[pair] = {"reflected_count": closed_count}
+    _save_reflection_latches(latches, bot)
+
+
+def strategy_yaml_path(pair: str, bot: str = "forex") -> Path:
+    """Canonical per-pair strategy file on the runtime volume."""
+    from hermes_core.config.loader import strategy_yaml_path as _live
+    return _live(pair, bot)
+
+
+def _set_strategy_param(strategy: dict, variable: str, value) -> None:
+    """Set a top-level or dotted param (e.g. entry.threshold) on a strategy dict."""
+    if "." in variable:
+        parts = variable.split(".")
+        cur = strategy
+        for part in parts[:-1]:
+            nxt = cur.get(part)
+            if not isinstance(nxt, dict):
+                nxt = {}
+                cur[part] = nxt
+            cur = nxt
+        cur[parts[-1]] = value
+    else:
+        strategy[variable] = value
+
+
+def apply_strategy_change(
+    pair: str,
+    variable: str,
+    new_val,
+    *,
+    bot: str = "forex",
+    version: str | None = None,
+    strategy: dict | None = None,
+) -> dict:
+    """Atomically write the approved param (+ version) to the pair strategy YAML.
+
+    Returns the written strategy dict. Validates ranges before writing; raises
+    on validation failure so callers can refuse a bad deploy.
+    """
+    import copy
+    import yaml
+    from hermes_core.config import validate_strategy_params
+
+    strat = copy.deepcopy(strategy if strategy is not None
+                          else load_strategy_for_pair(pair, bot))
+    _set_strategy_param(strat, variable, new_val)
+    if version is not None:
+        strat["version"] = str(version)
+    elif "version" not in strat:
+        strat["version"] = "01"
+    validate_strategy_params(strat, raise_on_fail=True)
+
+    path = strategy_yaml_path(pair, bot)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(yaml.safe_dump(strat, sort_keys=False), encoding="utf-8")
+    tmp.replace(path)
+    return strat
+
+
+def run_reflection_pipeline(
+    pair: str,
+    trades: list[dict],
+    *,
+    bot: str = "forex",
+    goal: dict | None = None,
+    strategy: dict | None = None,
+    chart_context: str = "",
+    prices: list[float] | None = None,
+    fetch_prices=None,
+    llm_callers: dict | None = None,
+    auto_deploy: bool = True,
+) -> dict:
+    """L1 → (optional L2) → backtest → deploy. Returns a status dict.
+
+    Gate rules (roadmap S11):
+      * score < 65  → L2 skipped; L1 proposal proceeds to backtest on its own.
+      * score ≥ 65  → L2 consensus required before backtest.
+      * backtest approve + auto_deploy → write strategy YAML + version bump.
+    """
+    from hermes_core.engines.backtest import backtest_with_history
+
+    if goal is None:
+        goal = (load_config(bot) or {}).get("goal", {})
+    if strategy is None:
+        strategy = load_strategy_for_pair(pair, bot)
+
+    proposals = combined_reflect(
+        pair, trades, goal=goal, chart_context=chart_context,
+        strategy=strategy, bot=bot,
+    )
+    if not proposals:
+        return {"status": "no_proposal", "pair": pair, "deployed": False}
+
+    prop = proposals[0]
+    score = float(prop.get("confidence", 0.0)) * 100.0
+    # Allow an explicit numeric score on the proposal (tests / L2 escalation).
+    if "score" in prop:
+        score = float(prop["score"])
+
+    if score >= L2_MIN_SCORE:
+        cons = call_llm_consensus(
+            prop, context=chart_context, score=score,
+            confidence=float(prop.get("confidence", 0.0)),
+            callers=llm_callers,
+        )
+        _log_hypothesis({
+            **{k: prop.get(k) for k in ("pair", "bot", "variable", "old", "new")},
+            "status": "l2_approved" if cons.decision else "l2_rejected",
+            "l2": cons.to_dict(),
+            "ts": __import__("time").time(),
+        })
+        if not cons.decision:
+            return {
+                "status": "l2_reject", "pair": pair, "deployed": False,
+                "proposal": prop, "l2": cons.to_dict(),
+            }
+
+    kwargs = {
+        "strategy": strategy, "prices": prices, "bot": bot,
+    }
+    if fetch_prices is not None:
+        kwargs["fetch_prices"] = fetch_prices
+    verdict = backtest_with_history(
+        pair, prop["variable"], prop["old"], prop["new"], **kwargs,
+    )
+    _log_hypothesis({
+        **{k: prop.get(k) for k in ("pair", "bot", "variable", "old", "new")},
+        "status": "backtest_approved" if verdict.get("approved") else "backtest_rejected",
+        "backtest": {
+            "approved": verdict.get("approved"),
+            "reason": verdict.get("reason"),
+            "version_bumped": (verdict.get("phases") or {}).get("phase6_deploy", {}).get(
+                "version_bumped"),
+        },
+        "ts": __import__("time").time(),
+    })
+    if not verdict.get("approved"):
+        return {
+            "status": "backtest_reject", "pair": pair, "deployed": False,
+            "proposal": prop, "verdict": verdict,
+        }
+
+    bumped = (verdict.get("phases") or {}).get("phase6_deploy", {}).get("version_bumped")
+    if not auto_deploy:
+        return {
+            "status": "approved_pending_deploy", "pair": pair, "deployed": False,
+            "proposal": prop, "verdict": verdict, "version": bumped,
+        }
+
+    written = apply_strategy_change(
+        pair, prop["variable"], prop["new"],
+        bot=bot, version=bumped, strategy=strategy,
+    )
+    _log_hypothesis({
+        **{k: prop.get(k) for k in ("pair", "bot", "variable", "old", "new")},
+        "status": "deployed",
+        "version": written.get("version"),
+        "ts": __import__("time").time(),
+    })
+    return {
+        "status": "deployed", "pair": pair, "deployed": True,
+        "proposal": prop, "verdict": verdict,
+        "version": written.get("version"), "strategy": written,
+    }
+
+
+def maybe_reflect_pair(
+    bot: str,
+    pair: str,
+    *,
+    goal: dict | None = None,
+    chart_context: str = "",
+    prices: list[float] | None = None,
+    fetch_prices=None,
+    llm_callers: dict | None = None,
+    auto_deploy: bool = True,
+) -> dict | None:
+    """Fire reflection when closed-count hits reflection_every and latch is clear.
+
+    Returns the pipeline result dict, or None if cadence/latch skipped the run.
+    Always fail-soft at the caller — this function may raise only on logic bugs;
+    I/O errors inside the pipeline are converted to status dicts where possible.
+    """
+    from hermes_core.state.paths import bot_state_dir
+
+    if goal is None:
+        goal = (load_config(bot) or {}).get("goal", {})
+    every = int(goal.get("reflection_every", 5) or 5)
+    if every < 1:
+        every = 5
+
+    trades_path = bot_state_dir(bot) / "trades.jsonl"
+    closed: list[dict] = []
+    if trades_path.exists():
+        try:
+            for line in trades_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                rec = json.loads(line)
+                if rec.get("pair") != pair:
+                    continue
+                # Real closes carry exit_reason (or legacy reason) + pnl.
+                if rec.get("exit_reason") or rec.get("reason") or "pnl_pct" in rec:
+                    closed.append(rec)
+        except (OSError, json.JSONDecodeError):
+            closed = []
+
+    total = len(closed)
+    if total <= 0 or total % every != 0:
+        return None
+    if _is_reflection_done(pair, total, bot):
+        return {"status": "latched", "pair": pair, "closed": total, "deployed": False}
+
+    batch = closed[-every:]
+    try:
+        result = run_reflection_pipeline(
+            pair, batch, bot=bot, goal=goal, chart_context=chart_context,
+            prices=prices, fetch_prices=fetch_prices, llm_callers=llm_callers,
+            auto_deploy=auto_deploy,
+        )
+    except Exception as exc:  # noqa: BLE001 — never break the trade loop
+        result = {
+            "status": "error", "pair": pair, "deployed": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    _mark_reflection_done(pair, total, bot)
+    result["closed"] = total
+    result["reflection_every"] = every
+    return result

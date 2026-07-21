@@ -1,4 +1,5 @@
 pair: EUR/USD
+version: "00"
 strategy_type: mean_reversion
 entry:
   indicator: rsi

@@ -1,4 +1,5 @@
 pair: XAG/USD
+version: "00"
 strategy_type: rsi_momentum          # silver MUST be momentum, never mean_reversion (discipline D8 / lesson 4)
 entry:
   indicator: rsi

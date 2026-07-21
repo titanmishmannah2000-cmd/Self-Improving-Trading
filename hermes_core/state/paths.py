@@ -57,6 +57,28 @@ def discovered_path(pair: str) -> Path:
     return discovered_dir(pair=pair) / f"{safe}.json"
 
 
+def strategies_dir(bot: str | None = None) -> Path:
+    """Mutable per-bot strategies on the runtime volume (not the image)."""
+    d = bot_state_dir(bot) / "strategies"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def strategy_path(pair: str, bot: str | None = None) -> Path:
+    """Canonical live strategy YAML: ``{state_root}/{bot}/state/strategies/EUR_USD.yaml``."""
+    b = bot or bot_for_pair(pair)
+    fname = pair.replace("/", "_").replace("-", "_") + ".yaml"
+    return strategies_dir(b) / fname
+
+
+def seed_strategy_path(pair: str, bot: str | None = None) -> Path:
+    """Image/seed strategy YAML under ``bots/{bot}/state/strategies/`` (read-only source)."""
+    from hermes_core.config.loader import repo_root
+    b = bot or bot_for_pair(pair)
+    fname = pair.replace("/", "_").replace("-", "_") + ".yaml"
+    return repo_root() / "bots" / b / "state" / "strategies" / fname
+
+
 def policy_path(bot: str | None = None) -> Path:
     return bot_state_dir(bot) / "policy.json"
 
@@ -74,6 +96,11 @@ def chart_cache_dir(bot: str | None = None) -> Path:
 
 def hypotheses_kb_path(bot: str | None = None) -> Path:
     return bot_state_dir(bot) / "hypotheses_kb.jsonl"
+
+
+def reflection_latch_path(bot: str | None = None) -> Path:
+    """Once-per-N-trades reflection latch (pair -> reflected_count)."""
+    return bot_state_dir(bot) / ".reflection_latches.json"
 
 
 def cortex_dir(bot: str | None = None) -> Path:

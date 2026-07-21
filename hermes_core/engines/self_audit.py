@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from hermes_core.config import load_config, repo_root
+from hermes_core.config import load_config, repo_root, strategy_yaml_path
 from hermes_core.state.paths import bot_state_dir, current_bot
 
 
@@ -63,16 +63,52 @@ def run(bot: str | None = None) -> Report:
     else:
         checks.append(_check("heartbeat_fresh", False, "missing heartbeat.json"))
 
-    # Strategy files present for each pair
+    # Strategy files present for each pair (volume first, seed as fallback)
     for pair in pairs:
-        fname = pair.replace("/", "_") + ".yaml"
-        strat = repo_root() / "bots" / b / "state" / "strategies" / fname
-        checks.append(_check(f"strategy_{pair}", strat.exists(), str(strat)))
+        live = strategy_yaml_path(pair, b)
+        seed = repo_root() / "bots" / b / "state" / "strategies" / (
+            pair.replace("/", "_").replace("-", "_") + ".yaml"
+        )
+        present = live.exists() or seed.exists()
+        checks.append(_check(
+            f"strategy_{pair}",
+            present,
+            str(live if live.exists() else seed),
+        ))
 
     # Optional state artifacts (warn if absent, not fatal)
     for rel in ("hypotheses.jsonl", "flatline_log.jsonl", "policy.json"):
         p: Path = state_dir / rel
         checks.append(_check(f"artifact_{rel}", p.exists(), "optional" if not p.exists() else "ok"))
+
+    # Item 12: flag known fixture pollution still sitting in hypotheses.jsonl
+    hyp = state_dir / "hypotheses.jsonl"
+    if hyp.exists():
+        polluted = 0
+        total = 0
+        try:
+            for line in hyp.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                total += 1
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    polluted += 1
+                    continue
+                reason = str(rec.get("reason") or "")
+                if "max_dd 2.00%" in reason or "max_dd 2.0%" in reason:
+                    polluted += 1
+                elif rec.get("variable") == "rsi_period" and rec.get("reasoning") == "improve WR":
+                    polluted += 1
+        except OSError as exc:
+            checks.append(_check("hypotheses_clean", False, str(exc)))
+        else:
+            checks.append(_check(
+                "hypotheses_clean",
+                polluted == 0,
+                f"polluted={polluted}/{total}" if total else "empty",
+            ))
 
     ok = all(c["passed"] for c in checks if not c["name"].startswith("artifact_"))
     return Report(bot=b, ok=ok, checks=checks)

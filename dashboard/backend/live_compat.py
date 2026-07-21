@@ -19,6 +19,11 @@ This module registers routes that READ those real bot-state files and return the
 exact JSON shapes the redesigned frontend expects, so nothing in the live pipeline
 has to change. Registered BEFORE the base routes so it takes precedence.
 
+Canonical runtime state (matches hermes_core.state_root):
+    {HERMES_STATE_ROOT}/{bot}/state/...   e.g. /data/forex/state/
+Image seeds (lower priority / defaults only):
+    bots/{bot}/state/strategies/, bots/{bot}/state/discovered/
+
 All reads are fail-soft: missing files -> empty/[] , never a 500.
 """
 
@@ -39,23 +44,28 @@ def _utcnow() -> str:
 
 # ----------------------------------------------------------------------------
 # Locate the bots' state directories.
-# Priority (env override wins, then common layouts):
-#   HERMES_STATE_ROOT/{bot}/state
-#   /app/bots/{bot}/state          (Railway: bots + dashboard on same image/volume)
-#   <repo>/bots/{bot}/state        (local dev)
-#   /data/bots/{bot}/state
+# Priority (matches hermes_core.state_root / bot_state_dir):
+#   HERMES_STATE_ROOT/{bot}/state     (Railway /data)
+#   <repo>/{bot}/state                (local when env unset)
+#   /data/{bot}/state
+# Legacy seed trees (lower priority — not the live write target):
+#   <repo>/bots/{bot}/state
+#   /app/bots/{bot}/state
 # ----------------------------------------------------------------------------
 
 def _candidate_state_roots() -> list[Path]:
-    roots = []
+    roots: list[Path] = []
     env = os.getenv("HERMES_STATE_ROOT") or os.getenv("HERMES_STATE")
     if env:
         roots.append(Path(env))
+    repo = Path(__file__).resolve().parent.parent.parent  # dashboard/backend -> repo
+    roots.append(repo)            # {repo}/{bot}/state — matches state_root() fallback
+    roots.append(Path("/data"))   # Railway volume without env typo safety
+    # Legacy / image seed trees — prefer only when canonical runtime is absent
     roots += [
+        repo / "bots",
         Path("/app/bots"),
-        Path(__file__).resolve().parent.parent.parent / "bots",  # dashboard/backend -> repo/bots
         Path("/data/bots"),
-        Path("/app/state"),
     ]
     return roots
 

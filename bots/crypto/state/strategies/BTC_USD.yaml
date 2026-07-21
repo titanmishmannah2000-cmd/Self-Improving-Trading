@@ -1,4 +1,5 @@
 pair: BTC/USD
+version: "00"
 # Crypto trends hard — use momentum (same discipline as gold D8), not FX mean-reversion.
 strategy_type: rsi_momentum
 entry:

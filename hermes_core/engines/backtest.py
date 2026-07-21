@@ -1,8 +1,9 @@
 """Backtest validation pipeline (Session 10 / Phase 10) — the ship/no-ship gate.
 
-This is the gatekeeper for every reflection proposal. Given a pair, a parameter,
-and its old/new value, it runs a 7-phase trial (OOS FIRST, per blueprint 1307/
-20332) and returns ``{"approved": bool, ...}`` plus a per-phase audit trail.
+This is the gatekeeper for every reflection proposal **and** every GP formula
+before live/paper use. Given a pair + change (param old→new, or a GP expr), it
+runs a 7-phase trial (OOS FIRST, per blueprint 1307/20332) and returns
+``{"approved": bool, ...}`` plus a per-phase audit trail.
 
 7 phases IN ORDER (blueprint line 554, 1307, 20332):
   Phase 0  OOS (last 30% of the window) — reject if oos_delta <= -0.2  [L53]
@@ -13,6 +14,7 @@ and its old/new value, it runs a 7-phase trial (OOS FIRST, per blueprint 1307/
   Phase 4  regime breakdown             — per-regime robustness
   Phase 5  redundancy / correlation     — |r| > 0.8 with an existing param -> warn
   Phase 6  deploy                        — on full pass, bump strategy version
+                                         (GP: mark backtest_approved for ensemble)
 
 Discipline (S10 contract, blueprint 1310-1325):
   * A proposal that FAILED crisis is NEVER approved (test_oos_pass_crisis_fail_rejected).
@@ -21,6 +23,7 @@ Discipline (S10 contract, blueprint 1310-1325):
   * Historical hypothesis KB: a proposal rejected once is not re-run — a second
     call is a KB hit and returns the cached rejection (test_historical_kb_blocks).
   * On approval it bumps the strategy version (test_all_phases_pass -> version_bumped).
+  * GP formulas use the SAME hard gates via ``backtest_gp_indicator`` (item 9/15).
 
 The price source is injectable (``fetch_prices``) so the pipeline is testable
 without network; the default pulls yfinance history but tests pass candles in.
@@ -420,3 +423,241 @@ def backtest_with_history(
     }
     _kb_record(pair, param, old_val, new_val, approved, verdict["reason"])
     return verdict
+
+
+# ── GP formula gate (same 7 phases; item 9/15) ─────────────────────────────
+def _gp_tree_from_expr(expr) -> object:
+    """Accept a raw genetic tree or a GP infix string; return an eval tree."""
+    from hermes_core.engines.genetic import FEATURES
+    if isinstance(expr, tuple):
+        return expr
+    if isinstance(expr, str) and expr in FEATURES:
+        return expr
+    if isinstance(expr, str):
+        from hermes_core.engines.entry import _gp_parse
+        return _gp_parse(expr)
+    raise TypeError(f"unsupported GP expr type: {type(expr)!r}")
+
+
+def _simulate_gp(prices: list[float], signal: list[float],
+                 stop_pct: float, target_pct: float) -> dict:
+    """Trade simulation for a GP continuous signal (long when above own mean)."""
+    if len(prices) < 10 or len(signal) < 5:
+        return {"pnl": 0.0, "wr": 0.0, "entries": 0, "max_dd": 0.0}
+    n = min(len(signal), len(prices) - 1)
+    if n < 5:
+        return {"pnl": 0.0, "wr": 0.0, "entries": 0, "max_dd": 0.0}
+    sig = np.asarray(signal[:n], dtype=float)
+    p = np.asarray(prices[: n + 1], dtype=float)
+    mu = float(np.mean(sig))
+    mask = sig > mu
+    move = (p[1:] - p[:-1]) / np.maximum(p[:-1], 1e-12) * 100.0
+    trade_moves = np.clip(move[mask[: len(move)]], -stop_pct, target_pct)
+    if trade_moves.size == 0:
+        return {"pnl": 0.0, "wr": 0.0, "entries": 0, "max_dd": 0.0}
+    cum = np.cumsum(trade_moves)
+    peak = np.maximum.accumulate(cum)
+    dd = (peak - cum) / 100.0
+    wins = int(np.count_nonzero(trade_moves > 0))
+    entries = int(trade_moves.size)
+    return {
+        "pnl": round(float(cum[-1]), 4),
+        "wr": round(wins / entries * 100.0, 1),
+        "entries": entries,
+        "max_dd": round(float(dd.max()), 4),
+    }
+
+
+def _crisis_backtest_gp(prices: list[float], signal: list[float],
+                        stop_pct: float, target_pct: float) -> dict:
+    if _classify_regime(prices) != "crisis":
+        return {"approved": True, "reason": "not a crisis window"}
+    tight_stop = max(0.5, stop_pct * 0.5)
+    res = _simulate_gp(prices, signal, tight_stop, target_pct)
+    approved = res["max_dd"] <= CRISIS_DD_LIMIT
+    return {
+        "approved": approved,
+        "reason": (f"crisis DD {res['max_dd']:.3f} <= {CRISIS_DD_LIMIT}"
+                   if approved else
+                   f"crisis DD {res['max_dd']:.3f} > {CRISIS_DD_LIMIT}"),
+    }
+
+
+def _align_gp_signal(tree, prices: list[float]) -> list[float]:
+    """Evaluate GP tree to a bar-aligned signal series (len ~= len(prices)-lookback)."""
+    from hermes_core.engines.genetic import _signal_for_expr
+    return _signal_for_expr(tree, prices)
+
+
+def backtest_gp_indicator(
+    pair: str,
+    expr,
+    *,
+    strategy: dict | None = None,
+    prices: list[float] | None = None,
+    fetch_prices: Callable[[str], list[float]] = _default_fetch,
+    bot: str = "forex",
+    existing_signals: list[list[float]] | None = None,
+) -> dict:
+    """7-phase S10 gate for a GP formula — same hard gates as param changes.
+
+    Baseline is flat (no trade). The GP signal must clear OOS corr, historical
+    PnL floor, crisis DD, and permutation significance before
+    ``backtest_approved`` is True for ensemble voting / promote.
+    """
+    expr_key = expr if isinstance(expr, str) else repr(expr)
+    cached = _kb_hit(pair, "gp_expr", "", expr_key)
+    if cached is not None and not cached.get("approved", False):
+        return {
+            "approved": False,
+            "reason": f"KB hit (prior rejection): {cached['reason']}",
+            "phases": {}, "kb_hit": True, "expr": expr_key,
+        }
+
+    if strategy is None:
+        try:
+            strategy = load_strategy_for_pair(pair, bot)
+        except Exception:  # noqa: BLE001
+            strategy = {"stop_loss_pct": 1.5, "profit_target_pct": 3.0}
+    stop_pct = float(strategy.get("stop_loss_pct", 1.5))
+    target_pct = float(strategy.get("profit_target_pct", 3.0))
+
+    if prices is None:
+        prices = fetch_prices(pair)
+    if not prices or len(prices) < 60:
+        verdict = {
+            "approved": False, "reason": "insufficient price history",
+            "phases": {}, "expr": expr_key,
+        }
+        _kb_record(pair, "gp_expr", "", expr_key, False, verdict["reason"])
+        return verdict
+
+    try:
+        tree = _gp_tree_from_expr(expr)
+        signal = _align_gp_signal(tree, prices)
+    except Exception as exc:  # noqa: BLE001
+        verdict = {
+            "approved": False, "reason": f"expr eval failed: {exc}",
+            "phases": {}, "expr": expr_key,
+        }
+        _kb_record(pair, "gp_expr", "", expr_key, False, verdict["reason"])
+        return verdict
+
+    if len(signal) < 20:
+        verdict = {
+            "approved": False, "reason": "GP signal too short",
+            "phases": {}, "expr": expr_key,
+        }
+        _kb_record(pair, "gp_expr", "", expr_key, False, verdict["reason"])
+        return verdict
+
+    # Align prices to signal length for corr/sim (signal starts after lookback).
+    lookback = max(0, len(prices) - len(signal))
+    aligned_prices = prices[lookback:] if lookback else prices
+    # phase0_corr / perm expect len(signal) ~= len(prices)-1; pad signal to match.
+    if len(signal) < len(aligned_prices) - 1:
+        pad = [0.0] * ((len(aligned_prices) - 1) - len(signal))
+        bar_signal = pad + list(signal)
+    elif len(signal) > len(aligned_prices) - 1:
+        bar_signal = list(signal[: len(aligned_prices) - 1])
+    else:
+        bar_signal = list(signal)
+
+    phases: dict[str, object] = {}
+    reasons: list[str] = []
+
+    # Phase 0 — OOS FIRST
+    oos_idx = int(len(aligned_prices) * (1 - OOS_FRACTION))
+    oos_prices = aligned_prices[oos_idx:]
+    try:
+        oos_signal_raw = _align_gp_signal(tree, oos_prices)
+    except Exception:  # noqa: BLE001
+        oos_sig = bar_signal[max(0, oos_idx - 1):] if oos_idx > 0 else bar_signal
+        oos_signal_raw = oos_sig
+    oos_corr = phase0_corr(
+        oos_signal_raw if len(oos_signal_raw) >= 20 else bar_signal,
+        oos_prices,
+    )
+    oos_res = _simulate_gp(oos_prices, oos_signal_raw, stop_pct, target_pct)
+    oos_delta = oos_res["pnl"] - 0.0
+    oos_approved = oos_corr >= OOS_CORR_MIN and oos_delta > OOS_DELTA_OK
+    phases["phase0_oos"] = {
+        "corr": oos_corr, "delta": round(oos_delta, 4),
+        "corr_ok": oos_corr >= OOS_CORR_MIN, "delta_ok": oos_delta > OOS_DELTA_OK,
+    }
+    if not oos_approved:
+        reasons.append(
+            f"OOS FAIL: corr={oos_corr} (>= {OOS_CORR_MIN}) delta={oos_delta} (>-0.2)"
+        )
+
+    # Phase 1 — historical vs flat baseline
+    full_res = _simulate_gp(aligned_prices, signal, stop_pct, target_pct)
+    delta = full_res["pnl"] - 0.0
+    hist_ok = delta > HIST_DELTA_OK
+    phases["phase1_hist"] = {"delta": round(delta, 4), "ok": hist_ok}
+    if not hist_ok:
+        reasons.append(f"HIST FAIL: delta={delta} (>-0.1)")
+
+    # Phase 1.5 — crisis
+    crisis = _crisis_backtest_gp(aligned_prices, signal, stop_pct, target_pct)
+    phases["phase1_5_crisis"] = crisis
+    if not crisis.get("approved", True) and delta < CRISIS_DELTA_OK:
+        reasons.append(f"CRISIS FAIL: {crisis['reason']}")
+
+    # Phase 2 — permutation
+    p_val, real_corr, null_mean = _permutation_pvalue(bar_signal, aligned_prices)
+    perm_ok = p_val < 0.05
+    phases["phase2_perm"] = {
+        "p": p_val, "real_corr": real_corr, "null_mean": null_mean, "ok": perm_ok,
+    }
+    if not perm_ok:
+        reasons.append(f"PERM FAIL: p={p_val} (>= 0.05)")
+
+    # Phase 3 — alpha
+    alpha = round(full_res["pnl"], 4)
+    phases["phase3_alpha"] = {"alpha": alpha}
+
+    # Phase 4 — regime
+    regime = _classify_regime(aligned_prices)
+    phases["phase4_regime"] = {"regime": regime}
+
+    # Phase 5 — redundancy vs already-admitted GP signals (warn + soft reject)
+    redundant = False
+    if existing_signals:
+        try:
+            from hermes_core.engines.genetic import redundancy_check
+            if redundancy_check(signal, existing_signals) == "REJECTED":
+                redundant = True
+        except Exception:  # noqa: BLE001
+            pass
+    phases["phase5_corr"] = {"oos_corr": oos_corr, "redundant": redundant}
+    if redundant:
+        reasons.append("REDUNDANCY FAIL: too similar to an admitted indicator")
+
+    approved = (
+        oos_approved
+        and hist_ok
+        and (crisis.get("approved", True) or delta >= CRISIS_DELTA_OK)
+        and perm_ok
+        and not redundant
+    )
+    if approved:
+        phases["phase6_deploy"] = {"backtest_approved": True}
+        reasons.append("ALL PHASES PASS; GP backtest_approved")
+    else:
+        phases["phase6_deploy"] = {"backtest_approved": False}
+        reasons.append("REJECTED by one or more hard gates")
+
+    verdict = {
+        "approved": approved,
+        "param": "gp_expr", "old": "", "new": expr_key,
+        "expr": expr_key,
+        "pnl": full_res["pnl"], "wr": full_res["wr"],
+        "entries": full_res["entries"], "alpha": alpha, "regime": regime,
+        "oos_corr": oos_corr, "oos_delta": round(oos_delta, 4),
+        "p_value": p_val, "reason": " | ".join(reasons),
+        "phases": phases, "kb_hit": False,
+    }
+    _kb_record(pair, "gp_expr", "", expr_key, approved, verdict["reason"])
+    return verdict
+

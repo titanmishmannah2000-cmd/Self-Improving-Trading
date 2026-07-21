@@ -11,16 +11,10 @@ and admits only those that survive real out-of-sample checks:
     noise),
   * the novelty + redundancy gates.
 
-Discovered indicators persist to state/discovered/{pair}.json so they survive
-a restart.
-
-Real GP search (ported from the older hermes_trading.genetic_discovery):
-  * population of expression trees, elitist survival (top 10%), crossover +
-    mutation, depth cap, complexity penalty,
-  * richer primitive set (rolling window ops: sma/ema/roc/min/max/stdev/mom),
-  * optional multi-candle horizon objective (cumulative forward return over H
-    candles) which the old engine proved captures serial structure that a
-    single next-candle return cannot.
+Discovered indicators persist to ``state/discovered/{PAIR}.json`` where PAIR
+uses underscores (``EUR_USD.json``). Legacy slash paths (``EUR/USD.json``) and
+seed files under ``bots/{bot}/state/discovered/`` are read once and migrated
+to the canonical underscore path.
 
 Hard isolation (D8): the feature/operator set contains ONLY market-data
 primitives (price, returns, moving averages, RSI, volatility, momentum). There
@@ -44,7 +38,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from hermes_core.state.paths import discovered_path as _state_discovered_path
+from hermes_core.state.paths import bot_for_pair
 from hermes_core.env import get_env
+from hermes_core.config.loader import repo_root
+import re as _re
 
 # ── gates ──────────────────────────────────────────────────────────────────
 OOS_FLOOR = 0.15         # admit if held-out |corr| >= floor. Restored to the
@@ -525,10 +522,10 @@ def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
     Returns the list of admitted indicator dicts (also persisted to
     state/discovered/{pair}.json). Genuine OOS-first (ported from the older
     engine): an expr must clear OOS_FLOOR on a held-out split, pass a
-    permutation null-test (p < 0.05), and pass novelty + redundancy gates
-    before admission. `horizon` sets the forward-return objective (1 = single
-    next-candle; >1 = cumulative move over H candles, which the older engine
-    proved is far more predictable on real data).
+    permutation null-test (p < 0.05), novelty + redundancy gates, **and** the
+    same Session-10 7-phase ``backtest_gp_indicator`` gate used for reflection
+    deploys (item 9/15) before admission. `horizon` sets the forward-return
+    objective (1 = single next-candle; >1 = cumulative move over H candles).
     """
     rng = random.Random(seed)
     prices = list(prices)
@@ -602,6 +599,13 @@ def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
                 continue
             if not _novelty_ok(expr, population):
                 continue
+            # Item 9/15: same 7-phase S10 backtest gate as reflection deploys.
+            from hermes_core.engines.backtest import backtest_gp_indicator
+            bt = backtest_gp_indicator(
+                pair, es, prices=prices, existing_signals=existing_signals,
+            )
+            if not bt.get("approved"):
+                continue
             ind = {
                 "pair": pair,
                 "name": es,
@@ -618,6 +622,9 @@ def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
                 "horizon": horizon,
                 "interval": "1d",                     # GP discovery runs on daily bars
                 "source": "genetic",
+                "backtest_approved": True,
+                "backtest_reason": bt.get("reason"),
+                "backtest_oos_corr": bt.get("oos_corr"),
                 "ts": datetime.now(timezone.utc).isoformat(),
             }
             admitted.append(ind)
@@ -704,28 +711,181 @@ def apply_live_feedback(pair: str, cortex) -> int:
 
 
 # ── persistence (survives restart) ──────────────────────────────────────────
-def _discovered_path(pair: str) -> Path:
+def _pair_safe(pair: str) -> str:
+    return pair.replace("/", "_").replace("-", "_")
+
+
+def _is_gp_expr(s: object) -> bool:
+    """True if `s` is a FEATURE token or parenthesized GP infix the parser accepts.
+
+    Rejects dashboard seed strings like ``ta.rsi(close,14)`` / ``mom(close,5)``
+    that are not in the genetic primitive grammar.
+    """
+    if not isinstance(s, str) or not s.strip():
+        return False
+    toks = _re.findall(r"\(|\)|\+|-|\*|/|[a-z0-9]+", s.strip())
+    if not toks:
+        return False
+    allowed = set(FEATURES) | {"(", ")", "+", "-", "*", "/"}
+    return all(t in allowed for t in toks)
+
+
+def indicator_expr(ind: dict) -> str | None:
+    """Resolve a votable GP expression from an indicator record.
+
+    Preference: ``expr`` → ``expr_str`` → ``name``, but only if the string is a
+    valid GP infix/feature (so seed fixtures with ta.* / mom(close,N) are skipped).
+    """
+    for key in ("expr", "expr_str", "name"):
+        raw = ind.get(key)
+        if _is_gp_expr(raw):
+            return str(raw).strip()
+    return None
+
+
+def is_backtest_approved(ind: dict) -> bool:
+    """True only when the S10 7-phase gate marked this indicator approved."""
+    return ind.get("backtest_approved") is True
+
+
+def _normalize_indicator(ind: dict, *, pair: str | None = None) -> dict:
+    """Canonicalize a discovered-indicator dict for disk + live eval."""
+    out = dict(ind)
+    if pair and not out.get("pair"):
+        out["pair"] = pair
+    expr = indicator_expr(out)
+    if expr:
+        out["expr"] = expr
+        out["expr_str"] = expr
+        if not out.get("name"):
+            out["name"] = expr
+    else:
+        # Keep raw fields for dashboard display, but clear unusable expr so
+        # gp_ensemble_signal skips the indicator rather than mis-parsing seeds.
+        if out.get("expr") and not _is_gp_expr(out.get("expr")):
+            out.pop("expr", None)
+    out.setdefault("source", out.get("source") or "genetic")
+    return out
+
+
+def _legacy_slash_path(base_dir: Path, pair: str) -> Path:
+    """``discovered/EUR/USD.json`` (slash → nested dirs) — old fixture layout."""
+    parts = [p for p in pair.replace("-", "/").split("/") if p]
+    if len(parts) < 2:
+        return base_dir / f"{_pair_safe(pair)}.json"
+    return base_dir.joinpath(*parts[:-1]) / f"{parts[-1]}.json"
+
+
+def _candidate_discovered_paths(pair: str) -> list[Path]:
+    """Ordered candidates: canonical underscore, then legacy locations."""
+    seen: set[str] = set()
+    out: list[Path] = []
+
+    def _add(p: Path) -> None:
+        key = str(p.resolve()) if p.parent.exists() or p.exists() else str(p)
+        if key not in seen:
+            seen.add(key)
+            out.append(p)
+
     if DISCOVERED_DIR is not None:
         DISCOVERED_DIR.mkdir(parents=True, exist_ok=True)
-        safe = pair.replace("/", "_")
-        return DISCOVERED_DIR / f"{safe}.json"
+        _add(DISCOVERED_DIR / f"{_pair_safe(pair)}.json")
+        _add(_legacy_slash_path(DISCOVERED_DIR, pair))
+        return out
+
+    canon = _state_discovered_path(pair)
+    _add(canon)
+    _add(_legacy_slash_path(canon.parent, pair))
+    # Dual-tree: seed fixtures under bots/{bot}/state/discovered/
+    try:
+        bot = bot_for_pair(pair)
+        bots_disc = repo_root() / "bots" / bot / "state" / "discovered"
+        _add(bots_disc / f"{_pair_safe(pair)}.json")
+        _add(_legacy_slash_path(bots_disc, pair))
+    except Exception:  # noqa: BLE001 — path discovery must never break load
+        pass
+    return out
+
+
+def _discovered_path(pair: str) -> Path:
+    """Canonical write path: ``{state}/discovered/EUR_USD.json``."""
+    if DISCOVERED_DIR is not None:
+        DISCOVERED_DIR.mkdir(parents=True, exist_ok=True)
+        return DISCOVERED_DIR / f"{_pair_safe(pair)}.json"
     return _state_discovered_path(pair)
 
 
-def _save_discovered(pair: str, inds: list[dict]) -> None:
-    # Drop the raw tree (not JSON-serialisable) before persisting.
-    clean = [{k: v for k, v in ind.items() if k != "_expr"} for ind in inds]
-    _discovered_path(pair).write_text(json.dumps(clean, indent=2), encoding="utf-8")
+def _read_indicators_file(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    if isinstance(data, dict):
+        data = data.get("indicators") or data.get("admitted") or []
+    if not isinstance(data, list):
+        return []
+    return [x for x in data if isinstance(x, dict)]
+
+
+def _save_discovered(pair: str, inds: list[dict]) -> Path:
+    """Persist admitted indicators to the canonical underscore path.
+
+    Always writes ``expr`` + ``expr_str`` (identical) for entry + dashboard.
+    Drops the raw ``_expr`` tree (not JSON-serialisable). Returns the path written.
+    """
+    clean = []
+    for ind in inds:
+        row = _normalize_indicator(
+            {k: v for k, v in ind.items() if k != "_expr"}, pair=pair,
+        )
+        clean.append(row)
+    path = _discovered_path(pair)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(clean, indent=2), encoding="utf-8")
+    return path
 
 
 def load_discovered_indicators(pair: str, include_shared: bool = True) -> list[dict]:
-    p = _discovered_path(pair)
+    """Load indicators for `pair`, migrating legacy paths to the canonical file.
+
+    Prefer the canonical ``EUR_USD.json`` when it exists (even if empty — that
+    means discovery already ran). Otherwise search legacy slash paths and
+    ``bots/.../discovered`` seeds; first non-empty hit is normalized and copied
+    to the canonical path so entry / invent / dashboard share one file.
+    """
+    canon = _discovered_path(pair)
     own: list[dict] = []
-    if p.exists():
+    loaded_from: Path | None = None
+
+    if canon.exists():
+        own = [_normalize_indicator(r, pair=pair)
+               for r in _read_indicators_file(canon)]
+        loaded_from = canon
+    else:
+        for cand in _candidate_discovered_paths(pair):
+            if cand == canon:
+                continue
+            rows = _read_indicators_file(cand)
+            if rows:
+                own = [_normalize_indicator(r, pair=pair) for r in rows]
+                loaded_from = cand
+                break
+
+    # Migrate legacy/seed → canonical only when at least one indicator is a
+    # votable GP expression. Seed fixtures (ta.rsi / mom(close,N)) must NOT be
+    # copied to the canonical path — that would block invent forever.
+    if own and loaded_from is not None:
         try:
-            own = json.loads(p.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            own = []
+            if loaded_from.resolve() != canon.resolve():
+                votable = [i for i in own if indicator_expr(i)]
+                if votable:
+                    _save_discovered(pair, votable)
+                    own = votable
+        except OSError:
+            pass
+
     if not include_shared:
         return own
     # Ported from the older engine's _get_shared_pairs: indicators discovered

@@ -157,7 +157,8 @@ def _log_trade(bot: str, rec: dict) -> None:
 
 
 def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
-                  open_positions, summary, alert_fn) -> None:
+                  open_positions, summary, alert_fn,
+                  prices=None, chart_context="", goal=None) -> None:
     """Apply the result of `evaluate_exit` to an OPEN position.
 
     Stop-adjustments (breakeven / trailing) only move the stop — the
@@ -181,8 +182,7 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
         "bot": bot, "pair": pair, "cycle": cycle,
         "reason": ex.reason, "exit_reason": ex.reason,
         "entry_type": entry_type,
-        # Versions tab groups on strategy_version; fall back to entry style so
-        # cards are not all "?" when reflection never stamped a version.
+        # Prefer the stamped strategy version; fall back to entry style.
         "strategy_version": pos.get("strategy_version") or entry_type,
         "entry_price": pos["entry_price"], "exit_price": price,
         "entry_ts": pos.get("entry_ts"), "exit_ts": _now_iso(),
@@ -222,6 +222,55 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
     if alert_fn is not None:
         with contextlib.suppress(Exception):
             alert_fn(bot, pair, ex.reason, pnl)
+    # Reflection latch: every N closed trades → L1 → (L2) → backtest → deploy.
+    # Fail-soft: never let reflection break the close/heartbeat path.
+    with contextlib.suppress(Exception):
+        _maybe_reflect_after_close(
+            bot, pair, prices=prices, chart_context=chart_context or "",
+            goal=goal,
+        )
+
+
+def _maybe_reflect_after_close(
+    bot: str,
+    pair: str,
+    *,
+    prices: list[float] | None = None,
+    chart_context: str = "",
+    goal: dict | None = None,
+) -> dict | None:
+    """Invoke the reflection pipeline when the every-N latch fires.
+
+    Runs in a daemon thread so a slow price fetch / backtest cannot stall the
+    60s heartbeat. Fail-soft: exceptions are logged, never raised to the loop.
+    """
+    import logging as _logging
+    import threading
+
+    from hermes_core.engines.reflect import maybe_reflect_pair
+
+    auto = get_env("REFLECT_AUTO_DEPLOY", "1") != "0"
+    log = _logging.getLogger("hermes.reflect")
+
+    def _work() -> None:
+        try:
+            result = maybe_reflect_pair(
+                bot, pair, goal=goal, chart_context=chart_context,
+                prices=prices, auto_deploy=auto,
+            )
+            if result is not None:
+                log.info(
+                    "[reflect] %s/%s: %s closed=%s deployed=%s",
+                    bot, pair, result.get("status"), result.get("closed"),
+                    result.get("deployed"),
+                )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[reflect] %s/%s: error -> %s", bot, pair, exc)
+
+    threading.Thread(
+        target=_work, name=f"reflect-{bot}-{pair}", daemon=True,
+    ).start()
+    return None
 
 
 def _discovered_indicator_ids(bot: str, pair: str) -> list[str]:
@@ -332,13 +381,20 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
     """
     from hermes_core.adapters.price import seed_history_interval_sync
     from hermes_core.engines.genetic import (
-        apply_live_feedback, load_discovered_indicators)
+        _discovered_path,
+        apply_live_feedback,
+        indicator_expr,
+        is_backtest_approved,
+        load_discovered_indicators,
+    )
     now = time.time()
     key = (bot, pair)
     if key in _DISCOVERY_LAST and (now - _DISCOVERY_LAST[key]) < DISCOVERY_INTERVAL_S:
         return
 
-    discovered = bool(load_discovered_indicators(pair))
+    # Skip invent only when THIS pair already has S10-approved GP formulas.
+    own = load_discovered_indicators(pair, include_shared=False)
+    discovered = any(indicator_expr(i) and is_backtest_approved(i) for i in own)
 
     def _work() -> None:
         import logging as _logging
@@ -350,9 +406,7 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
         if updated:
             _log.info("[discovery] %s: live feedback updated %d indicators",
                       pair, updated)
-        # (Re)discover only when nothing is stored yet; once we have a
-        # population we maintain it via feedback instead of re-evolving (the GA
-        # is expensive + the audit's anti-overfit rule says don't churn it).
+        # (Re)discover only when THIS pair has no votable own formulas yet.
         if discovered:
             return
         # GP discovery runs on the OLD engine's working regime: 2y of DAILY
@@ -367,7 +421,9 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
         if len(series) < 200:
             _log.warning("[discovery] %s: <200 daily candles, GP skipped", pair)
             return
-        gp_discover(pair, series, horizon=60, generations=40, pop_size=40)
+        inds = gp_discover(pair, series, horizon=60, generations=40, pop_size=40)
+        _log.info("[discovery] %s: admitted=%d -> %s",
+                  pair, len(inds), _discovered_path(pair))
 
     # Bound the work so a slow network/price API can't stall the trade loop.
     # Discovery now runs in its own background thread, so a generous cap is safe.
@@ -648,6 +704,7 @@ def run_cycle(
                 "partial_enabled": bool(strategy.get("partial_enabled", False)),
                 "current_stop": stop, "atr": atr,
                 "entry_type": _etype,
+                "strategy_version": str(strategy.get("version", "00")),
                 # B9: firing GP indicator IDs so that on close ONLY these are
                 # credited (per-vote credit, not the whole ensemble blob).
                 "gp_indicators": sig.meta.get("gp_indicators", []),
@@ -667,6 +724,9 @@ def run_cycle(
                     cortex=cortex, reentry=reentry,
                     open_positions=open_positions, summary=summary,
                     alert_fn=alert_fn,
+                    prices=prices,
+                    chart_context=chart_contexts.get(pair, context),
+                    goal=cfg.get("goal"),
                 )
 
     # --- heartbeat every cycle without exception --------------------------

@@ -14,6 +14,10 @@ from hermes_core.state.paths import (
     hypotheses_kb_path,
     hypotheses_path,
     policy_path,
+    reflection_latch_path,
+    seed_strategy_path,
+    strategies_dir,
+    strategy_path,
 )
 
 __all__ = [
@@ -30,4 +34,8 @@ __all__ = [
     "hypotheses_kb_path",
     "hypotheses_path",
     "policy_path",
+    "reflection_latch_path",
+    "seed_strategy_path",
+    "strategies_dir",
+    "strategy_path",
 ]

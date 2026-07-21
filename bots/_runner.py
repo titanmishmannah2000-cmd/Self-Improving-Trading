@@ -319,6 +319,10 @@ async def run_bot(bot_name: str) -> None:
     # `python -m bots.crypto.main` into a forex run.
     cli = sys.argv[1] if len(sys.argv) > 1 else None
     bot = cli or bot_name or get_env("HERMES_BOT_NAME", "forex")
+    # Seed volume strategies from image defaults (never overwrites existing).
+    with contextlib.suppress(Exception):
+        from hermes_core.config import ensure_bot_strategies_seeded
+        ensure_bot_strategies_seeded(bot)
     cfg = load_config(bot)
     pairs = cfg.get("pairs") or []
     cycle_seconds = int(get_env("HERMES_CYCLE_SECONDS", "60"))

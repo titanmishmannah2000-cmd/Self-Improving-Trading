@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from hermes_core.engines.backtest import (
     _permutation_pvalue,
+    backtest_gp_indicator,
     backtest_with_history,
     phase0_corr,
 )
@@ -55,13 +56,18 @@ from hermes_core.engines.loop import (
 )
 from hermes_core.engines.policy_engine import Policy, PolicyEngine
 from hermes_core.engines.reflect import (
+    _is_reflection_done,
+    _mark_reflection_done,
     aggregate_trades,
+    apply_strategy_change,
     call_deepseek,
     call_gemini,
     call_groq,
     call_llm_consensus,
     combined_reflect,
     layer1_rule_based,
+    maybe_reflect_pair,
+    run_reflection_pipeline,
 )
 from hermes_core.engines.risk import (
     MAX_POSITION_SIZE,
@@ -81,7 +87,10 @@ __all__ = [
     "hard_block", "soft_block",
     "aggregate_trades", "layer1_rule_based", "combined_reflect",
     "call_deepseek", "call_gemini", "call_groq", "call_llm_consensus",
-    "backtest_with_history", "phase0_corr", "_permutation_pvalue",
+    "_is_reflection_done", "_mark_reflection_done",
+    "run_reflection_pipeline", "maybe_reflect_pair", "apply_strategy_change",
+    "backtest_with_history", "backtest_gp_indicator",
+    "phase0_corr", "_permutation_pvalue",
     "CrisisLearning", "check_novel_regime", "find_nearest_crisis",
     "get_crisis_recommendation", "save_lived_crisis",
     "GeneticEngine", "discover", "load_discovered_indicators", "redundancy_check",

@@ -218,9 +218,9 @@ import re  # noqa: E402  (local import; entry.py is otherwise stdlib-only)
 import time as _time  # noqa: E402
 
 from hermes_core.engines.genetic import (  # noqa: E402
-    FEATURES, _feature, _eval_expr,
+    FEATURES, _eval_expr, _feature, indicator_expr, is_backtest_approved,
+    load_discovered_indicators,
 )
-from hermes_core.engines.genetic import load_discovered_indicators  # noqa: E402
 
 _FEATURE_RE = re.compile(r"^[a-z0-9]+$")
 
@@ -360,8 +360,13 @@ def gp_ensemble_signal(pair: str, prices: list[float],
         # [GUARD L36] cortex-exiled indicators cannot vote the ensemble.
         if name in banned:
             continue
-        expr = ind.get("expr")
+        # Prefer expr; fall back to expr_str/name only when GP-grammar-valid
+        # (skips dashboard seeds like ta.rsi(close,14)).
+        expr = indicator_expr(ind)
         if not expr:
+            continue
+        # Item 9/15: only S10-backtest-approved formulas may vote (shadow or promote).
+        if not is_backtest_approved(ind):
             continue
         try:
             series = [_gp_eval_last(expr, eval_prices[: i + 1])
