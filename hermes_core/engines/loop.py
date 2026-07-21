@@ -181,6 +181,9 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
         "bot": bot, "pair": pair, "cycle": cycle,
         "reason": ex.reason, "exit_reason": ex.reason,
         "entry_type": entry_type,
+        # Versions tab groups on strategy_version; fall back to entry style so
+        # cards are not all "?" when reflection never stamped a version.
+        "strategy_version": pos.get("strategy_version") or entry_type,
         "entry_price": pos["entry_price"], "exit_price": price,
         "entry_ts": pos.get("entry_ts"), "exit_ts": _now_iso(),
         "pnl_pct": pnl, "size": pos["size"],

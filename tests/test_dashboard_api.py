@@ -259,6 +259,70 @@ def test_discovered_api_excludes_suppress_from_ensemble_and_exposes_health():
     assert deg["active"] == 2
 
 
+def test_ingest_hypotheses_normalize_old_new_and_skip_reason():
+    """Reflect uses old/new; skip rows often only have reason — ingest must accept both."""
+    hyp = {
+        "ts": 1700000000.5,
+        "pair": "EUR/USD",
+        "variable": "stop_loss_pct",
+        "old": 1.5,
+        "new": 1.8,
+        "reason": "too many stops",
+        "status": "proposed",
+    }
+    skip = {"ts": 1700000001.0, "pair": "GBP/USD", "reason": "no_signal", "cycle": 9}
+    flat = [{"ts": 1700000002.0, "pair": "AUD/USD", "reason": "NOVEL_REGIME"}]
+    r = client.post(
+        "/api/ingest/forex",
+        json={
+            "recent_trades": [],
+            "recent_hypotheses": [hyp],
+            "recent_skips": [skip],
+            "flatlined_pairs": flat,
+            "heartbeat": {"cycle": 3, "status": "ok"},
+        },
+        headers=TOKEN,
+    )
+    assert r.status_code == 200, r.text
+
+    ov = client.get("/api/overview").json()
+    hyps = ov["bots"]["forex"]["recent_hypotheses"]
+    assert hyps, "hypotheses not in overview"
+    h0 = hyps[0]
+    assert (h0.get("old_value") or h0.get("old")) in (1.5, "1.5")
+    assert (h0.get("new_value") or h0.get("new")) in (1.8, "1.8")
+
+    sa = client.get("/api/skip-analysis/forex").json()
+    assert sa["total_skips"] >= 1
+    reasons = sa["by_pair"].get("GBP/USD", {}).get("reasons", {})
+    assert "no_signal" in reasons
+
+    fl = client.get("/api/flatline/forex").json()
+    assert isinstance(fl, list) and any(x.get("pair") == "AUD/USD" for x in fl)
+
+
+def test_per_version_uses_entry_type_when_strategy_version_missing():
+    import json
+    from datetime import datetime, timezone
+
+    ts = datetime.now(timezone.utc).isoformat()
+    conn = m.get_conn()
+    raw = {
+        "id": "v1", "pair": "EUR/USD", "exit_reason": "profit_target",
+        "pnl_pct": 1.2, "entry_type": "gp_ensemble", "entry_price": 1.1,
+    }
+    conn.execute(
+        "INSERT INTO trades (id, bot, pair, entry_price, entry_ts, exit_reason, pnl_pct, raw_json) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        ("v1", "forex", "EUR/USD", 1.1, ts, "profit_target", 1.2, json.dumps(raw)),
+    )
+    conn.commit()
+    conn.close()
+    body = client.get("/api/per-version/forex").json()
+    versions = body.get("versions") or []
+    assert any(v.get("version") == "gp_ensemble" for v in versions), versions
+
+
 def test_overview_open_trades_not_filtered_by_age_and_no_ghost_fallback():
     """Live opens must survive >24h entry_ts and must NOT be inferred from
     trades-table rows missing exit_reason (ghost opens that inflated pair cards

@@ -191,15 +191,20 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
         }
         for pair, pos in open_positions.items()
     ]
+    # recent trades / skips / hypotheses / flatline from the jsonl the engines append
+    flatline_events = _read_jsonl("flatline_log.jsonl", limit=200)
     payload = {
         "strategies": strategies,
         "goal": cfg.get("goal"),
         "heartbeat": heartbeat,
         "recent_trades": _read_jsonl("trades.jsonl"),
         "recent_skips": _read_jsonl("skips.jsonl"),
+        "recent_hypotheses": _read_jsonl("hypotheses.jsonl"),
         "discovered": discovered,
         "cortex": cortex,
-        "flatlined_pairs": {},
+        # List of flatline events (crisis L21). Stored in flatlined_json so the
+        # dashboard Flatline tab works across Railway volumes (not filesystem).
+        "flatlined_pairs": flatline_events,
         "recent_open_trades": recent_open_trades,
         "meta": {"oversold_pairs": (summary or {}).get("oversold_pairs", 0)},
     }

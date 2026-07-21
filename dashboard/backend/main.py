@@ -359,7 +359,21 @@ def upsert_trades(conn, bot: str, trades: list):
 
 def upsert_hypotheses(conn, bot: str, hyps: list):
     for h in hyps:
+        # Reflect engine writes old/new/reason; older/dashboard shapes use
+        # old_value/new_value/reasoning — accept either.
         ts = h.get("ts") or utcnow_iso()
+        if isinstance(ts, (int, float)):
+            # Unix seconds (or ms) -> ISO so overview/Activity can timeAgo cleanly.
+            try:
+                sec = float(ts)
+                if sec > 1e12:  # ms
+                    sec /= 1000.0
+                ts = datetime.fromtimestamp(sec, tz=timezone.utc).isoformat()
+            except (TypeError, ValueError, OSError, OverflowError):
+                ts = utcnow_iso()
+        old_v = h.get("old_value", h.get("old"))
+        new_v = h.get("new_value", h.get("new"))
+        reasoning = h.get("reasoning") or h.get("reason")
         conn.execute(
             """
             INSERT INTO hypotheses (bot, ts, pair, version_from, version_to,
@@ -370,8 +384,10 @@ def upsert_hypotheses(conn, bot: str, hyps: list):
             (
                 bot, ts, h.get("pair") or h.get("symbol"),
                 h.get("version_from"), h.get("version_to"),
-                h.get("variable"), str(h.get("old_value")), str(h.get("new_value")),
-                h.get("reasoning"), h.get("mode"), json.dumps(h),
+                h.get("variable"),
+                None if old_v is None else str(old_v),
+                None if new_v is None else str(new_v),
+                reasoning, h.get("mode") or h.get("status"), json.dumps(h),
             ),
         )
 
@@ -379,17 +395,27 @@ def upsert_hypotheses(conn, bot: str, hyps: list):
 def upsert_skips(conn, bot: str, skips: list):
     for s in skips:
         ts = s.get("ts") or utcnow_iso()
+        if isinstance(ts, (int, float)):
+            try:
+                sec = float(ts)
+                if sec > 1e12:
+                    sec /= 1000.0
+                ts = datetime.fromtimestamp(sec, tz=timezone.utc).isoformat()
+            except (TypeError, ValueError, OSError, OverflowError):
+                ts = utcnow_iso()
+        reason = s.get("reason_skipped") or s.get("reason")
         conn.execute(
             """
             INSERT INTO skips (bot, ts, pair, reason_skipped, rsi_at_skip,
                 price_at_skip, missed_pnl, raw_json)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(bot, ts, pair) DO UPDATE SET
+                reason_skipped=excluded.reason_skipped,
                 missed_pnl=excluded.missed_pnl,
                 raw_json=excluded.raw_json
             """,
             (
-                bot, ts, s.get("pair"), s.get("reason_skipped"),
+                bot, ts, s.get("pair"), reason,
                 s.get("rsi_at_skip"), s.get("price_at_skip"),
                 s.get("missed_pnl"), json.dumps(s),
             ),
@@ -1023,7 +1049,12 @@ def skip_analysis(bot_name: str):
     for r in rows:
         raw = json.loads(r["raw_json"]) if r["raw_json"] else {}
         pair = r["pair"] or "unknown"
-        reason = r["reason_skipped"] or raw.get("reason_skipped", "unknown")
+        reason = (
+            r["reason_skipped"]
+            or raw.get("reason_skipped")
+            or raw.get("reason")
+            or "unknown"
+        )
         by_pair.setdefault(pair, {"total": 0, "reasons": {}, "missed_pnl_sum": 0, "missed_pnl_count": 0})
         by_pair[pair]["total"] += 1
         by_pair[pair]["reasons"][reason] = by_pair[pair]["reasons"].get(reason, 0) + 1
@@ -2004,6 +2035,8 @@ def per_version_performance(bot_name: str, pair: Optional[str] = None):
         valid_pairs = set(FOREX_PAIRS)
     elif bot_name == "gold":
         valid_pairs = {"XAU/USD", "XAG/USD"}
+    elif bot_name == "crypto":
+        valid_pairs = {"BTC/USD", "ETH/USD"}
 
     conn = get_conn()
     query = "SELECT id, raw_json, pnl_pct, exit_reason, pair, entry_price FROM trades WHERE bot=? AND exit_reason IS NOT NULL"
@@ -2029,7 +2062,11 @@ def per_version_performance(bot_name: str, pair: Optional[str] = None):
         if p not in valid_pairs:
             continue
         raw = json.loads(r["raw_json"]) if r["raw_json"] else {}
-        v = raw.get("strategy_version") or str(r.get("strategy_type", "") or "")
+        v = (
+            raw.get("strategy_version")
+            or raw.get("entry_type")
+            or str(r.get("strategy_type", "") or "")
+        )
         if not v or v == "None":
             v = "?"
         pnl = r["pnl_pct"] if r["pnl_pct"] else 0

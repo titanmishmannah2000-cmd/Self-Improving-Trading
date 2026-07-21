@@ -216,6 +216,20 @@ function holdTime(cycles) {
 }
 
 function humanizeSkip(reason) {
+  if (!reason) return "no signal yet";
+  const r = String(reason);
+  // Prefixed dynamic reasons from the live loop
+  if (r.startsWith("policy_suppress:")) {
+    return `policy benched ${r.slice("policy_suppress:".length)}`;
+  }
+  if (r.startsWith("gp_intel_suppress:")) {
+    return `GP lockout — ${r.slice("gp_intel_suppress:".length)}`;
+  }
+  if (r.startsWith("param_gate:")) return `param out of range (${r.slice("param_gate:".length)})`;
+  if (r.startsWith("chart_error:")) return "chart context error";
+  if (r.startsWith("fetch_error:")) return "price feed error";
+  if (r.startsWith("indicator_error:")) return "indicator error";
+  if (r.startsWith("strategy_error:")) return "strategy load error";
   const map = {
     volume_below_avg: "low volume",
     bear_regime: "bear market",
@@ -227,11 +241,22 @@ function humanizeSkip(reason) {
     fear_greed_high: "extreme greed",
     funding_rate_high: "overleveraged longs",
     quality_below_min: "quality too low",
+    no_signal: "no entry signal",
+    no_candle: "no candle / stale feed",
+    rr_guard: "reward:risk below 1.0",
+    flat_price: "flat / stale prices",
+    bb_bandwidth: "bands too tight (no edge)",
   };
-  return map[reason] || reason || "no signal yet";
+  return map[r] || r.replace(/_/g, " ");
 }
 
 function skipToGlossary(reason) {
+  const r = String(reason || "");
+  if (r.startsWith("policy_suppress") || r.startsWith("gp_intel")) return "regime";
+  if (r.includes("chart")) return "quality_score";
+  if (r.includes("bb_") || r === "mr_no_signal") return "bollinger";
+  if (r.includes("adx")) return "adx";
+  if (r.includes("volume") || r.includes("flat") || r === "rr_guard") return "atr";
   const map = {
     volume_below_avg: "atr",
     bear_regime: "regime",
@@ -243,8 +268,9 @@ function skipToGlossary(reason) {
     fear_greed_high: "regime",
     funding_rate_high: "regime",
     quality_below_min: "quality_score",
+    no_signal: "rsi",
   };
-  return map[reason] || "rsi";
+  return map[r] || "rsi";
 }
 
 function sessionStatus() {
@@ -956,53 +982,119 @@ function DetailFullscreen({ pair, botName, onClose }) {
 
 // ───────────────────────── Skip Analysis ─────────────────────────
 
-function SkipAnalysis({ apiBase, botName }) {
+const SKIP_ANALYSIS_BOTS = ["forex", "gold", "crypto"];
+
+function SkipAnalysis({ apiBase, initialBot = "forex" }) {
+  const [botName, setBotName] = useState(
+    SKIP_ANALYSIS_BOTS.includes(initialBot) ? initialBot : "forex",
+  );
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (SKIP_ANALYSIS_BOTS.includes(initialBot)) setBotName(initialBot);
+  }, [initialBot]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch(`${apiBase}/api/skip-analysis/${botName}`);
-      if (res.ok) setData(await res.json());
-    } catch (e) { /* silent */ }
+      if (!res.ok) throw new Error(`API ${res.status}`);
+      setData(await res.json());
+      setError(null);
+    } catch (e) {
+      setError(e.message || "failed to load");
+    }
     setLoading(false);
   }, [apiBase, botName]);
 
-  useEffect(() => { load(); const id = setInterval(load, 30000); const onVis = () => { if (!document.hidden) load(); }; document.addEventListener("visibilitychange", onVis); return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVis); }; }, [load]);
-
-  if (loading && !data) return <SkeletonActivity rows={6} />;
-  if (!data || data.total_skips === 0) return <div className="detail-muted">No skips recorded yet — the bot hasn't been blocked.</div>;
+  useEffect(() => {
+    load();
+    const id = setInterval(load, 30000);
+    const onVis = () => {
+      if (!document.hidden) load();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [load]);
 
   return (
     <div className="skip-analysis">
-      <div className="dc-label">Skip Analysis (last 200 signals) — {data.total_skips} total</div>
-      {Object.entries(data.by_pair).map(([pair, d]) => (
-        <div className="sa-pair" key={pair}>
-          <div className="sa-pair-head">
-            <span className="sa-pair-name">{pair}</span>
-            <span className="sa-pair-count">{d.total} skips</span>
-            {d.missed_pnl_count > 0 && (
-              <span className={`sa-pair-missed ${d.missed_pnl_sum >= 0 ? "pc-up" : "pc-down"}`}>
-                missed avg: {fmtPct(d.missed_pnl_sum / d.missed_pnl_count)}
-              </span>
-            )}
-          </div>
-          <div className="sa-reasons">
-            {Object.entries(d.reasons).sort((a, b) => b[1] - a[1]).map(([reason, count]) => (
-              <div className="sa-reason" key={reason}>
-                <span className="sa-reason-label">
-                  <GlossaryTerm id={skipToGlossary(reason)}>{humanizeSkip(reason)}</GlossaryTerm>
-                </span>
-                <div className="sa-bar-wrap">
-                  <div className="sa-bar" style={{ width: `${(count / d.total) * 100}%` }} />
-                </div>
-                <span className="sa-reason-count">{count}</span>
-              </div>
-            ))}
-          </div>
+      <p className="activity-help">
+        Why the bot did <strong>not</strong> open — last 200 skip rows for one bot.
+        High <em>no_signal</em> is normal; watch rising <em>policy</em> / <em>GP lockout</em> /
+        <em>rr_guard</em> counts.
+      </p>
+      <div className="activity-bot-tabs" role="tablist" aria-label="Skip analysis bot">
+        {SKIP_ANALYSIS_BOTS.map((b) => (
+          <button
+            key={b}
+            type="button"
+            className={`activity-bot-tab${botName === b ? " active" : ""}`}
+            onClick={() => setBotName(b)}
+          >
+            {b}
+          </button>
+        ))}
+      </div>
+      {loading && !data && <SkeletonActivity rows={6} />}
+      {error && (
+        <p className="error">
+          {error} —{" "}
+          <button type="button" className="retry-inline" onClick={load}>
+            retry
+          </button>
+        </p>
+      )}
+      {!error && data && data.total_skips === 0 && (
+        <div className="detail-muted">
+          No skips recorded for {botName} yet — either the bot is quiet or ingest has not
+          pushed skips.jsonl.
         </div>
-      ))}
+      )}
+      {!error && data && data.total_skips > 0 && (
+        <>
+          <div className="dc-label">
+            Skip Analysis (last 200) — {data.total_skips} total · {botName}
+          </div>
+          {Object.entries(data.by_pair).map(([pair, d]) => (
+            <div className="sa-pair" key={pair}>
+              <div className="sa-pair-head">
+                <span className="sa-pair-name">{pair}</span>
+                <span className="sa-pair-count">{d.total} skips</span>
+                {d.missed_pnl_count > 0 && (
+                  <span
+                    className={`sa-pair-missed ${d.missed_pnl_sum >= 0 ? "pc-up" : "pc-down"}`}
+                  >
+                    missed avg: {fmtPct(d.missed_pnl_sum / d.missed_pnl_count)}
+                  </span>
+                )}
+              </div>
+              <div className="sa-reasons">
+                {Object.entries(d.reasons)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([reason, count]) => (
+                    <div className="sa-reason" key={reason}>
+                      <span className="sa-reason-label">
+                        <GlossaryTerm id={skipToGlossary(reason)}>
+                          {humanizeSkip(reason)}
+                        </GlossaryTerm>
+                      </span>
+                      <div className="sa-bar-wrap">
+                        <div className="sa-bar" style={{ width: `${(count / d.total) * 100}%` }} />
+                      </div>
+                      <span className="sa-reason-count">{count}</span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }
@@ -1014,39 +1106,73 @@ function ActivityFeed({ overview }) {
 
   for (const [botName, bot] of Object.entries(overview?.bots || {})) {
     for (const t of bot.recent_trades || []) {
+      const pair = t.pair || t.asset;
+      const etype = t.entry_type || t.strategy_version || "";
       if (t.exit_reason) {
         events.push({
-          ts: t.exit_ts,
+          ts: t.exit_ts || t.ts,
           type: "close",
-          text: `${t.pair || t.asset} closed ${fmtPct(t.pnl_pct)} (${t.exit_reason})`,
+          bot: botName,
+          text: `${botName} · ${pair} closed ${fmtPct(t.pnl_pct)} (${t.exit_reason}${etype ? ` · ${etype}` : ""})`,
           good: t.pnl_pct > 0,
-        });
-      } else if (t.entry_ts) {
-        events.push({
-          ts: t.entry_ts,
-          type: "entry",
-          text: `${t.pair || t.asset} entered at ${fmtPrice(t.entry_price, t.pair)} — quality ${safeVal(t.entry_quality_score ?? t.quality ?? "?")}/10`,
-          good: null,
         });
       }
     }
+    for (const t of bot.recent_open_trades || []) {
+      const pair = t.pair || t.asset;
+      if (!pair) continue;
+      const etype = t.entry_type || "entry";
+      events.push({
+        ts: t.entry_ts || t.ts,
+        type: "entry",
+        bot: botName,
+        text: `${botName} · ${pair} open @ ${fmtPrice(t.entry_price, pair)} (${etype})`,
+        good: null,
+      });
+    }
+    for (const s of (bot.recent_skips || []).slice(-30)) {
+      const reason = s.reason_skipped || s.reason;
+      events.push({
+        ts: s.ts,
+        type: "skip",
+        bot: botName,
+        text: `${botName} · ${s.pair || "?"} skipped — ${humanizeSkip(reason)}`,
+        good: null,
+      });
+    }
     for (const h of bot.recent_hypotheses || []) {
+      const oldV = h.old_value ?? h.old;
+      const newV = h.new_value ?? h.new;
       events.push({
         ts: h.ts,
         type: "reflect",
-        text: `Reflection (${botName}): ${h.variable} ${h.old_value} → ${h.new_value}`,
+        bot: botName,
+        text: `Reflection (${botName}/${h.pair || "?"}): ${h.variable || "?"} ${safeVal(oldV)} → ${safeVal(newV)}`,
         good: null,
       });
     }
   }
 
-  events.sort((a, b) => new Date(b.ts) - new Date(a.ts));
+  events.sort((a, b) => {
+    const ta = typeof a.ts === "number" ? a.ts * (a.ts < 1e12 ? 1000 : 1) : new Date(a.ts).getTime();
+    const tb = typeof b.ts === "number" ? b.ts * (b.ts < 1e12 ? 1000 : 1) : new Date(b.ts).getTime();
+    return (tb || 0) - (ta || 0);
+  });
 
   return (
     <div className="feed">
       <div className="feed-title">Activity</div>
-      {events.length === 0 && <p className="detail-muted">No activity yet — waiting on the bots.</p>}
-      {events.slice(0, 25).map((e, i) => (
+      <p className="activity-help">
+        Live closes, opens, recent skips, and reflection proposals from all bots (via overview
+        ingest). Skips are sampled; full breakdown is under <strong>Skip Analysis</strong>.
+      </p>
+      {events.length === 0 && (
+        <p className="detail-muted">
+          No activity yet — waiting on bot ingest (trades / opens / skips). Check Heartbeat if
+          this stays empty.
+        </p>
+      )}
+      {events.slice(0, 40).map((e, i) => (
         <div className={`feed-row feed-${e.type}`} key={i}>
           <span className="feed-time">{timeAgo(e.ts)}</span>
           <span
@@ -1300,7 +1426,11 @@ function VersionView({ perVersion }) {
   if (!perVersion || Object.keys(perVersion).length === 0) {
     return (
       <div className="version-placeholder">
-        No version data yet. Trades will generate version comparisons after reflection cycles.
+        <p className="activity-help">
+          Groups closed trades by <strong>strategy_version</strong> (or entry style:
+          mean_reversion / rsi_momentum / gp_ensemble). Empty until closes are ingested.
+        </p>
+        No version data yet.
       </div>
     );
   }
@@ -1401,17 +1531,71 @@ function VersionView({ perVersion }) {
 
 // ───────────────────────── Heartbeat + Flatline (restored from original) ─────────────────────────
 
-function useJson(url) {
+function useJson(url, { pollMs = 30000 } = {}) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
     let dead = false;
-    fetch(url).then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
-      .then(d => { if (!dead) { setData(d); setError(null); } })
-      .catch(e => { if (!dead) setError(e.message); });
-    return () => { dead = true; };
-  }, [url]);
-  return { data, error };
+    const load = () => {
+      fetch(url)
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+        .then((d) => {
+          if (!dead) {
+            setData(d);
+            setError(null);
+            setLoading(false);
+          }
+        })
+        .catch((e) => {
+          if (!dead) {
+            setError(e.message);
+            setLoading(false);
+          }
+        });
+    };
+    load();
+    const id = pollMs ? setInterval(load, pollMs) : null;
+    return () => {
+      dead = true;
+      if (id) clearInterval(id);
+    };
+  }, [url, pollMs]);
+  return { data, error, loading };
+}
+
+function HeartbeatCard({ apiBase, bot }) {
+  const { data, error, loading } = useJson(`${apiBase}/api/heartbeat/${bot}`);
+  const empty = data && typeof data === "object" && Object.keys(data).length === 0;
+  return (
+    <div className="hb-card">
+      <div className="hb-bot">{bot}</div>
+      {error && <div className="detail-muted">error: {error}</div>}
+      {loading && !data && <div className="detail-muted">loading…</div>}
+      {!loading && empty && (
+        <div className="detail-muted">No heartbeat yet — bot has not pushed state.</div>
+      )}
+      {data && !empty && (
+        <>
+          <div className="hb-summary">
+            <span>cycle <b>{data.cycle ?? "—"}</b></span>
+            <span>status <b>{data.status ?? "—"}</b></span>
+            {data.last_price != null && (
+              <span>
+                last px{" "}
+                <b>
+                  {typeof data.last_price === "number"
+                    ? data.last_price.toFixed(5)
+                    : data.last_price}
+                </b>
+              </span>
+            )}
+          </div>
+          <pre className="hb-json">{JSON.stringify(data, null, 2)}</pre>
+        </>
+      )}
+    </div>
+  );
 }
 
 function HeartbeatView({ apiBase }) {
@@ -1419,21 +1603,44 @@ function HeartbeatView({ apiBase }) {
   return (
     <div className="heartbeat-view">
       <div className="dc-label">Heartbeat — last-sent bot state (signal, regime, cycle)</div>
+      <p className="activity-help">
+        Written every cycle into SQLite via ingest. If a card is empty, that bot is not
+        reaching the dashboard (token, URL, or process down).
+      </p>
       <div className="hb-grid">
-        {bots.map(bot => {
-          const { data, error } = useJson(`${apiBase}/api/heartbeat/${bot}`);
-          return (
-            <div className="hb-card" key={bot}>
-              <div className="hb-bot">{bot}</div>
-              {error && <div className="detail-muted">error: {error}</div>}
-              {!error && !data && <div className="detail-muted">loading…</div>}
-              {data && (
-                <pre className="hb-json">{JSON.stringify(data, null, 2)}</pre>
-              )}
-            </div>
-          );
-        })}
+        {bots.map((bot) => (
+          <HeartbeatCard key={bot} apiBase={apiBase} bot={bot} />
+        ))}
       </div>
+    </div>
+  );
+}
+
+function FlatlineBot({ apiBase, bot }) {
+  const { data, error, loading } = useJson(`${apiBase}/api/flatline/${bot}`);
+  const rows = Array.isArray(data) ? data : [];
+  return (
+    <div className="fl-bot">
+      <div className="fl-bot-head">{bot}</div>
+      {error && <div className="detail-muted">error: {error}</div>}
+      {loading && !data && <div className="detail-muted">loading…</div>}
+      {!loading && rows.length === 0 && (
+        <div className="detail-muted">no flatlined pairs</div>
+      )}
+      {rows.length > 0 && (
+        <ul className="fl-log">
+          {rows
+            .slice(-50)
+            .reverse()
+            .map((row, i) => (
+              <li key={i}>
+                <span className="fl-pair">{row.pair || "?"}</span>
+                <span className="fl-reason">{row.reason || row.details || JSON.stringify(row)}</span>
+                {row.ts != null && <span className="fl-when">{timeAgo(row.ts)}</span>}
+              </li>
+            ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -1442,26 +1649,14 @@ function FlatlineView({ apiBase }) {
   const bots = ["forex", "gold", "crypto"];
   return (
     <div className="flatline-view">
-      <div className="dc-label">Flatline — pairs the bot stopped trading (stale signal / no entries)</div>
-      {bots.map(bot => {
-        const { data, error } = useJson(`${apiBase}/api/flatline/${bot}`);
-        return (
-          <div className="fl-bot" key={bot}>
-            <div className="fl-bot-head">{bot}</div>
-            {error && <div className="detail-muted">error: {error}</div>}
-            {!error && !data && <div className="detail-muted">loading…</div>}
-            {data && (Array.isArray(data) && data.length === 0
-              ? <div className="detail-muted">no flatlined pairs</div>
-              : Array.isArray(data) ? (
-              <ul className="fl-log">
-                  {data.slice(-50).reverse().map((row, i) => (
-                    <li key={i}>{JSON.stringify(row)}</li>
-                  ))}
-                </ul>
-              ) : <div className="detail-muted">no flatlined pairs</div>)}
-          </div>
-        );
-      })}
+      <div className="dc-label">Flatline — pairs paused for novel / crisis regimes</div>
+      <p className="activity-help">
+        Events from <code>flatline_log.jsonl</code>, pushed on ingest into SQLite (works on
+        Railway). Empty means L21 has not flatlined any pair yet.
+      </p>
+      {bots.map((bot) => (
+        <FlatlineBot key={bot} apiBase={apiBase} bot={bot} />
+      ))}
     </div>
   );
 }
@@ -1786,7 +1981,7 @@ export default function App() {
             ) : subTab === "versions" ? (
               <VersionView perVersion={perVersion} />
             ) : (
-              <SkipAnalysis apiBase={API_BASE} botName={selectedBotName || "forex"} />
+              <SkipAnalysis apiBase={API_BASE} initialBot={selectedBotName || "forex"} />
             )}
           </div>
         </div>

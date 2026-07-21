@@ -274,6 +274,31 @@ def _build_heartbeat(bot: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def _build_flatline(bot: str) -> list[dict]:
+    """Flatline events for the Flatline tab.
+
+    Prefer SQLite ``flatlined_json`` (pushed by the bot on ingest) so Railway
+    works across service volumes. Fall back to local flatline_log.jsonl for
+    single-process/dev.
+    """
+    try:
+        from dashboard.backend.main import get_conn
+        conn = get_conn()
+        row = conn.execute(
+            "SELECT flatlined_json FROM latest_state WHERE bot=?", (bot,)
+        ).fetchone()
+        conn.close()
+        if row and row["flatlined_json"]:
+            raw = json.loads(row["flatlined_json"])
+            if isinstance(raw, list):
+                return [x for x in raw if isinstance(x, dict)]
+            if isinstance(raw, dict):
+                # Legacy shape: {pair: reason} or {events: [...]}
+                if isinstance(raw.get("events"), list):
+                    return [x for x in raw["events"] if isinstance(x, dict)]
+                return [{"pair": k, **(v if isinstance(v, dict) else {"reason": v})}
+                        for k, v in raw.items() if k != "events"]
+    except Exception:
+        pass
     sdir = _bot_state_dir(bot)
     if sdir:
         f = sdir / "flatline_log.jsonl"
