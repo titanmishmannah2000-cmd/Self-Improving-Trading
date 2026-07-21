@@ -124,6 +124,19 @@ def test_empty_tab_explicit_not_500():
     assert c.get("/api/trades/forex").json() == []   # no data yet, explicit []
 
 
+def test_daily_and_lifetime_summary_not_500():
+    """Regression: sqlite3.Row has no .get(); _summarize used r.get() and 500'd
+    the Reports tab (/api/daily-summary). Dict-like rows must support both."""
+    c = client
+    c.post("/api/ingest/forex", json=VALID_RECORD, headers=TOKEN)
+    d = c.get("/api/daily-summary")
+    assert d.status_code == 200, d.text
+    assert "bots" in d.json() and "forex" in d.json()["bots"]
+    lt = c.get("/api/lifetime-summary")
+    assert lt.status_code == 200, lt.text
+    assert lt.json()["bots"]["forex"]["closed_trades"] >= 0
+
+
 def test_gp_open_trade_surfaces_in_overview():
     """Regression: the bot pushes its live open_positions every cycle as
     recent_open_trades (carrying entry_type='gp_ensemble' for GP-brain

@@ -157,7 +157,21 @@ Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
+
+    # Dict-like rows (so callers can use .get()) PLUS integer indexing so
+    # PRAGMA queries like `fetchone()[0]` still work (WAL mode test / S19).
+    def _row_factory(cursor, row):
+        d = {col[0]: row[i] for i, col in enumerate(cursor.description)}
+
+        class _DictRow(dict):
+            def __getitem__(self, key):
+                if isinstance(key, int):
+                    return list(dict.values(self))[key]
+                return dict.__getitem__(self, key)
+
+        return _DictRow(d)
+
+    conn.row_factory = _row_factory
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     return conn
