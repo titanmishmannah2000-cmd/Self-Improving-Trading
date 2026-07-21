@@ -290,6 +290,31 @@ def test_gp_ensemble_signal_promote_tags_entry_type():
     assert sh.meta.get("entry_type") == "shadow"
 
 
+def test_gp_ensemble_skips_exiled_indicators():
+    """L36: cortex-exiled names must not vote (exiled_ids filter)."""
+    import math
+    _write_discovered("EUR/USD", [
+        {"name": "good_a", "expr": "(price-sma20)",
+         "fitness": 0.4, "win_rate": 0.6, "oos_corr": 0.3},
+        {"name": "good_b", "expr": "(ema20-sma20)",
+         "fitness": 0.35, "win_rate": 0.58, "oos_corr": 0.29},
+        {"name": "exiled_noise", "expr": "(roc5)",
+         "fitness": 0.9, "win_rate": 0.9, "oos_corr": 0.5},
+    ])
+    daily = [100.0 + 5.0 * math.sin(i / 12.0) + 0.02 * i for i in range(260)]
+    # With only the two good names, signal may fire; with all three exiled, None.
+    all_exiled = {"good_a", "good_b", "exiled_noise"}
+    assert gp_ensemble_signal(
+        "EUR/USD", daily, daily_prices=daily, exiled_ids=all_exiled,
+    ) is None
+    # Exiling the noise name alone must still allow a vote from the other two.
+    sig = gp_ensemble_signal(
+        "EUR/USD", daily, daily_prices=daily, exiled_ids={"exiled_noise"},
+    )
+    if sig is not None:
+        assert "exiled_noise" not in (sig.meta.get("gp_indicators") or [])
+
+
 def test_runner_open_trade_carries_entry_type():
     """The bot's pushed recent_open_trades must carry entry_type so the
     dashboard can badge GP-brain entries next to traditional ones.

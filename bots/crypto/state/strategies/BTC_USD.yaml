@@ -1,11 +1,12 @@
 pair: BTC/USD
-strategy_type: mean_reversion
+# Crypto trends hard — use momentum (same discipline as gold D8), not FX mean-reversion.
+strategy_type: rsi_momentum
 entry:
   indicator: rsi
   direction: long
-  mr_entry_rsi: 30
+  threshold: 45
   bb_std_dev: 2.0
-  session_filter: 24h
+  session_filter: "24h"
 stop_loss_pct: 2.0
 profit_target_pct: 4.0
 trailing_stop_pct: 0.0

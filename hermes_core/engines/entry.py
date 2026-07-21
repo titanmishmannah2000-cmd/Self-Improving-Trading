@@ -326,13 +326,18 @@ def gp_ensemble_signal(pair: str, prices: list[float],
                        min_active: int = 2,
                        z_threshold: float = 0.5,
                        daily_prices: list[float] | None = None,
-                       promote: bool = False) -> Signal | None:
+                       promote: bool = False,
+                       exiled_ids: set[str] | frozenset | None = None) -> Signal | None:
     """GP-ensemble vote of discovered indicators for `pair`.
 
     Each indicator's expression is evaluated on the DAILY series (the regime it
     was discovered on); falls back to the live `prices` only if daily is None.
     Direction = sign of the indicator's value z-scored vs its own signal series
     (scale-invariant). Weight = fitness * win_rate * shared_penalty.
+
+    ``exiled_ids`` (L36): indicator names the cortex has exiled are skipped so
+    they cannot vote. Caller (live loop) supplies the set; default empty keeps
+    this function pure for tests/backtests.
 
     Returns a Signal, or None if not enough indicators fire. When `promote` is
     False the Signal is tagged shadow=True (observation only). When `promote` is
@@ -348,8 +353,13 @@ def gp_ensemble_signal(pair: str, prices: list[float],
     if not inds:
         return None
 
+    banned = exiled_ids or set()
     votes = []  # (weighted_direction, weight, name)
     for ind in inds:
+        name = ind.get("name", "?")
+        # [GUARD L36] cortex-exiled indicators cannot vote the ensemble.
+        if name in banned:
+            continue
         expr = ind.get("expr")
         if not expr:
             continue
@@ -384,7 +394,7 @@ def gp_ensemble_signal(pair: str, prices: list[float],
         if ind.get("live_flag") == "suppress":
             continue
         weight = max(fitness * win_rate * penalty, 0.1 * penalty)
-        votes.append((sig * weight, weight, ind.get("name", "?")))
+        votes.append((sig * weight, weight, name))
 
     if len(votes) < min_active:
         return None

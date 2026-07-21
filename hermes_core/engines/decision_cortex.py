@@ -114,9 +114,17 @@ class Cortex:
         self._flush()
 
     # ── per-type win-rate ───────────────────────────────────────────────────
-    def entry_type_wr(self, entry_type: str) -> float | None:
-        outcomes = [e for e in self._entries
-                    if e.get("type") == entry_type and e.get("outcome") is not None]
+    def entry_type_wr(self, entry_type: str, pair: str | None = None) -> float | None:
+        """Win-rate for ``entry_type``, optionally scoped to one ``pair``.
+
+        Per-pair WRs stop a bad pair from benching GP (or MR) fleet-wide.
+        """
+        outcomes = [
+            e for e in self._entries
+            if e.get("type") == entry_type
+            and e.get("outcome") is not None
+            and (pair is None or e.get("pair") == pair)
+        ]
         if not outcomes:
             return None
         wins = sum(e["outcome"] for e in outcomes)

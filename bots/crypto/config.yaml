@@ -1,8 +1,5 @@
-# Crypto bot — third Hermes trading bot (BTC/USD, ETH/USD).
-# Same schema as forex/gold: nested bot.name + top-level pairs + goal. Strategy
-# YAMLs per pair and a populated goal are still to be authored (build-out gap,
-# not wired live in S0-S18) — see S18 integration notes. VALID_BOTS includes
-# "crypto" (S16 fix) so the dashboard API accepts crypto pushes.
+# Crypto bot — BTC/USD + ETH/USD. Strategies are rsi_momentum (trend), not
+# FX-style mean_reversion — same discipline as gold (D8).
 bot:
   name: crypto
 pairs:

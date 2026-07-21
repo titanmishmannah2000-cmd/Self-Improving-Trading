@@ -66,6 +66,16 @@ def test_forex_mr_pairs_load_with_correct_type():
     assert aud["strategy_type"] == "rsi_momentum"
 
 
+def test_crypto_pairs_are_momentum_not_mr():
+    """Crypto rethink: BTC/ETH use rsi_momentum (trend), not FX mean-reversion."""
+    for pair in ("BTC/USD", "ETH/USD"):
+        s = load_strategy_for_pair(pair, bot="crypto")
+        assert s["strategy_type"] == "rsi_momentum"
+        assert s["strategy_type"] != "mean_reversion"
+        assert float(s["stop_loss_pct"]) >= 2.0
+        assert float(s["position_size_r"]) <= 0.2
+
+
 def test_reflection_every_is_five_per_user_override():
     cfg = load_config("forex")
     assert cfg["goal"]["reflection_every"] == 5

@@ -9,9 +9,10 @@ state/policy.json so the dashboard + loop read a stable policy across restarts.
 Suppression rules (blueprint ENGINE 9 / Phase 15):
   * suppress GP if MR WR >= 40% AND GP WR < 30%   [GUARD L35]
   * suppress MR if GP WR >= 50%
+  * WRs are evaluated PER PAIR (a bleeding pair must not bench the fleet)
   * priority_discovery = True if >=2 indicators exiled fleet-wide
   * probe_interval = 10 if cortex has <5 entries
-  * rollback flag if MR WR < 30% AND >=10 trades
+  * rollback flag if MR WR < 30% AND >=10 trades (fleet-level)
 """
 
 from __future__ import annotations
@@ -79,8 +80,10 @@ class PolicyEngine:
         suppressions: dict[str, set[str]] = {p: set() for p in pairs}
 
         for pair in pairs:
-            mr_wr = cortex.entry_type_wr("mean_reversion")
-            gp_wr = cortex.entry_type_wr("gp_ensemble")
+            # Per-pair WRs (not fleet-wide) so one bleeding pair cannot bench
+            # GP/MR on healthy pairs. Sparse pairs simply do not suppress.
+            mr_wr = cortex.entry_type_wr("mean_reversion", pair=pair)
+            gp_wr = cortex.entry_type_wr("gp_ensemble", pair=pair)
             # GP suppressed only when MR is clearly better AND GP is poor
             if (mr_wr is not None and mr_wr >= SUPPRESS_GP_MR_WR
                     and gp_wr is not None and gp_wr < SUPPRESS_GP_GP_WR):
@@ -95,6 +98,7 @@ class PolicyEngine:
         n_entries = len(cortex._entries) if hasattr(cortex, "_entries") else 0
         probe_interval = 10 if n_entries < PROBE_CORTEX_THRESHOLD else 50
 
+        # Rollback remains fleet-level (overall MR health).
         mr_wr = cortex.entry_type_wr("mean_reversion")
         n_trades = sum(1 for e in getattr(cortex, "_entries", [])
                        if e.get("type") == "mean_reversion"

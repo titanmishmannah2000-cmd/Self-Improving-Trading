@@ -162,3 +162,35 @@ def test_both_directions_independent(tmp_path, monkeypatch):
     pol_strong = pe.PolicyEngine().evaluate(10, ["EUR/USD"], strong)
     assert not pol_strong.is_suppressed("EUR/USD", "gp_ensemble")
     assert pol_strong.is_suppressed("EUR/USD", "mean_reversion")
+
+
+def test_policy_suppressions_are_per_pair():
+    """A bleeding EUR must not bench GP on a healthy GBP."""
+    c = dc.Cortex()
+    # EUR: MR WR 45%, GP WR 20% -> suppress GP on EUR only
+    for i in range(20):
+        c.record_outcome("EUR/USD", "mean_reversion", 1.0 if i < 9 else -1.0)
+    for i in range(20):
+        c.record_outcome("EUR/USD", "gp_ensemble", 1.0 if i < 4 else -1.0)
+    # GBP: GP WR 60%, MR WR 40% -> suppress MR on GBP; GP stays allowed
+    for i in range(20):
+        c.record_outcome("GBP/USD", "gp_ensemble", 1.0 if i < 12 else -1.0)
+    for i in range(20):
+        c.record_outcome("GBP/USD", "mean_reversion", 1.0 if i < 8 else -1.0)
+
+    pol = pe.PolicyEngine().evaluate(10, ["EUR/USD", "GBP/USD"], c)
+    assert pol.is_suppressed("EUR/USD", "gp_ensemble") is True
+    assert pol.is_suppressed("GBP/USD", "gp_ensemble") is False
+    assert pol.is_suppressed("GBP/USD", "mean_reversion") is True
+    assert pol.is_suppressed("EUR/USD", "mean_reversion") is False
+
+
+def test_entry_type_wr_pair_scope():
+    c = dc.Cortex()
+    for _ in range(10):
+        c.record_outcome("EUR/USD", "gp_ensemble", 1.0)
+    for _ in range(10):
+        c.record_outcome("GBP/USD", "gp_ensemble", -1.0)
+    assert c.entry_type_wr("gp_ensemble", pair="EUR/USD") == 1.0
+    assert c.entry_type_wr("gp_ensemble", pair="GBP/USD") == 0.0
+    assert abs(c.entry_type_wr("gp_ensemble") - 0.5) < 1e-9

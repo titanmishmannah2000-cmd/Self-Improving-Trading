@@ -197,7 +197,9 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
     # record the outcome under "gp_ensemble" whenever the trade was GP-driven
     # (gp_indicators non-empty), not only when already promoted to live.
     with contextlib.suppress(Exception):
-        is_gp = bool(pos.get("gp_indicators"))
+        is_gp = bool(pos.get("gp_indicators")) or entry_type in (
+            "gp_ensemble", "shadow",
+        )
         _record_type = "gp_ensemble" if is_gp else entry_type
         cortex.record_outcome(pair, _record_type, pnl)
         if is_gp:
@@ -206,6 +208,13 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
             _credited = []
         for ind_id in _credited:
             cortex.record_indicator_outcome(ind_id, pnl, entry_type="gp_ensemble")
+        # GPIntelligence consecutive-loss lockout (feeds should_suppress).
+        if is_gp:
+            from hermes_core.engines import gp_intelligence as gpi
+            if pnl > 0:
+                gpi.record_win(pair)
+            else:
+                gpi.record_loss(pair)
     # [S18] Discord/webhook alert on real trade close (fail-soft)
     if alert_fn is not None:
         with contextlib.suppress(Exception):
@@ -226,23 +235,62 @@ def _discovered_indicator_ids(bot: str, pair: str) -> list[str]:
 # an order. This is the out-of-sample track record we require before any live
 # promotion of the GP brain (faithful to "shadow/log-only first").
 _GP_SHADOW_LAST: dict[tuple, float] = {}
+_GP_CONSENSUS_CACHE: dict[str, str] = {}  # pair -> last known consensus (L13)
 GP_SHADOW_LOG_INTERVAL_S = 300  # at most one shadow record per 5 min per pair
 
 
-def _log_gp_shadow(bot: str, pair: str, prices: list[float], strategy: dict) -> None:
-    """Evaluate the GP shadow entry and append a paper-only record.
+def _gp_vote(pair: str, prices: list[float], strategy: dict, *,
+             cortex=None, promote: bool = False, use_daily: bool = True):
+    """Evaluate GP ensemble once; apply L36 exile filter. Fail-soft -> None.
 
-    Fail-soft: any exception is swallowed (logging must never break the cycle).
+    ``use_daily=True`` (promote path) evaluates on the discovery regime.
+    ``use_daily=False`` (shadow/L13) uses the live series the cycle already has
+    — no extra network fetch, matches the original shadow logger.
     """
     try:
-        from hermes_core.engines.entry import gp_ensemble_signal
+        from hermes_core.engines.entry import gp_ensemble_signal, gp_daily_prices
+        exiled: set[str] = set()
+        if cortex is not None:
+            with contextlib.suppress(Exception):
+                exiled = set(cortex.get_exiled_indicators() or [])
+        daily = gp_daily_prices(pair) if use_daily else None
+        return gp_ensemble_signal(
+            pair, prices, strategy,
+            daily_prices=daily,
+            promote=promote,
+            exiled_ids=exiled,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _log_gp_shadow(bot: str, pair: str, prices: list[float], strategy: dict,
+                   *, cortex=None, sig=None) -> str:
+    """Evaluate/log the GP shadow entry; return consensus label for L13.
+
+    Fail-soft: any exception is swallowed (logging must never break the cycle).
+    Returns a consensus string suitable for evaluate_entry's ensemble_consensus
+    (``neutral`` when no GP vote).
+    """
+    consensus = "neutral"
+    try:
         if len(prices) < 50:
-            return
+            _GP_CONSENSUS_CACHE[pair] = consensus
+            return consensus
+        if sig is None:
+            # Shadow observation on the live series (no daily network fetch).
+            sig = _gp_vote(
+                pair, prices, strategy, cortex=cortex,
+                promote=False, use_daily=False,
+            )
+        if sig is not None:
+            consensus = sig.meta.get("consensus") or "neutral"
+        _GP_CONSENSUS_CACHE[pair] = consensus
+
         now = time.time()
         key = (bot, pair)
         if key in _GP_SHADOW_LAST and (now - _GP_SHADOW_LAST[key]) < GP_SHADOW_LOG_INTERVAL_S:
-            return
-        sig = gp_ensemble_signal(pair, prices, strategy)
+            return consensus
         _GP_SHADOW_LAST[key] = now
         rec = {
             "ts": time.time(),
@@ -258,6 +306,7 @@ def _log_gp_shadow(bot: str, pair: str, prices: list[float], strategy: dict) -> 
             fh.write(json.dumps(rec, default=str) + "\n")
     except Exception:  # noqa: BLE001 — observation must never break the cycle
         pass
+    return _GP_CONSENSUS_CACHE.get(pair, "neutral")
 
 
 def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
@@ -491,11 +540,18 @@ def run_cycle(
                 summary["skips"] += 1
                 continue
 
-        # ── SHADOW GP-ensemble observation (LOG ONLY, never an order) ──
-        # Records the GP brain's would-be signal/consensus every 5 min per pair
-        # so we build the real out-of-sample track record before any live
-        # promotion. Fails soft; does NOT affect trading decisions.
-        _log_gp_shadow(bot, pair, prices, strategy)
+        # ── GP vote once (live series): shadow log + L13 ensemble consensus ──
+        # [GUARD L13] MR longs are blocked when GP consensus is bearish.
+        # Previously ensemble_fn defaulted to "neutral" so L13 never engaged.
+        # Use live prices here (no daily network fetch) so the heartbeat cycle
+        # stays fast; promote path below re-votes on daily when GP_PROMOTE=1.
+        gp_shadow_sig = _gp_vote(
+            pair, prices, strategy, cortex=cortex,
+            promote=False, use_daily=False,
+        )
+        gp_consensus = _log_gp_shadow(
+            bot, pair, prices, strategy, cortex=cortex, sig=gp_shadow_sig,
+        )
 
         # --- chart context (fail-open; an error yields neutral) -------------
         context = ""
@@ -510,7 +566,13 @@ def run_cycle(
             health_registry["chart_vision"] = False
             _log_skip(bot, pair, cycle, f"chart_error:{exc!r}")
 
-        ensemble = (ensemble_fn(pair) if ensemble_fn else "neutral") or "neutral"
+        # Injected ensemble_fn wins (tests); else live GP consensus for L13.
+        ensemble = (
+            (ensemble_fn(pair) if ensemble_fn else None)
+            or gp_consensus
+            or _GP_CONSENSUS_CACHE.get(pair)
+            or "neutral"
+        )
         atr = float(ind["atr"])
 
         # RSI-confluence: count pairs currently oversold (feeds momentum's
@@ -537,13 +599,19 @@ def run_cycle(
                          get_env("GP_EXCLUDE_PAIRS", "GBP/JPY,BTC/USD").split(",") if p.strip()}
                 if pair not in _excl:
                     try:
-                        from hermes_core.engines.entry import (
-                            gp_ensemble_signal, gp_daily_prices)
-                        _gp_sig = gp_ensemble_signal(
-                            pair, prices, strategy,
-                            daily_prices=gp_daily_prices(pair), promote=True)
-                        if _gp_sig is not None:
-                            sig = _gp_sig
+                        from hermes_core.engines import gp_intelligence as gpi
+                        _sup, _reason = gpi.should_suppress(pair)
+                        if _sup:
+                            _log_skip(bot, pair, cycle, f"gp_intel_suppress:{_reason}")
+                            summary["skips"] += 1
+                            continue
+                        # Promote path: fresh daily-regime vote (exile-filtered).
+                        # Do not reuse the live-series shadow vote — discovery
+                        # was on daily bars.
+                        sig = _gp_vote(
+                            pair, prices, strategy, cortex=cortex,
+                            promote=True, use_daily=True,
+                        )
                     except Exception:  # noqa: BLE001 — GP must never break the cycle
                         sig = None
             if sig is None:
