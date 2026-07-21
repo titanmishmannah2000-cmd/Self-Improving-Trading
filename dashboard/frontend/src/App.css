@@ -82,9 +82,25 @@ body {
   font-size: 13px;
 }
 
-.app-status { font-size: 12px; display: flex; align-items: center; gap: 14px; }
-.status-ok { color: var(--up); }
-.status-bad { color: var(--down); }
+.app-status {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
+}
+.status-ok {
+  color: var(--up);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.status-bad {
+  color: var(--down);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 .retry-inline {
   background: none;
   border: none;
@@ -598,7 +614,12 @@ body {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 3px;
-  margin-right: 14px;
+  margin-right: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .vtab {
@@ -611,6 +632,8 @@ body {
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .vtab-active {
   background: var(--amber);
@@ -2459,17 +2482,19 @@ body {
 .auth-signout {
   background: none;
   border: 1px solid var(--border);
-  color: var(--ghost);
-  font-size: 11px;
+  color: var(--ghost-strong);
+  font-size: 12px;
   font-family: 'Inter', sans-serif;
-  padding: 5px 12px;
-  border-radius: 6px;
+  padding: 6px 14px;
+  border-radius: 999px;
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .auth-signout:hover {
-  color: var(--ghost-strong);
+  color: var(--text);
   border-color: var(--ghost-strong);
 }
 
@@ -2590,12 +2615,15 @@ body {
 
   .app-status {
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 8px;
     width: 100%;
+    justify-content: flex-start;
   }
 
   .view-toggle {
     margin-right: 0;
+    flex: 1 1 100%;
+    order: 1;
   }
 
   .vtab {
@@ -2603,10 +2631,18 @@ body {
     padding: 4px 8px;
   }
 
+  .status-ok,
+  .status-bad,
+  .mode-toggle,
+  .auth-signout,
+  .theme-toggle {
+    order: 2;
+  }
+
   .auth-signout {
-    margin-left: auto;
-    font-size: 10px;
-    padding: 4px 10px;
+    margin-left: 0;
+    font-size: 12px;
+    padding: 6px 14px;
   }
 
   .pulse {
@@ -3987,13 +4023,15 @@ body {
   border: 1px solid var(--border);
   color: var(--ghost-strong);
   border-radius: 999px;
-  padding: 5px 12px;
+  padding: 6px 12px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .mode-toggle:hover { border-color: var(--ghost-strong); color: var(--text); }
 .mode-toggle.mode-watcher {

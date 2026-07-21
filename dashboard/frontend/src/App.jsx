@@ -2183,7 +2183,7 @@ export default function App() {
           {error ? (
             <span className="status-bad">connection error — <button className="retry-inline" onClick={fetchOverview}>retry</button></span>
           ) : (
-            <span className="status-ok">● live · updated {lastFetch ? timeAgo(lastFetch.toISOString()) : "—"}</span>
+            <span className="status-ok">● live · {lastFetch ? timeAgo(lastFetch.toISOString()) : "—"}</span>
           )}
           <ModeToggle uiMode={uiMode} setUiMode={setUiMode} />
           <button className="auth-signout" onClick={logout}>Sign out</button>
