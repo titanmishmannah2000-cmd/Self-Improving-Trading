@@ -22,6 +22,7 @@ import sqlite3
 import secrets
 import sys
 import math
+import threading
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
@@ -32,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
 FOREX_PAIRS = ["EUR/USD", "GBP/USD", "AUD/USD", "GBP/JPY"]
@@ -109,7 +110,30 @@ VALID_BOT_ALIASES = {
 # and serve them in the shapes the redesigned frontend expects. Registered
 # BEFORE the base routes so these take precedence where they overlap.
 from live_compat import register as _register_live_compat
-_register_live_compat(app, lambda: INGEST_TOKEN, VALID_BOTS)
+
+def utcnow_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+# Real-time price fan-out (S19 / [GUARD L64])
+_sse_lock = threading.Lock()
+_sse_subscribers: set = set()
+
+
+def _broadcast_price(bot: str, prices: dict) -> None:
+    payload = {"bot": bot, "prices": prices, "ts": utcnow_iso()}
+    with _sse_lock:
+        subs = list(_sse_subscribers)
+    for q in subs:
+        try:
+            q.put_nowait(payload)
+        except Exception:
+            pass
+
+
+_register_live_compat(
+    app, lambda: INGEST_TOKEN, VALID_BOTS, on_price_broadcast=_broadcast_price
+)
 
 # Quick test route registered immediately after FastAPI app creation
 @app.get("/api/quick-test")
@@ -126,13 +150,22 @@ if not INGEST_TOKEN:
 # (falls back to local disk if no volume is mounted — fine for testing,
 # but data will reset on redeploy without a real volume).
 DB_PATH = os.getenv("DASHBOARD_DB") or os.getenv("DB_PATH", "/data/hermes.db")
+STATE_DIR = os.getenv("HERMES_STATE") or os.getenv("HERMES_STATE_ROOT", "")
+DIST_DIR = str(Path(__file__).resolve().parent.parent / "frontend" / "dist")
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = lambda cursor, row: dict(sqlite3.Row(cursor, row))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     return conn
+
+
+def test_client():
+    from fastapi.testclient import TestClient
+    return TestClient(app)
 
 
 def init_db():
@@ -274,10 +307,6 @@ try:
     conn.close()
 except sqlite3.OperationalError:
     pass
-
-
-def utcnow_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _ts() -> str:
@@ -454,6 +483,14 @@ async def ingest(bot_name: str, request: Request):
     except Exception:
         raise HTTPException(400, "Body must be valid JSON")
 
+    # Legacy S16 ingest: single trade record (id + pair) without recent_trades wrapper.
+    if "recent_trades" not in payload and payload.get("id"):
+        payload = {
+            "recent_trades": [payload],
+            "recent_hypotheses": payload.get("recent_hypotheses", []),
+            "recent_skips": payload.get("recent_skips", []),
+        }
+
     conn = get_conn()
     try:
         # Guard: forex bot should never receive gold pair data
@@ -607,6 +644,8 @@ def bot_toggle(bot_name: str):
 
 def row_to_trade(r) -> dict:
     raw = json.loads(r["raw_json"]) if r["raw_json"] else {}
+    raw["id"] = r["id"]
+    raw["bot"] = r["bot"]
     raw["pair"] = r["pair"]
     raw["entry_price"] = r["entry_price"]
     raw["exit_price"] = r["exit_price"]
@@ -706,13 +745,16 @@ def overview():
         }
 
     conn.close()
+    for bot in VALID_BOTS:
+        data = result["bots"][bot]
+        result[bot] = {**data, "trades": len(data.get("recent_trades", []))}
     return result
 
 
 @app.get("/api/bot/{bot_name}/trades")
 def bot_trades(bot_name: str, pair: Optional[str] = None, limit: int = 5000):
     if bot_name not in VALID_BOTS:
-        raise HTTPException(404, "Unknown bot")
+        return []
     conn = get_conn()
     if pair:
         rows = conn.execute(
@@ -2566,6 +2608,49 @@ def audit_update_progress(finding_id: str, req: ProgressRequest):
                 "progress": finding["progress"], "finding_status": finding["status"]}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+@app.get("/healthz")
+def healthz():
+    """Railway healthcheck — proves SQLite is reachable."""
+    try:
+        conn = get_conn()
+        conn.execute("SELECT 1")
+        conn.close()
+        return {"status": "ok"}
+    except Exception:
+        return JSONResponse(status_code=503, content={"status": "unhealthy"})
+
+
+@app.get("/assets/{asset_path:path}")
+def serve_asset(asset_path: str):
+    dist = Path(DIST_DIR)
+    f = dist / "assets" / asset_path
+    if f.is_file():
+        return FileResponse(str(f))
+    raise HTTPException(404)
+
+
+@app.get("/")
+def serve_index():
+    html = Path(DIST_DIR) / "index.html"
+    if html.is_file():
+        return FileResponse(str(html), media_type="text/html")
+    raise HTTPException(404)
+
+
+@app.get("/{full_path:path}")
+def spa_fallback(full_path: str):
+    if full_path.startswith("api/"):
+        raise HTTPException(404)
+    dist = Path(DIST_DIR)
+    candidate = dist / full_path
+    if candidate.is_file():
+        return FileResponse(str(candidate))
+    html = dist / "index.html"
+    if html.is_file():
+        return FileResponse(str(html), media_type="text/html")
+    raise HTTPException(404)
 
 
 if __name__ == "__main__":

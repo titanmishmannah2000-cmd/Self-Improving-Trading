@@ -37,9 +37,11 @@ def _trades(pnls, base=1.1000):
 
 @pytest.fixture(autouse=True)
 def _tmp_hypotheses(tmp_path, monkeypatch):
-    # redirect the hypotheses log so we never touch real state
-    monkeypatch.setattr(rf, "HYPOTHESES_PATH", tmp_path / "hypotheses.jsonl")
-    yield tmp_path
+    log = tmp_path / "forex" / "state" / "hypotheses.jsonl"
+    monkeypatch.setattr(
+        rf, "hypotheses_path", lambda bot=None: log,
+    )
+    yield log
 
 
 def _read_hypotheses(path: Path) -> list[dict]:
@@ -49,12 +51,12 @@ def _read_hypotheses(path: Path) -> list[dict]:
     return [json.loads(ln) for ln in lines if ln.strip()]
 
 
-def test_l1_logs_hypothesis():
+def test_l1_logs_hypothesis(_tmp_hypotheses):
     # blueprint: feed 5 trades that breach a rule -> a hypothesis is logged
     losing = _trades([-12.0, -13.0, -11.0, -14.0, -12.0])  # DD breach
     changes = combined_reflect("EUR/USD", losing, goal=GOAL, strategy=STRAT)
     assert len(changes) == 1
-    hyps = _read_hypotheses(rf.HYPOTHESES_PATH)
+    hyps = _read_hypotheses(_tmp_hypotheses)
     assert len([h for h in hyps if h["pair"] == "EUR/USD"]) >= 1
 
 

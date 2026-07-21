@@ -8,6 +8,7 @@ import { timeAgo, pairId } from "./utils.js";
 import { COLORS } from "./colors.js";
 import { SkeletonCard, SkeletonPortfolio, SkeletonActivity } from "./Skeleton.jsx";
 import BotToggle from "./components/BotToggle.jsx";
+import PipelineGap from "./components/PipelineGap.jsx";
 import ReportsView from "./components/ReportsView.jsx";
 import { useAuth, SetupScreen, LoginScreen } from "./components/Auth.jsx";
 
@@ -339,6 +340,15 @@ function FilterChain({ strategy_type, lastSkip }) {
   );
 }
 
+function botHasPipelineGap(botName, overview) {
+  const bot = overview?.bots?.[botName];
+  if (!bot) return true;
+  const hasActivity =
+    (bot.recent_trades?.length || 0) + (bot.recent_skips?.length || 0) > 0;
+  const hasHeartbeat = Boolean(bot._received_at || bot.heartbeat?.cycle);
+  return !hasActivity && !hasHeartbeat;
+}
+
 // ───────────────────────── Pair card ─────────────────────────
 
 function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPaused, livePrice }) {
@@ -392,6 +402,8 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
   return (
     <div
       className={`pair-card ${openTrade ? "pair-card-in-trade" : ""} ${entryFlash ? "pair-card-flash" : ""} ${isSelected ? "pair-card-sel" : ""} ${botPaused ? "pair-card-disabled" : ""}`}
+      data-testid="pair-card"
+      data-bot={meta.bot}
       role="button"
       tabIndex={0}
       aria-label={`${pair}${openTrade ? ", in position" : ""}${botPaused ? ", paused" : ""}`}
@@ -1430,13 +1442,15 @@ function FlatlineView({ apiBase }) {
             <div className="fl-bot-head">{bot}</div>
             {error && <div className="detail-muted">error: {error}</div>}
             {!error && !data && <div className="detail-muted">loading…</div>}
-            {data && (data.length === 0
+            {data && (Array.isArray(data) && data.length === 0
               ? <div className="detail-muted">no flatlined pairs</div>
-              : <ul className="fl-log">
+              : Array.isArray(data) ? (
+              <ul className="fl-log">
                   {data.slice(-50).reverse().map((row, i) => (
                     <li key={i}>{JSON.stringify(row)}</li>
                   ))}
-                </ul>)}
+                </ul>
+              ) : <div className="detail-muted">no flatlined pairs</div>)}
           </div>
         );
       })}
@@ -1730,6 +1744,9 @@ export default function App() {
                 />
               )))}
             </div>
+            {overview && botHasPipelineGap("crypto", overview) && (
+              <PipelineGap bot="crypto" />
+            )}
           </section>
 
           {selectedPair && view === "live" && (

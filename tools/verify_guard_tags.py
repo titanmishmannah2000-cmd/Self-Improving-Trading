@@ -45,6 +45,10 @@ def main() -> int:
             "Partial build (expected during S2-S18):",
             ", ".join(f"L{n:02d}" for n in missing),
         )
+        # Full L01-L66 coverage is the S18 exit gate; warn loudly but do not
+        # fail CI until the rebuild is complete (avoids blocking mid-build PRs).
+        if tagged_count < 20:
+            print("WARNING: fewer than 20 guards tagged — S7+ incomplete", file=sys.stderr)
     else:
         print("All L01-L66 guards tagged.")
     return 0

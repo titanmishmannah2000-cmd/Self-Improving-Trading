@@ -29,12 +29,12 @@ from __future__ import annotations
 
 import json
 
-from hermes_core.config import load_config, repo_root
+from hermes_core.config import load_config
+from hermes_core.state.paths import hypotheses_path
 
 STOP_FLOOR = 0.5          # [GUARD L45] stop_loss_pct never goes below this
 STOP_TIGHTEN = 0.3        # DD breach -> tighten by this much
 CONFIDENCE = 0.40         # L1 fixed confidence gate
-HYPOTHESES_PATH = repo_root() / "state" / "hypotheses.jsonl"
 
 
 # ── pure helpers (unit-tested, no I/O) ─────────────────────────────────────
@@ -113,9 +113,10 @@ def layer1_rule_based(
 
 def _log_hypothesis(rec: dict) -> None:
     """Append a reflection hypothesis to state/hypotheses.jsonl (shadow log)."""
-    HYPOTHESES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    path = hypotheses_path(rec.get("bot"))
+    path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with open(HYPOTHESES_PATH, "a", encoding="utf-8") as fh:
+        with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(rec, default=str) + "\n")
     except OSError:
         pass

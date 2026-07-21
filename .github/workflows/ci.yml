@@ -54,4 +54,7 @@ jobs:
       - name: G-secret
         run: uv run python tools/verify_no_secrets.py
 
-      # G-mutate: skipped until Session 3 (indicators/risk/exit modules exist)
+      - name: G-mutate
+        run: |
+          uv run mutmut run --paths-to-mutate hermes_core/indicators --max-children 2
+          uv run mutmut results

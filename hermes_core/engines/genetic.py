@@ -43,7 +43,7 @@ import statistics
 from datetime import datetime, timezone
 from pathlib import Path
 
-from hermes_core.config import repo_root
+from hermes_core.state.paths import discovered_path as _state_discovered_path
 from hermes_core.env import get_env
 
 # ── gates ──────────────────────────────────────────────────────────────────
@@ -69,7 +69,8 @@ LIVE_PNL_SCALE = 10.0             # % PnL at which the tanh bonus saturates
 LIVE_FEEDBACK_INTERVAL_S = int(get_env("LIVE_FEEDBACK_INTERVAL_S", str(
     max(int(get_env("DISCOVERY_INTERVAL_S", "3600")), 3600))))  # re-rank cadence
 
-DISCOVERED_DIR = repo_root() / "state" / "discovered"
+# Optional test override (tests monkeypatch this module attribute).
+DISCOVERED_DIR: Path | None = None
 
 # Safe primitive feature set (D8: market-data only, no crypto feeds).
 # Each feature fn maps a price window -> scalar. Rolling-window operators give
@@ -704,9 +705,11 @@ def apply_live_feedback(pair: str, cortex) -> int:
 
 # ── persistence (survives restart) ──────────────────────────────────────────
 def _discovered_path(pair: str) -> Path:
-    DISCOVERED_DIR.mkdir(parents=True, exist_ok=True)
-    safe = pair.replace("/", "_")
-    return DISCOVERED_DIR / f"{safe}.json"
+    if DISCOVERED_DIR is not None:
+        DISCOVERED_DIR.mkdir(parents=True, exist_ok=True)
+        safe = pair.replace("/", "_")
+        return DISCOVERED_DIR / f"{safe}.json"
+    return _state_discovered_path(pair)
 
 
 def _save_discovered(pair: str, inds: list[dict]) -> None:

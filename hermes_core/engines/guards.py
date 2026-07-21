@@ -1,0 +1,40 @@
+"""Market-data validity guards (L02/L03).
+
+Pure helpers shared by the live loop and tests. No I/O.
+"""
+
+from __future__ import annotations
+
+FLAT_BARS_MIN = 5
+BB_BW_MIN = 0.001
+
+
+def flat_price_guard(indicators: dict, prices: list[float]) -> tuple[bool, str]:
+    """[GUARD L02] Skip stale/degenerate data (flat weekend candles).
+
+    Blueprint trigger: rsi < 0.01 and roc == 0 and adx in (None, 0).
+    Also catches N consecutive unchanged closes (roadmap flat-price gate).
+    """
+    rsi = float(indicators.get("rsi", 50))
+    roc = float(indicators.get("roc", 0))
+    adx = indicators.get("adx", 0)
+    if rsi < 0.01 and roc == 0.0 and adx in (None, 0, 0.0):
+        return True, "flat_price:degenerate_indicators"
+    if len(prices) >= FLAT_BARS_MIN:
+        tail = prices[-FLAT_BARS_MIN:]
+        if all(abs(p - tail[0]) < 1e-12 for p in tail):
+            return True, "flat_price:unchanged"
+    return False, ""
+
+
+def bb_bandwidth_guard(bb: dict, threshold: float = BB_BW_MIN) -> tuple[bool, str]:
+    """[GUARD L03] Skip MR when Bollinger bandwidth is too narrow for edge."""
+    middle = float(bb.get("middle", 0) or 0)
+    if middle <= 0:
+        return True, "bb_bandwidth:zero_middle"
+    upper = float(bb.get("upper", middle))
+    lower = float(bb.get("lower", middle))
+    bw = (upper - lower) / middle
+    if bw < threshold:
+        return True, f"bb_bandwidth:{bw:.6f}"
+    return False, ""

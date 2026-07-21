@@ -387,7 +387,7 @@ def test_discord_alert_fail_soft_on_bad_url():
     assert ok is False
 
 
-def test_every_guard_fires_with_log_line():
+def test_every_guard_fires_with_log_line(tmp_path):
     """Each implemented guard fires at least once with a REAL captured run.
 
     Blueprint 'see it fire' standard: we exercise each guard and assert the run
@@ -454,6 +454,9 @@ def test_every_guard_fires_with_log_line():
         fired.add("L29")
 
         # L35 policy suppression (MR bench GP)
+        cortex_mod.CORTEX_DIR = tmp_path / "cortex"
+        cortex_mod.MEMORY_PATH = cortex_mod.CORTEX_DIR / "cortex_memory.json"
+        cortex_mod.EXILE_PATH = cortex_mod.CORTEX_DIR / "indicator_exile.json"
         cx = cortex_mod.Cortex()
         for _ in range(6):
             cx.record_outcome("EUR/USD", "mean_reversion", 1.0)
@@ -464,6 +467,9 @@ def test_every_guard_fires_with_log_line():
         fired.add("L35")
 
         # L36 cortex auto-exile (<30% WR after >=5)
+        cortex_mod.CORTEX_DIR = tmp_path / "cortex2"
+        cortex_mod.MEMORY_PATH = cortex_mod.CORTEX_DIR / "cortex_memory.json"
+        cortex_mod.EXILE_PATH = cortex_mod.CORTEX_DIR / "indicator_exile.json"
         cx2 = cortex_mod.Cortex()
         for _ in range(6):
             cx2.record_indicator_outcome("slow_rsi", -1.0)
@@ -495,6 +501,15 @@ def test_every_guard_fires_with_log_line():
         assert cons.decision is False and cons.votes_total == 0
         fired.add("L53")
 
+        # L02 flat-price guard
+        from hermes_core.engines.guards import bb_bandwidth_guard, flat_price_guard
+        assert flat_price_guard({"rsi": 0.0, "roc": 0.0, "adx": 0.0}, [1.0] * 10)[0]
+        fired.add("L02")
+
+        # L03 BB bandwidth guard
+        assert bb_bandwidth_guard({"lower": 1.0, "middle": 1.0, "upper": 1.0})[0]
+        fired.add("L03")
+
         # L21 crisis novelty probe
         nov = crisis.check_novel_regime("EUR/USD", _prices(1.1, 80))
         assert "novel" in nov
@@ -508,6 +523,6 @@ def test_every_guard_fires_with_log_line():
 
     log = LOG_PATH.read_text(encoding="utf-8")
     assert "Traceback" not in log
-    expected = {"L04", "L13", "L14", "L15", "L16", "L18", "L21", "L23",
+    expected = {"L02", "L03", "L04", "L13", "L14", "L15", "L16", "L18", "L21", "L23",
                 "L24", "L26", "L27", "L29", "L35", "L36", "L40", "L45", "L53"}
     assert fired >= expected, f"guards not all fired: {expected - fired}"

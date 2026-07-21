@@ -48,7 +48,7 @@ def _utcnow() -> str:
 
 def _candidate_state_roots() -> list[Path]:
     roots = []
-    env = os.getenv("HERMES_STATE_ROOT")
+    env = os.getenv("HERMES_STATE_ROOT") or os.getenv("HERMES_STATE")
     if env:
         roots.append(Path(env))
     roots += [
@@ -215,7 +215,7 @@ def _build_flatline(bot: str) -> list[dict]:
 # Registration — must run BEFORE base routes are defined so these win.
 # ---------------------------------------------------------------------------
 
-def register(app, ingest_token_getter, valid_bots):
+def register(app, ingest_token_getter, valid_bots, on_price_broadcast=None):
     """Register compat routes on the FastAPI app.
 
     ingest_token_getter: callable returning current INGEST_TOKEN (may be '').
@@ -236,9 +236,12 @@ def register(app, ingest_token_getter, valid_bots):
         return sdir / f"live_prices_{bot}.json"
 
     def _post_price(bot: str, payload: dict) -> dict:
-        prices = payload.get("prices") or {}
+        prices = payload.get("prices")
+        if prices is None:
+            prices = {}
         if not isinstance(prices, dict):
-            return {"status": "ignored", "reason": "no prices"}
+            from fastapi import HTTPException
+            raise HTTPException(400, "prices must be a dict")
         ts = payload.get("ts") or _utcnow()
         store = {}
         for pair, price in prices.items():
@@ -251,7 +254,9 @@ def register(app, ingest_token_getter, valid_bots):
             path.write_text(json.dumps(store), encoding="utf-8")
         except Exception:
             pass
-        return {"status": "received", "bot": bot, "count": len(store)}
+        if on_price_broadcast and store:
+            on_price_broadcast(bot, {k: v["price"] for k, v in store.items()})
+        return {"status": "received", "bot": bot, "count": len(store), "n": len(store)}
 
     def _get_price(bot: str) -> dict:
         path = _price_store_path(bot)
@@ -284,6 +289,18 @@ def register(app, ingest_token_getter, valid_bots):
         if bot_name not in valid_bots:
             return []
         return _build_flatline(bot_name)
+
+    @app.get("/api/discovered/{bot_name}")
+    def compat_discovered_bot(bot_name: str):
+        if bot_name not in valid_bots:
+            return []
+        d = _build_discovered(bot_name)
+        pairs = d.get("pairs") or {}
+        out: list = []
+        for inds in pairs.values():
+            if isinstance(inds, list):
+                out.extend(inds)
+        return out
 
     @app.post("/api/price/{bot_name}")
     async def compat_price_post(bot_name: str, request: Request):

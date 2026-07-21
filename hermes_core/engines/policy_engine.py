@@ -17,9 +17,10 @@ Suppression rules (blueprint ENGINE 9 / Phase 15):
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
-from hermes_core.config import repo_root
 from hermes_core.engines.decision_cortex import Cortex
+from hermes_core.state.paths import current_bot, policy_path
 
 # ── gates ──────────────────────────────────────────────────────────────────
 SUPPRESS_GP_MR_WR = 0.40     # [GUARD L35] MR strong enough to bench GP
@@ -30,12 +31,20 @@ PROBE_CORTEX_THRESHOLD = 5    # cortex <5 entries -> probe every 10
 ROLLBACK_MR_WR = 0.30         # MR WR < this + >=10 trades -> rollback flag
 ROLLBACK_MIN_TRADES = 10
 
-POLICY_PATH = repo_root() / "state" / "policy.json"
+# Optional test override (tests monkeypatch this module attribute).
+POLICY_PATH: Path | None = None
 
 
-def _save_policy(policy: dict) -> None:
-    POLICY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    POLICY_PATH.write_text(json.dumps(policy, indent=2), encoding="utf-8")
+def _policy_file(bot: str | None = None) -> Path:
+    if POLICY_PATH is not None:
+        return POLICY_PATH
+    return policy_path(bot)
+
+
+def _save_policy(policy: dict, bot: str | None = None) -> None:
+    path = _policy_file(bot)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(policy, indent=2), encoding="utf-8")
 
 
 class Policy:
@@ -94,14 +103,15 @@ class PolicyEngine:
                     and n_trades >= ROLLBACK_MIN_TRADES)
 
         policy = Policy(suppressions, priority_discovery, probe_interval, rollback)
-        _save_policy(policy.to_dict())
+        _save_policy(policy.to_dict(), current_bot())
         return policy
 
-    def get_policy(self) -> Policy | None:
-        if not POLICY_PATH.exists():
+    def get_policy(self, bot: str | None = None) -> Policy | None:
+        path = _policy_file(bot)
+        if not path.exists():
             return None
         try:
-            d = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
+            d = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return None
         return Policy({p: set(t) for p, t in d.get("suppressions", {}).items()},

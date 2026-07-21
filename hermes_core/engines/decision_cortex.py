@@ -17,8 +17,9 @@ Persistence:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
-from hermes_core.config import repo_root, state_root
+from hermes_core.state.paths import cortex_dir, current_bot
 
 # ── gates ──────────────────────────────────────────────────────────────────
 EXILE_WR = 0.30          # [GUARD L36] WR below this after enough attempts -> exile
@@ -27,42 +28,53 @@ REINSTATE_WR = 0.40      # WR at/above this reinstates an exiled indicator
 EXILE_DECAY_ENTRIES = 100  # reconsider exiled indicators every 100 entries
 VALID_ENTRY_TYPES = ("mean_reversion", "gp_ensemble")
 
-# Persist cortex memory + exile set on the RUNTIME volume (HERMES_STATE_ROOT,
-# i.e. /data on Railway), NOT inside the image (/app). Otherwise every redeploy
-# wipes cortex_memory.json and the GP live-feedback loop (B9/B10) can never
-# accumulate the per-indicator stats it needs. Falls back to repo_root() locally.
-CORTEX_DIR = state_root() / "cortex"
-EXILE_PATH = CORTEX_DIR / "indicator_exile.json"
-MEMORY_PATH = CORTEX_DIR / "cortex_memory.json"  # persisted entry/outcome history
+# Optional test overrides (tests monkeypatch these module attributes).
+CORTEX_DIR: Path | None = None
+EXILE_PATH: Path | None = None
+MEMORY_PATH: Path | None = None
 
 
-def _load_exiles() -> dict:
-    if EXILE_PATH.exists():
+def _cortex_paths(bot: str | None = None) -> tuple[Path, Path, Path]:
+    if CORTEX_DIR is not None:
+        base = CORTEX_DIR
+    else:
+        base = cortex_dir(bot or current_bot())
+    exile = EXILE_PATH or (base / "indicator_exile.json")
+    memory = MEMORY_PATH or (base / "cortex_memory.json")
+    return base, exile, memory
+
+
+def _load_exiles(bot: str | None = None) -> dict:
+    _, exile_path, _ = _cortex_paths(bot)
+    if exile_path.exists():
         try:
-            return json.loads(EXILE_PATH.read_text(encoding="utf-8"))
+            return json.loads(exile_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return {}
     return {}
 
 
-def _save_exiles(data: dict) -> None:
-    CORTEX_DIR.mkdir(parents=True, exist_ok=True)
-    EXILE_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+def _save_exiles(data: dict, bot: str | None = None) -> None:
+    base, exile_path, _ = _cortex_paths(bot)
+    base.mkdir(parents=True, exist_ok=True)
+    exile_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def _load_memory() -> dict:
+def _load_memory(bot: str | None = None) -> dict:
     """Persisted entry/outcome history (D2): survives restart + per-cycle reset."""
-    if MEMORY_PATH.exists():
+    _, _, memory_path = _cortex_paths(bot)
+    if memory_path.exists():
         try:
-            return json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
+            return json.loads(memory_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return {}
     return {"entries": [], "indicator_stats": {}}
 
 
-def _save_memory(data: dict) -> None:
-    CORTEX_DIR.mkdir(parents=True, exist_ok=True)
-    MEMORY_PATH.write_text(json.dumps(data), encoding="utf-8")
+def _save_memory(data: dict, bot: str | None = None) -> None:
+    base, _, memory_path = _cortex_paths(bot)
+    base.mkdir(parents=True, exist_ok=True)
+    memory_path.write_text(json.dumps(data), encoding="utf-8")
 
 
 class Cortex:
@@ -72,14 +84,15 @@ class Cortex:
     in the bot loop, never silently rebuilds from scratch.
     """
 
-    def __init__(self) -> None:
-        mem = _load_memory()
+    def __init__(self, bot: str | None = None) -> None:
+        self._bot = bot or current_bot()
+        mem = _load_memory(self._bot)
         self._entries: list[dict] = mem.get("entries", [])
         self._indicator_stats: dict[str, dict] = mem.get("indicator_stats", {})
 
     def _flush(self) -> None:
         _save_memory({"entries": self._entries,
-                      "indicator_stats": self._indicator_stats})
+                      "indicator_stats": self._indicator_stats}, self._bot)
 
     # ── recording ──────────────────────────────────────────────────────────
     def record_entry(self, pair: str, entry_type: str) -> None:
@@ -141,7 +154,7 @@ class Cortex:
             if pnl > 0:
                 gp["wins"] += 1
         wr = st["wins"] / st["attempts"]
-        exiles = _load_exiles()
+        exiles = _load_exiles(self._bot)
         if st["exiled"]:
             # decay reconsider: only act near the decay cadence, reinstate >=40%
             if st["attempts"] % EXILE_DECAY_ENTRIES == 0 and wr >= REINSTATE_WR:
@@ -151,21 +164,21 @@ class Cortex:
               and wr < EXILE_WR):
             st["exiled"] = True
             exiles[ind_id] = {"exiled_at_attempts": st["attempts"], "wr": round(wr, 3)}
-        _save_exiles(exiles)
+        _save_exiles(exiles, self._bot)
         self._flush()
 
     def is_indicator_exiled(self, ind_id: str) -> bool:
-        return bool(_load_exiles().get(ind_id))
+        return bool(_load_exiles(self._bot).get(ind_id))
 
     def exile_indicator(self, ind_id: str) -> None:
-        exiles = _load_exiles()
+        exiles = _load_exiles(self._bot)
         exiles[ind_id] = exiles.get(ind_id, {"manual": True})
-        _save_exiles(exiles)
+        _save_exiles(exiles, self._bot)
         if ind_id in self._indicator_stats:
             self._indicator_stats[ind_id]["exiled"] = True
 
     def get_exiled_indicators(self) -> list[str]:
-        return sorted(_load_exiles().keys())
+        return sorted(_load_exiles(self._bot).keys())
 
     def indicator_live_stats(self, ind_id: str) -> dict:
         """Return the GP-entry live stats for an indicator (B9 `gp` sub-block).

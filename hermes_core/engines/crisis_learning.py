@@ -29,8 +29,9 @@ import statistics
 import time
 from collections import namedtuple
 from datetime import UTC, datetime
+from pathlib import Path
 
-from hermes_core.config import repo_root
+from hermes_core.state.paths import crisis_db_path, current_bot, flatline_log_path
 
 CRISIS_SIGNATURE_LENGTH = 9   # [GUARD L21] fixed 9-dim vector
 CRISIS_WINDOW_SIZE = 12       # timesteps sampled per crisis window
@@ -39,8 +40,25 @@ NOVEL_DISTANCE = 0.5          # [GUARD L21] cosine dist > this = novel regime
 NOVELTY_MULTIPLIER = 3.0      # [GUARD L21] novelty > 3.0*median -> flatline
 FLATLINE_CYCLES = 60          # [GUARD L21] novel regime pause length (cycles)
 
-DB_PATH = repo_root() / "state" / "crisis_embeddings.json"
-FLATLINE_LOG = repo_root() / "state" / "flatline_log.jsonl"
+# Test override hooks (tests monkeypatch these module attributes).
+DB_PATH: Path | None = None
+FLATLINE_LOG: Path | None = None
+
+
+def _db_path(pair: str | None = None) -> Path:
+    if DB_PATH is not None:
+        return DB_PATH
+    if pair:
+        return crisis_db_path(pair=pair)
+    return crisis_db_path(current_bot())
+
+
+def _flatline_path(pair: str | None = None) -> Path:
+    if FLATLINE_LOG is not None:
+        return FLATLINE_LOG
+    if pair:
+        return flatline_log_path(pair=pair)
+    return flatline_log_path(current_bot())
 
 # Pre-seeded known crises (blueprint F.4 ids). Signatures are representative
 # 9-vectors; the COVID one is reproduced exactly in tests for test_covid_nn.
@@ -140,29 +158,32 @@ def _signature_distance(features: list[float], signature: list[list[float]]) -> 
 
 
 # ── DB I/O (append-only) ──────────────────────────────────────────────────
-def _load_crises() -> dict:
-    if DB_PATH.exists():
+def _load_crises(pair: str | None = None) -> dict:
+    path = _db_path(pair)
+    if path.exists():
         try:
-            return json.loads(DB_PATH.read_text(encoding="utf-8"))
+            return json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             pass
     return dict(_PRESEEDED)
 
 
-def _save_crises(crises: dict) -> None:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    DB_PATH.write_text(json.dumps(crises, indent=2), encoding="utf-8")
+def _save_crises(crises: dict, pair: str | None = None) -> None:
+    path = _db_path(pair)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(crises, indent=2), encoding="utf-8")
 
 
 def _record_flatline(pair: str, reason: str, details: str = "") -> dict:
     """Append a flatline event to flatline_log.jsonl (append-only)."""
-    FLATLINE_LOG.parent.mkdir(parents=True, exist_ok=True)
+    log_path = FLATLINE_LOG if FLATLINE_LOG is not None else _flatline_path(pair)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     entry = {
         "pair": pair, "reason": reason, "details": details,
         "ts": datetime.now(UTC).isoformat(),
         "expires_in_cycles": FLATLINE_CYCLES,
     }
-    with FLATLINE_LOG.open("a", encoding="utf-8") as fh:
+    with log_path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, default=str) + "\n")
     return entry
 

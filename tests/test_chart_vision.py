@@ -76,7 +76,7 @@ def test_groq_fallback(monkeypatch):
     )
     monkeypatch.setattr(cv, "fetch_ohlcv", lambda s: _fake_df())
     monkeypatch.setattr(cv, "generate_chart_png",
-                        lambda df, s: cv._CACHE_DIR / "fake.png")
+                        lambda df, s: cv._cache_dir() / "fake.png")
     c = cv.get_chart_context("EUR/USD")
     assert "sideways" in c
 
@@ -85,7 +85,7 @@ def test_groq_fallback(monkeypatch):
 def _clear_cache():
     cv._context_cache.clear()
     # also wipe on-disk cache so a prior run can't satisfy _get_cached
-    for fp in cv._CACHE_DIR.glob("chart_ctx_*.json"):
+    for fp in cv._cache_dir().glob("chart_ctx_*.json"):
         with contextlib.suppress(OSError):
             fp.unlink()
     yield
@@ -102,7 +102,7 @@ def test_cache_no_second_call(monkeypatch):
 
     monkeypatch.setattr(cv, "fetch_ohlcv", lambda s: _fake_df())
     monkeypatch.setattr(cv, "generate_chart_png",
-                        lambda df, s: cv._CACHE_DIR / "fake.png")
+                        lambda df, s: cv._cache_dir() / "fake.png")
     monkeypatch.setattr(cv, "analyze_chart", fake_analyze)
 
     c1 = cv.get_chart_context("EUR/USD")

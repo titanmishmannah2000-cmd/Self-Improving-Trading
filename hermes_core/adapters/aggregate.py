@@ -112,14 +112,15 @@ class _BaseSource:
     _min_interval: float = 1.0
 
     def __init__(self) -> None:
+        self._client: httpx.AsyncClient | None = None
         self._cache: dict[str, tuple[float, object]] = {}
         self._last_call_ts: float = 0.0
 
     def _get_client(self) -> httpx.AsyncClient:
-        # The aggregator runs a FRESH asyncio loop per fetch_fn call
-        # (asyncio.run), so a cached client would be bound to a CLOSED loop
-        # -> "Event loop is closed" on later cycles. Create a fresh client
-        # each call so it binds to the current loop. [GUARD L61]
+        # Tests inject a fake client via `source._client`; production builds a
+        # fresh client per asyncio.run cycle so it binds to the current loop.
+        if self._client is not None:
+            return self._client
         return httpx.AsyncClient(timeout=SOURCE_TIMEOUT)
 
     async def _cached(self, key: str, fetcher: Callable[[], object]) -> object:
@@ -360,7 +361,7 @@ class YfinanceSource(_BaseSource):
         # values (e.g. 915 alongside 4004) that pollute the live consensus.
         # GoldAPI.io is the authoritative free live source for metals; yfinance
         # is still used for metals HISTORY seeding (seed_history_fn -> _yf_history).
-        if pair in ("XAU/USD", "XAG/USD"):
+        if pair in _METAL_PAIRS:
             return None
         # yfinance is async under the hood; calling its sync wrapper from inside
         # our aggregator's asyncio.run nests event loops -> "coroutine never
@@ -405,6 +406,7 @@ class CoinbaseTickerSource(_BaseSource):
 
 # crypto pairs served by a live websocket stream (Coinbase public WS, free RT)
 _CRYPTO_PAIRS = {"BTC/USD", "ETH/USD"}
+_METAL_PAIRS = frozenset({"XAU/USD", "XAG/USD"})
 
 
 # ── aggregator ────────────────────────────────────────────────────────────────
@@ -563,7 +565,7 @@ class PriceAggregator:
             return self._crypto.seed_history_fn(pair, max_candles)
         # FX uses the last good tick; metals get a real yfinance history series
         # so indicators (RSI/ADX/BB) are meaningful.
-        if pair in ("XAU/USD", "XAG/USD"):
+        if pair in _METAL_PAIRS:
             return _yf_history(pair, max_candles)
         # [FIX] FX pairs need a real multi-candle series, not a single last
         # tick. Previously this returned [last_good_tick] (1 candle), which

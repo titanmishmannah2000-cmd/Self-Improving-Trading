@@ -57,8 +57,8 @@ def test_price_ingest_and_read_back():
     c = m.test_client()
     r = _price_post(c, "forex", {"EUR/USD": 1.1234, "GBP/USD": 1.25})
     assert r.status_code == 200
-    assert r.json["n"] == 2
-    got = c.get("/api/price/forex").json
+    assert r.json()["n"] == 2
+    got = c.get("/api/price/forex").json()
     assert got["EUR/USD"]["price"] == 1.1234
     assert got["GBP/USD"]["price"] == 1.25
 
@@ -67,7 +67,7 @@ def test_price_upsert_latest_wins():
     c = m.test_client()
     _price_post(c, "forex", {"EUR/USD": 1.1})
     _price_post(c, "forex", {"EUR/USD": 1.2})
-    got = c.get("/api/price/forex").json
+    got = c.get("/api/price/forex").json()
     assert got["EUR/USD"]["price"] == 1.2  # last write wins
 
 
@@ -81,8 +81,8 @@ def test_price_other_bot_not_leaked():
     c = m.test_client()
     _price_post(c, "forex", {"EUR/USD": 1.1})
     _price_post(c, "gold", {"XAU/USD": 2000.0})
-    fx = c.get("/api/price/forex").json
-    gold = c.get("/api/price/gold").json
+    fx = c.get("/api/price/forex").json()
+    gold = c.get("/api/price/gold").json()
     assert "XAU/USD" not in fx
     assert "EUR/USD" not in gold
 
@@ -189,7 +189,7 @@ def test_healthz_ok_when_db_reachable():
     c = m.test_client()
     r = c.get("/healthz")
     assert r.status_code == 200
-    assert r.json["status"] == "ok"
+    assert r.json()["status"] == "ok"
 
 
 def test_healthz_503_when_db_unreachable(monkeypatch):
@@ -200,5 +200,5 @@ def test_healthz_503_when_db_unreachable(monkeypatch):
     monkeypatch.setattr(m, "DB_PATH", "/nonexistent-dir/definitely/not/here.db")
     r = c.get("/healthz")
     assert r.status_code == 503
-    assert r.json["status"] == "unhealthy"
+    assert r.json()["status"] == "unhealthy"
 

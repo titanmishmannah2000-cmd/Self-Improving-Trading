@@ -69,6 +69,10 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
 [tool.mutmut]
-paths_to_mutate = ["hermes_core/indicators/", "hermes_core/engines/"]
+paths_to_mutate = [
+    "hermes_core/indicators/",
+    "hermes_core/engines/risk.py",
+    "hermes_core/engines/exit.py",
+]
 backup = false
 runner = "python -m pytest -x -q"

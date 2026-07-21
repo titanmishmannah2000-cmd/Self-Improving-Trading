@@ -30,7 +30,7 @@ import re
 import time
 from pathlib import Path
 
-from hermes_core.config import repo_root
+from hermes_core.state.paths import chart_cache_dir
 
 # ── config ────────────────────────────────────────────────────────────────
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
@@ -40,8 +40,10 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 CACHE_INTERVAL_S = 3600  # 60 minutes
-_CACHE_DIR = repo_root() / "state" / "chart_cache"
-_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _cache_dir() -> Path:
+    return chart_cache_dir()
 
 # bot symbol -> yfinance ticker (used by the real fetch path)
 SYMBOL_MAP = {
@@ -92,7 +94,7 @@ def soft_block(context: str) -> bool:
 
 # ── cache ────────────────────────────────────────────────────────────────
 def _cache_file(symbol: str) -> Path:
-    return _CACHE_DIR / f"chart_ctx_{symbol.replace('/', '_')}.json"
+    return _cache_dir() / f"chart_ctx_{symbol.replace('/', '_')}.json"
 
 
 def _get_cached(symbol: str, now: float = time.time()) -> str | None:
@@ -146,7 +148,7 @@ def generate_chart_png(df, symbol: str):  # pragma: no cover - needs mplfinance
     import mplfinance as mpf
 
     try:
-        cache_path = _CACHE_DIR / f"chart_{symbol.replace('/', '_')}.png"
+        cache_path = _cache_dir() / f"chart_{symbol.replace('/', '_')}.png"
         style = mpf.make_mpf_style(
             base_mpf_style="nightclouds",
             marketcolors=mpf.make_marketcolors(

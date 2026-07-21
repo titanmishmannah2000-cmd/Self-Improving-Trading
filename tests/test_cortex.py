@@ -22,6 +22,7 @@ def _tmp_state(tmp_path, monkeypatch):
     cortex_dir = tmp_path / "cortex"
     monkeypatch.setattr(dc, "CORTEX_DIR", cortex_dir)
     monkeypatch.setattr(dc, "EXILE_PATH", cortex_dir / "indicator_exile.json")
+    monkeypatch.setattr(dc, "MEMORY_PATH", cortex_dir / "cortex_memory.json")
     monkeypatch.setattr(pe, "POLICY_PATH", tmp_path / "policy.json")
     yield
 
@@ -139,14 +140,24 @@ def test_policy_persists_and_readable():
     assert reloaded.is_suppressed("EUR/USD", "gp_ensemble") is True
 
 
-def test_both_directions_independent():
+def test_both_directions_independent(tmp_path, monkeypatch):
     # GP suppression requires MR strong AND GP weak; flipping GP to strong
     # must drop GP suppression AND (if >=50%) suppress MR instead.
+    cortex_dir = tmp_path / "cortex_a"
+    monkeypatch.setattr(dc, "CORTEX_DIR", cortex_dir)
+    monkeypatch.setattr(dc, "EXILE_PATH", cortex_dir / "indicator_exile.json")
+    monkeypatch.setattr(dc, "MEMORY_PATH", cortex_dir / "cortex_memory.json")
     weak = _cortex_with_wrs(mr_wr=0.45, gp_wr=0.25)
     pol_weak = pe.PolicyEngine().evaluate(10, ["EUR/USD"], weak)
     assert pol_weak.is_suppressed("EUR/USD", "gp_ensemble")
     assert not pol_weak.is_suppressed("EUR/USD", "mean_reversion")
 
+    # Fresh cortex memory — a second Cortex() in the same dir would load the
+    # weak scenario's persisted entries and blend WRs (D2 persistence).
+    cortex_dir2 = tmp_path / "cortex_b"
+    monkeypatch.setattr(dc, "CORTEX_DIR", cortex_dir2)
+    monkeypatch.setattr(dc, "EXILE_PATH", cortex_dir2 / "indicator_exile.json")
+    monkeypatch.setattr(dc, "MEMORY_PATH", cortex_dir2 / "cortex_memory.json")
     strong = _cortex_with_wrs(mr_wr=0.45, gp_wr=0.55)
     pol_strong = pe.PolicyEngine().evaluate(10, ["EUR/USD"], strong)
     assert not pol_strong.is_suppressed("EUR/USD", "gp_ensemble")

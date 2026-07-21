@@ -25,8 +25,9 @@ Contract (Section 6):
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
-from hermes_core.config import repo_root
+from hermes_core.state.paths import gp_state_path
 
 # ── gates ──────────────────────────────────────────────────────────────────
 DEFAULT_GP_SCORE = 0.0     # [GUARD L29] corrected from -0.3 (Problem 3)
@@ -36,22 +37,30 @@ CULL_WR = 0.40             # same-regime WR below this -> cull [Problem 4]
 CULL_MIN_SIGNALS = 50      # need this many same-regime signals before culling
 REGIME_MISMATCH_PENALTY = 0.5   # weight multiplier when used outside trained regime
 
-STATE_DIR = repo_root() / "state"
-GP_STATE = STATE_DIR / "gp_intelligence.json"
+# Optional test override (tests monkeypatch this module attribute).
+GP_STATE: Path | None = None
 
 
-def _load_state() -> dict:
-    if GP_STATE.exists():
+def _gp_state_file(pair: str | None = None) -> Path:
+    if GP_STATE is not None:
+        return GP_STATE
+    return gp_state_path(pair=pair)
+
+
+def _load_state(pair: str | None = None) -> dict:
+    path = _gp_state_file(pair)
+    if path.exists():
         try:
-            return json.loads(GP_STATE.read_text(encoding="utf-8"))
+            return json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return {}
     return {}
 
 
-def _save_state(state: dict) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    GP_STATE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+def _save_state(state: dict, pair: str | None = None) -> None:
+    path = _gp_state_file(pair)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
 def get_label(indicators: list[dict]) -> str:
@@ -87,7 +96,7 @@ def get_label(indicators: list[dict]) -> str:
 def gp_entry_score(pair: str, cond: dict | None = None) -> float:
     """Ensemble entry score in [-1, 1]. Returns DEFAULT_GP_SCORE (0.0) for a
     fresh pair with no outcome data (the corrected neutral default)."""
-    state = _load_state()
+    state = _load_state(pair)
     rec = state.get("scores", {}).get(pair)
     if rec is None:
         return DEFAULT_GP_SCORE
@@ -99,21 +108,21 @@ def gp_entry_score(pair: str, cond: dict | None = None) -> float:
 
 def record_loss(pair: str) -> None:
     """Record a losing GP entry; 3 consecutive losses -> locked."""
-    state = _load_state()
+    state = _load_state(pair)
     seq = state.setdefault("loss_seq", {})
     seq[pair] = seq.get(pair, 0) + 1
-    _save_state(state)
+    _save_state(state, pair)
 
 
 def record_win(pair: str) -> None:
     """Record a winning GP entry; resets the consecutive-loss counter."""
-    state = _load_state()
+    state = _load_state(pair)
     state.setdefault("loss_seq", {})[pair] = 0
-    _save_state(state)
+    _save_state(state, pair)
 
 
 def is_locked(pair: str) -> bool:
-    return _load_state().get("loss_seq", {}).get(pair, 0) >= LOCKOUT_AFTER
+    return _load_state(pair).get("loss_seq", {}).get(pair, 0) >= LOCKOUT_AFTER
 
 
 def should_suppress(pair: str, cond: dict | None = None) -> tuple[bool, str]:

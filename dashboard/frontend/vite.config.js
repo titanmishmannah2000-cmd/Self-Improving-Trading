@@ -12,4 +12,9 @@ export default defineConfig({
     port: process.env.PORT ? parseInt(process.env.PORT) : 4173,
     allowedHosts: true,
   },
+  test: {
+    environment: "jsdom",
+    globals: true,
+    setupFiles: ["./src/setupTests.js"],
+  },
 });

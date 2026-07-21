@@ -32,10 +32,12 @@ import json
 import math
 import random
 from collections.abc import Callable
+from pathlib import Path
 
 import numpy as np
 
-from hermes_core.config import load_strategy_for_pair, repo_root
+from hermes_core.config import load_strategy_for_pair
+from hermes_core.state.paths import hypotheses_kb_path
 
 OOS_FRACTION = 0.3           # last 30% is the holdout set
 OOS_DELTA_OK = -0.2          # [GUARD L53] OOS must not lose more than -0.2%
@@ -43,7 +45,15 @@ HIST_DELTA_OK = -0.1         # Phase 1 historical delta floor
 CRISIS_DELTA_OK = 0.5        # crisis fail is fatal unless delta >= 0.5
 CRISIS_DD_LIMIT = 0.20       # [GUARD L53] crisis max-drawdown ceiling
 OOS_CORR_MIN = 0.15          # 99th-percentile OOS correlation floor (L53)
-KB_PATH = repo_root() / "state" / "hypotheses_kb.jsonl"
+
+# Optional test override (tests monkeypatch this module attribute).
+KB_PATH: Path | None = None
+
+
+def _kb_path() -> Path:
+    if KB_PATH is not None:
+        return KB_PATH
+    return hypotheses_kb_path()
 
 
 # ── price source (injectable) ─────────────────────────────────────────────
@@ -242,10 +252,11 @@ def phase0_corr(signal: list[float], prices: list[float]) -> float:
 # ── historical hypothesis KB ──────────────────────────────────────────────
 def _kb_hit(pair: str, param: str, old_val, new_val) -> dict | None:
     """Return a prior verdict for this exact proposal, if recorded."""
-    if not KB_PATH.exists():
+    path = _kb_path()
+    if not path.exists():
         return None
     try:
-        for line in KB_PATH.read_text(encoding="utf-8").splitlines():
+        for line in path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             rec = json.loads(line)
@@ -258,9 +269,10 @@ def _kb_hit(pair: str, param: str, old_val, new_val) -> dict | None:
 
 
 def _kb_record(pair: str, param: str, old_val, new_val, approved: bool, reason: str) -> None:
-    KB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    path = _kb_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with open(KB_PATH, "a", encoding="utf-8") as fh:
+        with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps({
                 "pair": pair, "param": param, "old": old_val, "new": new_val,
                 "approved": approved, "reason": reason,

@@ -25,6 +25,7 @@ import time
 import traceback
 from collections.abc import Callable
 from datetime import datetime, timezone
+from pathlib import Path
 
 
 def _now_iso() -> str:
@@ -32,7 +33,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 from hermes_core.adapters import make_default_fetch
-from hermes_core.config import load_config, load_strategy_for_pair, repo_root, state_root
+from hermes_core.config import load_config, load_strategy_for_pair, state_root
 from hermes_core.engines.decision_cortex import Cortex
 from hermes_core.engines.entry import evaluate_entry
 from hermes_core.engines.exit import evaluate_exit
@@ -45,6 +46,7 @@ from hermes_core.engines.risk import (
     param_range_gate,
 )
 from hermes_core.env import get_env, load_env
+from hermes_core.engines.guards import bb_bandwidth_guard, flat_price_guard
 from hermes_core.indicators import compute_all
 
 MAX_CONSECUTIVE_FAILURES = 5          # [GUARD L24]
@@ -53,9 +55,6 @@ CYCLE_SECONDS = 60                    # 60s cadence
 # Discovery is expensive (GP evolution over price history); throttle per
 # (bot, pair) so it runs at most once per ~hour of wall-clock, or on first run.
 DISCOVERY_INTERVAL_S = int(get_env("DISCOVERY_INTERVAL_S", "3600"))
-_HEARTBEAT_PATH = repo_root() / "state" / "heartbeat.json"
-_TRADES_PATH = repo_root() / "state" / "trades.jsonl"
-_SKIPS_PATH = repo_root() / "state" / "skips.jsonl"
 _DISCOVERY_LAST: dict[tuple[str, str], float] = {}  # (bot, pair) -> last run epoch
 
 
@@ -390,7 +389,7 @@ def run_cycle(
     last_price = 0.0
     chart_contexts: dict[str, str] = {}
     regimes: dict[str, str] = {}          # pair -> 'trend'|'range' (dashboard regime cards)
-    cortex = Cortex()                      # per-cycle; exile SET persists to disk
+    cortex = Cortex(bot)                   # per-cycle; exile SET persists to disk
 
     for pair in pairs:
         # --- fetch (fail-soft; failures counted toward circuit breaker) -----
@@ -449,6 +448,13 @@ def run_cycle(
         health_registry["indicators"] = True
         regimes[pair] = ind.get("regime", "range")  # 'trend'|'range' for dashboard
 
+        # [GUARD L02] flat-price / stale-data gate
+        is_flat, flat_reason = flat_price_guard(ind, prices)
+        if is_flat:
+            _log_skip(bot, pair, cycle, flat_reason)
+            summary["skips"] += 1
+            continue
+
         # NOTE: GP discovery is intentionally NOT called here. It is a slow,
         # network-backed, periodic job (see _runner._discovery_loop) that runs
         # on its own scheduler so it can never stall the heartbeat cycle.
@@ -469,6 +475,14 @@ def run_cycle(
             traceback.print_exc()
             continue
         health_registry["config"] = True
+
+        # [GUARD L03] BB bandwidth — MR only (no edge on flat bands)
+        if strategy.get("strategy_type") == "mean_reversion":
+            bb_skip, bb_reason = bb_bandwidth_guard(ind["bb"])
+            if bb_skip:
+                _log_skip(bot, pair, cycle, bb_reason)
+                summary["skips"] += 1
+                continue
 
         # ── SHADOW GP-ensemble observation (LOG ONLY, never an order) ──
         # Records the GP brain's would-be signal/consensus every 5 min per pair

@@ -61,12 +61,14 @@ def main() -> int:
     out.append("")
     out.append(render_schema_section())
     text = "\n".join(out)
-    # write alongside the blueprint under docs/ for manual diff (S16 exit gate)
     target = ROOT / "docs" / "generated_sections.md"
     target.parent.mkdir(parents=True, exist_ok=True)
+    previous = target.read_text(encoding="utf-8") if target.exists() else ""
     target.write_text(text, encoding="utf-8")
     print(text)
     print(f"\n[S16] wrote {target.relative_to(ROOT)}", file=sys.stderr)
+    if previous and previous.strip() != text.strip():
+        print("NOTE: generated_sections.md changed — review diff", file=sys.stderr)
     return 0
 
 
