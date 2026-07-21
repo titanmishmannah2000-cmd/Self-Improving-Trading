@@ -47,9 +47,62 @@ class Signal:
     meta: dict = field(default_factory=dict)
 
 
+def _session_filter(strategy: dict) -> str:
+    """Resolve session_filter from YAML (top-level or under entry.*).
+
+    Production strategy files put the filter under ``entry.session_filter``;
+    older tests/fixtures use the top-level key. Accept either.
+    """
+    entry = strategy.get("entry") or {}
+    return (
+        strategy.get("session_filter")
+        or entry.get("session_filter")
+        or "24h"
+    )
+
+
+def _entry_rsi_threshold(strategy: dict) -> float:
+    """RSI oversold threshold: ``entry.threshold`` or ``entry.mr_entry_rsi``.
+
+    Forex/crypto YAMLs use ``mr_entry_rsi``; gold/AUD momentum use ``threshold``.
+    Default 50 matches the historical engine default.
+    """
+    entry = strategy.get("entry") or {}
+    if entry.get("threshold") is not None:
+        try:
+            return float(entry["threshold"])
+        except (TypeError, ValueError):
+            pass
+    if entry.get("mr_entry_rsi") is not None:
+        try:
+            return float(entry["mr_entry_rsi"])
+        except (TypeError, ValueError):
+            pass
+    return 50.0
+
+
+def _vol_gate(strategy: dict, atr: float, last: float, vol_above: bool) -> bool:
+    """Momentum volume/volatility gate.
+
+    Prefer an explicit ``vol_above=True`` from a real volume feed (tests / future
+    adapters). When the live runner has no volume source (``vol_above=False``),
+    use ATR% vs YAML ``vol_threshold_pct`` / ``vol_min_pct`` / ``vol_max_pct``
+    so gold + AUD momentum can actually fire.
+    """
+    if vol_above:
+        return True
+    if last <= 0:
+        return False
+    atr_pct = (float(atr) / float(last)) * 100.0
+    lo = float(strategy.get("vol_min_pct", 0.2) or 0.2)
+    hi = float(strategy.get("vol_max_pct", 5.0) or 5.0)
+    thr = float(strategy.get("vol_threshold_pct", 1.0) or 1.0)
+    return lo <= atr_pct <= hi and atr_pct >= thr
+
+
 def _session_allowed(strategy: dict, session_token: str) -> bool:
     """[GUARD L04] MR/RSI entries only inside the strategy's session window."""
-    filt = strategy.get("session_filter", "24h")
+    filt = _session_filter(strategy)
     allowed = _SESSION_MAP.get(filt, {"LDN", "NY", "ASIA", "OTHER"})
     return session_token in allowed
 
@@ -109,7 +162,7 @@ def evaluate_entry(
     last = prices[-1]
 
     stype = strategy.get("strategy_type")
-    threshold = (strategy.get("entry") or {}).get("threshold", 50)
+    threshold = _entry_rsi_threshold(strategy)
     size = strategy.get("position_size_r", 0.1)
 
     if stype == "mean_reversion":
@@ -121,8 +174,16 @@ def evaluate_entry(
         calm = adx < 25  # range regime favours reversion
         if at_band and oversold and calm:
             quality = (1 - rsi / 100.0) * 0.6 + 0.4
-            return Signal("mean_reversion", round(quality, 4), size, pair,
-                          {"rsi": rsi, "adx": adx, "bb_lower": bb["lower"]})
+            return Signal(
+                "mean_reversion", round(quality, 4), size, pair,
+                {
+                    "rsi": rsi,
+                    "adx": adx,
+                    "bb_lower": bb["lower"],
+                    "entry_type": "mean_reversion",
+                    "rsi_threshold": threshold,
+                },
+            )
         return None
 
     if stype == "rsi_momentum":
@@ -130,10 +191,17 @@ def evaluate_entry(
         if oversold_pairs < 2:
             return None
         oversold = rsi <= threshold
-        if oversold and vol_above:
+        if oversold and _vol_gate(strategy, ind["atr"], last, vol_above):
             quality = 0.5 + min(oversold_pairs, 5) * 0.1
-            return Signal("rsi_momentum", round(quality, 4), size, pair,
-                          {"rsi": rsi, "oversold_pairs": oversold_pairs})
+            return Signal(
+                "rsi_momentum", round(quality, 4), size, pair,
+                {
+                    "rsi": rsi,
+                    "oversold_pairs": oversold_pairs,
+                    "entry_type": "rsi_momentum",
+                    "rsi_threshold": threshold,
+                },
+            )
         return None
 
     return None

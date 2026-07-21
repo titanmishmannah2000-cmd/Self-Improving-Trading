@@ -340,8 +340,8 @@ async def run_bot(bot_name: str) -> None:
     reentry: dict = {}
     # oversold_pairs from the previous cycle feeds momentum's multi-pair gate.
     oversold_pairs = 0
-    # No volume source in the current aggregate feed -> momentum's vol_above
-    # gate stays False until a volume feed is wired (honest, not faked).
+    # No real volume feed yet — pass False so evaluate_entry uses the ATR%
+    # proxy against YAML vol_* thresholds (unlocks gold/AUD momentum).
     vol_above = False
     # Background GP discovery — fully decoupled from the heartbeat cycle.
     # A persistent Cortex instance lets B10 feed REAL paper-PnL results back
@@ -359,30 +359,23 @@ async def run_bot(bot_name: str) -> None:
     try:
         while True:
             cycle += 1
-            for pair in pairs:
-                # Run the SYNCHRONOUS poll loop in a worker thread. This matters
-                # because PriceAggregator.fetch_fn calls asyncio.run() internally
-                # (per-call event loop) — which cannot be nested inside the
-                # run_bot event loop. to_thread gives each cycle its own thread
-                # + fresh loop, so the aggregate backend works under async. [L61]
-                try:
-                    summary = await asyncio.to_thread(
-                        run_cycle, bot, cycle, fetch_fn=fetch_fn,
-                        open_positions=open_positions, reentry=reentry,
-                        oversold_pairs=oversold_pairs, vol_above=vol_above,
-                        history_fn=getattr(aggregator, "seed_history_fn", seed_history),
-                    )
-                except Exception:  # noqa: BLE001 — one pair must not kill the bot
-                    print(f"[hermes] {pair} cycle {cycle} errored",
-                          file=sys.stderr, flush=True)
-                    continue
-                # Carry the confluence count forward to the next cycle.
-                if isinstance(summary, dict):
-                    oversold_pairs = summary.get("oversold_pairs", oversold_pairs)
-                # Push the per-cycle price snapshot to the dashboard (real-time
-                # for FX/metals; crypto already streamed via on_tick between
-                # cycles). Off-thread so a slow dashboard can't stall the loop.
-                prices = summary.get("prices") if isinstance(summary, dict) else None
+            # run_cycle already iterates ALL configured pairs — call it once per
+            # cadence. The old per-pair loop re-ran the full cycle N times and
+            # inflated cooldowns / oversold confluence counts.
+            try:
+                summary = await asyncio.to_thread(
+                    run_cycle, bot, cycle, fetch_fn=fetch_fn,
+                    open_positions=open_positions, reentry=reentry,
+                    oversold_pairs=oversold_pairs, vol_above=vol_above,
+                    history_fn=getattr(aggregator, "seed_history_fn", seed_history),
+                )
+            except Exception:  # noqa: BLE001 — one bad cycle must not kill the bot
+                print(f"[hermes] {bot} cycle {cycle} errored",
+                      file=sys.stderr, flush=True)
+                summary = None
+            if isinstance(summary, dict):
+                oversold_pairs = summary.get("oversold_pairs", oversold_pairs)
+                prices = summary.get("prices")
                 if isinstance(prices, dict) and prices:
                     _push_prices_threaded(bot, prices)
                 # Push the bot's full decision-state (strategies/goal/heartbeat/

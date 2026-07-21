@@ -35,7 +35,7 @@ def _now_iso() -> str:
 from hermes_core.adapters import make_default_fetch
 from hermes_core.config import load_config, load_strategy_for_pair, state_root
 from hermes_core.engines.decision_cortex import Cortex
-from hermes_core.engines.entry import evaluate_entry
+from hermes_core.engines.entry import evaluate_entry, _entry_rsi_threshold
 from hermes_core.engines.exit import evaluate_exit
 from hermes_core.engines.genetic import discover as gp_discover
 from hermes_core.engines.policy_engine import PolicyEngine
@@ -515,7 +515,7 @@ def run_cycle(
 
         # RSI-confluence: count pairs currently oversold (feeds momentum's
         # multi-pair gate). Computed as we scan so later pairs see earlier ones.
-        _thr = (strategy.get("entry") or {}).get("threshold", 50)
+        _thr = _entry_rsi_threshold(strategy)
         if ind["rsi"] <= _thr:
             oversold_pairs += 1
 
@@ -551,7 +551,9 @@ def run_cycle(
                 summary["skips"] += 1
                 continue
             # [GUARD L35] policy may bench GP or MR when the other type is clearly better.
-            _etype = sig.meta.get("entry_type", "mean_reversion")
+            # Prefer meta.entry_type; fall back to Signal.type so momentum is never
+            # mis-labelled as mean_reversion (which poisoned cortex/policy WRs).
+            _etype = sig.meta.get("entry_type") or getattr(sig, "type", None) or "mean_reversion"
             if policy is not None and policy.is_suppressed(pair, _etype):
                 _log_skip(bot, pair, cycle, f"policy_suppress:{_etype}")
                 summary["skips"] += 1
@@ -581,7 +583,7 @@ def run_cycle(
             }
             # [CORTEX] record the entry (per-type memory; exile persists across cycles)
             with contextlib.suppress(Exception):
-                cortex.record_entry(pair, sig.meta.get("entry_type", "mean_reversion"))
+                cortex.record_entry(pair, _etype)
             summary["entries"].append(pair)
         else:
             # --- exit evaluation (S5) --------------------------------------
