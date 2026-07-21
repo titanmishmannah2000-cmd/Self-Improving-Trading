@@ -55,9 +55,14 @@ def _to_symbol(pair: str) -> str:
     if "-" in pair:  # generic crypto reference, e.g. BTC-USD
         return pair
     if pair == "XAU/USD":
-        return "XAU=F"  # spot gold (GC=F futures also works; XAU=F is reliable)
+        # COMEX gold futures — XAU=F is a broken/micro series (~910 vs ~4080 spot)
+        return "GC=F"
     if pair == "XAG/USD":
-        return "XAG=F"
+        # COMEX silver futures — XAG=F is delisted on Yahoo
+        return "SI=F"
+    # Already a yfinance ticker (GC=F, SI=F, BTC-USD, …)
+    if "=" in pair or pair.endswith("-USD"):
+        return pair
     # forex: EUR/USD -> EURUSD=X
     return pair.replace("/", "") + "=X"
 
@@ -159,20 +164,14 @@ def _goldapi_spot(sym: str) -> float | None:
 
 
 async def _rescaled_silver_history(max_candles: int) -> list[dict]:
-    """Authentic silver (XAG/USD) DAILY history for GP discovery.
+    """Fallback silver (XAG/USD) DAILY history when SI=F is unavailable.
 
-    No free silver history API exists (yfinance XAG=F / SI=F / SLV all 404).
-    Silver is cointegrated with gold, so we take REAL gold daily candles and
-    rescale them into silver price space via the LIVE gold/silver ratio from
-    GoldAPI (free, no key). Preserves authentic volatility and regime shape in
-    silver price space -- not invented numbers. Same approach as
-    aggregate.py _yf_history for XAG/USD. Fail-soft -> [] on any failure.
-
-    Async (awaited directly inside seed_history_interval) so it runs on the
-    SAME event loop -- no nested asyncio.run collision.
+    Prefer SI=F via the normal download path. If that fails, take REAL gold
+    daily candles (GC=F) and rescale into silver price space via the LIVE
+    gold/silver ratio from GoldAPI (free, no key). Fail-soft -> [].
     """
     try:
-        df = await _download("XAU=F", period="2y", interval="1d")
+        df = await _download("GC=F", period="2y", interval="1d")
         if df is None or len(df) == 0:
             return []
         tail = df.tail(max_candles)
@@ -209,17 +208,12 @@ async def seed_history_interval(pair: str, interval: str = "5m", period: str = "
     discovery engine requires longer-horizon daily history to find predictive
     structure (5m next-candle almost never clears, by design). Fail-soft: [].
 
-    Special case XAG/USD: no free silver history feed exists, so we rescale
-    REAL gold daily candles into silver price-space via the live GSR (see
-    _rescaled_silver_history). Keeps loop.py / scaffold untouched.
+    XAG/USD: try SI=F first; if empty, fall back to gold→silver rescale.
     """
-    if pair == "XAG/USD" and interval == "1d":
-        silver = await _rescaled_silver_history(max_candles)
-        if silver:
-            return silver
-        # fall through to a direct yfinance attempt only if rescale failed
     symbol = _to_symbol(pair)
     df = await _download(symbol, period=period, interval=interval)
+    if (df is None or len(df) == 0) and pair == "XAG/USD" and interval == "1d":
+        return await _rescaled_silver_history(max_candles)
     if df is None or len(df) == 0:
         return []
     tail = df.tail(max_candles)

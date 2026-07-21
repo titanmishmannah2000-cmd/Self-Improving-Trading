@@ -2,7 +2,7 @@
 
 Honors ONE env contract (hermes_core/env.get_env) so local `.env` and Railway
 deploy read the same keys. The price backend is selected via PRICE_BACKEND
-(default yfinance; "aggregate" opts into the Hermes multi-source feed).
+(default aggregate; "yfinance" falls back to Yahoo scrape).
 
 Async hosting: the trade loop (run_cycle) stays SYNCHRONOUS and unchanged —
 only this wrapper is async so it can host the live websocket price stream
@@ -11,7 +11,7 @@ dashboard the instant they arrive, and push the per-cycle price snapshot.
 All side effects are fail-soft; a dead dashboard or socket never stops the bot.
 
 Env:
-  PRICE_BACKEND        yfinance | aggregate
+  PRICE_BACKEND        aggregate | yfinance | http
   HERMES_BOT_NAME      forex | gold | crypto (override via argv for local runs)
   HERMES_CYCLE_SECONDS cycle cadence (default 60)
   DASHBOARD_API_URL    where the dashboard listens (empty -> no price push)
@@ -242,7 +242,7 @@ _TICK_MIN_INTERVAL = 2.0
 def _make_fetcher(bot: str, pairs: list[str]):
     """Build a synchronous fetch_fn. If aggregate backend, wire the live
     websocket tick forwarder so crypto ticks push to the dashboard instantly."""
-    backend = get_env("PRICE_BACKEND", "yfinance")
+    backend = get_env("PRICE_BACKEND", "aggregate")
 
     def forward_tick(pair: str, price: float) -> None:
         # Forward a single fresh crypto tick the moment the WS delivers it, but
@@ -326,7 +326,7 @@ async def run_bot(bot_name: str) -> None:
     cfg = load_config(bot)
     pairs = cfg.get("pairs") or []
     cycle_seconds = int(get_env("HERMES_CYCLE_SECONDS", "60"))
-    print(f"[hermes] bot={bot} pairs={pairs} backend={get_env('PRICE_BACKEND','yfinance')}",
+    print(f"[hermes] bot={bot} pairs={pairs} backend={get_env('PRICE_BACKEND','aggregate')}",
           flush=True)
 
     # Build the price fetcher; for the aggregate backend this also sets up the

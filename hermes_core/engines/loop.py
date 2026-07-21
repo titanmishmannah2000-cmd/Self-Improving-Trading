@@ -467,14 +467,6 @@ def run_cycle(
     health_registry = health_registry if health_registry is not None else {}
     open_positions = open_positions if open_positions is not None else {}
     reentry = reentry if reentry is not None else {}
-    # [GUARD L62] resolve the price feed. Default honors PRICE_BACKEND (opt-in);
-    # falls back to yfinance so the running path is unchanged unless flipped.
-    if fetch_fn is None:
-        load_env()
-        fetch_fn = make_default_fetch(
-            backend=get_env("PRICE_BACKEND", "yfinance"),
-            pairs=[],
-        )
     summary = {"cycle": cycle, "entries": [], "exits": [], "skips": 0, "errors": 0, "prices": {}}
     # Rolling price history for the sparkline (last N ticks per pair). Persisted
     # by the caller across cycles so the card chart is continuous, not per-cycle.
@@ -493,6 +485,14 @@ def run_cycle(
 
     health_registry["config"] = True
     pairs = cfg.get("pairs", [])
+    # [GUARD L62] resolve the price feed AFTER config so aggregate gets real pairs
+    # (crypto WS subscribe list). Default is multi-source aggregator for live quotes.
+    if fetch_fn is None:
+        load_env()
+        fetch_fn = make_default_fetch(
+            backend=get_env("PRICE_BACKEND", "aggregate"),
+            pairs=list(pairs),
+        )
     hour = int((now_fn() // 3600) % 24)  # wall-clock hour (deterministic in test)
     session_token = _session_token_for(hour)
     last_price = 0.0

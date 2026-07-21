@@ -88,3 +88,12 @@ async def test_stale_guard_repeat_permanently_none():
     assert first is not None
     assert second is None
     assert third is None  # permanently, until a newer candle_ts arrives
+
+
+def test_to_symbol_metals_use_comex():
+    # XAU=F is a broken ~910 series; XAG=F is delisted — use COMEX futures.
+    assert price._to_symbol("XAU/USD") == "GC=F"
+    assert price._to_symbol("XAG/USD") == "SI=F"
+    assert price._to_symbol("EUR/USD") == "EURUSD=X"
+    assert price._to_symbol("BTC/USD") == "BTC-USD"
+    assert price._to_symbol("GC=F") == "GC=F"

@@ -8,7 +8,7 @@ safely. The async originals are still available as ``fetch_async`` /
 
 S19 added an httpx-based REST backend (hermes_core.adapters.http_price);
 ``make_default_fetch`` selects the backend via env PRICE_BACKEND
-("yfinance" default, "http" opt-in) — additive, default behaviour unchanged.
+("aggregate" default, "yfinance" / "http" opt-in).
 """
 
 from .aggregate import PriceAggregator, make_aggregator_fetch
@@ -47,13 +47,13 @@ def make_default_fetch(backend: str | None = None, api_url: str | None = None,
                        api_key: str | None = None, pairs: list[str] | None = None):
     """Return a synchronous ``fetch_fn(pair, *, force=False)`` for the loop.
 
-    backend: "yfinance" (default), "http", or "aggregate". Selection is env-driven
-    when ``backend`` is None (PRICE_BACKEND). Default stays yfinance -> the running
-    path is NOT disrupted by the new backends.
+    backend: "aggregate" (default), "yfinance", or "http". Selection is env-driven
+    when ``backend`` is None (PRICE_BACKEND). Aggregate is the live multi-source
+    feed (Frankfurter / GoldAPI / Coinbase / …).
     """
     import os
 
-    chosen = backend or os.environ.get("PRICE_BACKEND", "yfinance").lower()
+    chosen = backend or os.environ.get("PRICE_BACKEND", "aggregate").lower()
     if chosen == "http":
         client = HttpPriceClient(base_url=api_url, api_key=api_key)
 

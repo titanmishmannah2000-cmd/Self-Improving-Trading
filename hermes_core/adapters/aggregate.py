@@ -11,12 +11,8 @@ DESIGN (discipline, same as every engine this session):
 - Consensus: median of agreeing sources within `consensus_pct`; disagreement ->
   reject -> fall back to last-good (if fresh) else None. [L01] stale guard.
 - Secrets (Alpha Vantage, metals.dev) read from env ONLY -> G-secrets clean.
-- Opt-in: selected via `make_default_fetch(backend="aggregate")`; default stays
-  yfinance, so the running path is unchanged until you flip it on.
-
-Verified sources (tested 2026-07-16):
-  Frankfurter (ECB FX, free)        | Alpha Vantage (FX, keyed) | Coinbase PAXG (XAU, free RT)
-  metals.dev (XAU+XAG, keyed)       | Coinbase WS (BTC/ETH, free RT) | yfinance (fallback)
+- Opt-in: selected via `make_default_fetch(backend="aggregate")` (now the
+  default); `PRICE_BACKEND=yfinance` falls back to Yahoo scrape.
 """
 
 from __future__ import annotations
@@ -55,22 +51,23 @@ def _goldapi_spot(sym: str) -> float | None:
 def _yf_history(pair: str, max_candles: int = 300) -> list[dict]:
     """Real history candles for indicator seeding.
 
-    - Gold (XAU/USD): yfinance XAU=F history (authentic, works).
-    - Silver (XAG/USD): no free silver *history* API exists (yfinance XAG=F /
-      SI=F / SLV all 404). Silver is cointegrated with gold, so we take REAL
-      gold-market returns and rescale them to silver's live GoldAPI level via
-      the current gold/silver ratio (~80). This preserves authentic volatility
-      and regime shape in silver's price space (not invented numbers).
+    - Gold (XAU/USD): yfinance GC=F history (COMEX; XAU=F is a broken ~910 series).
+    - Silver (XAG/USD): yfinance SI=F history (XAG=F is delisted). If SI=F is
+      empty, fall back to gold→silver rescale via live GoldAPI G/S ratio.
     - Fail-soft: returns [] on any error.
     """
     if pair == "XAU/USD":
         try:
-            return _yf_seed_history("XAU=F", max_candles=max_candles)
+            return _yf_seed_history("XAU/USD", max_candles=max_candles)
         except Exception:  # noqa: BLE001
             return []
     if pair == "XAG/USD":
         try:
-            gold_h = _yf_seed_history("XAU=F", max_candles=max_candles)
+            silver = _yf_seed_history("XAG/USD", max_candles=max_candles)
+            if silver:
+                return silver
+            # SI=F empty → rescale gold history into silver price space
+            gold_h = _yf_seed_history("XAU/USD", max_candles=max_candles)
             if not gold_h:
                 return []
             xau = _goldapi_spot("XAU")
@@ -540,14 +537,15 @@ class PriceAggregator:
         ``pair + ":history"`` seeding call by returning a list of recent consensus
         candles (oldest-first). [L01] stale: a cached consensus candle older than
         stale_s -> None. Never raises (fail-soft).
+
+        Safe from both sync threads and an already-running event loop (e.g. the
+        async bot runner): nested ``asyncio.run`` is avoided by hopping to a
+        worker thread when a loop is already active. [GUARD L61]
         """
         if pair.endswith(":history"):
             return self.seed_history_fn(pair[: -len(":history")])
         try:
-            # Per-call event loop. Sources create their httpx clients LAZILY on
-            # first fetch, so each loop gets clients bound to IT (no cross-loop
-            # reuse, no shared-client races). [GUARD L61]
-            candle = asyncio.run(self._fetch_async(pair))
+            candle = self._run_fetch(pair)
         except Exception:  # noqa: BLE001 — fail-soft; [GUARD L61]
             return self._last_good.get(pair)
         if candle is None:
@@ -556,11 +554,29 @@ class PriceAggregator:
             return None  # [L01] stale
         return candle
 
+    def _run_fetch(self, pair: str) -> dict | None:
+        """Run ``_fetch_async`` on a dedicated loop, even if one is already running."""
+        try:
+            asyncio.get_running_loop()
+            running = True
+        except RuntimeError:
+            running = False
+        if not running:
+            # Per-call event loop. Sources create httpx clients LAZILY on first
+            # fetch so each loop gets clients bound to IT. [GUARD L61]
+            return asyncio.run(self._fetch_async(pair))
+        # Nested loop (async runner / pytest-asyncio): own thread + own loop.
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(lambda: asyncio.run(self._fetch_async(pair))).result(
+                timeout=30.0
+            )
+
     def seed_history_fn(self, pair: str, max_candles: int = 300) -> list[dict]:
         """Buffered recent consensus candles (oldest-first) for indicator seeding.
-        FX/metals have no persistent consensus buffer, so seed from yfinance
-        history (works for XAU=F/XAG=F even when live yfinance is throttled);
-        crypto uses the live websocket buffer. [GUARD L61]"""
+        FX/metals seed from yfinance history (GC=F / SI=F); crypto uses the live
+        websocket buffer. [GUARD L61]"""
         if pair in _CRYPTO_PAIRS:
             return self._crypto.seed_history_fn(pair, max_candles)
         # FX uses the last good tick; metals get a real yfinance history series
