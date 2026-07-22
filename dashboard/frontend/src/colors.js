@@ -1,9 +1,10 @@
 export const COLORS = {
-  up: "#46d160",
-  down: "#ea0027",
-  neutral: "#818384",
-  chartBg: "#171b24",
-  chartBorder: "#2a2f3a",
-  chartGrid: "#232836",
-  chartLabel: "#808899",
+  up: "#00FF41",
+  down: "#FF2A2A",
+  neutral: "#4A7A55",
+  chartBg: "#001204",
+  chartBorder: "rgba(0, 255, 65, 0.28)",
+  chartGrid: "rgba(0, 255, 65, 0.15)",
+  chartLabel: "#7CFF9B",
+  ghostStrong: "#7CFF9B",
 };

@@ -10,7 +10,9 @@ import { SkeletonCard, SkeletonPortfolio, SkeletonActivity } from "./Skeleton.js
 import BotToggle from "./components/BotToggle.jsx";
 import PipelineGap from "./components/PipelineGap.jsx";
 import ReportsView from "./components/ReportsView.jsx";
+import MatrixRain from "./components/MatrixRain.jsx";
 import { useAuth, SetupScreen, LoginScreen } from "./components/Auth.jsx";
+import { motion } from "framer-motion";
 
 const DiscoveredView = lazy(() => import("./DiscoveredView.jsx"));
 const AuditView = lazy(() => import("./AuditView.jsx"));
@@ -81,16 +83,16 @@ function getMarketCountdown(marketClosed) {
 
 const PAIR_META = {
   // Forex
-  "EUR/USD":  { bot: "forex", color: "#D4745C", timezone: "London/NY", plain: "Euro vs US Dollar" },
-  "GBP/USD":  { bot: "forex", color: "#c9a36a", timezone: "London/NY", plain: "British Pound vs US Dollar" },
-  "AUD/USD":  { bot: "forex", color: "#5B7C99", timezone: "Sydney/Tokyo", plain: "Australian Dollar vs US Dollar" },
-  "GBP/JPY":  { bot: "forex", color: "#9B6B9E", timezone: "London/Tokyo", plain: "British Pound vs Japanese Yen" },
+  "EUR/USD":  { bot: "forex", color: "#00FF41", timezone: "London/NY", plain: "Euro vs US Dollar" },
+  "GBP/USD":  { bot: "forex", color: "#7CFF9B", timezone: "London/NY", plain: "British Pound vs US Dollar" },
+  "AUD/USD":  { bot: "forex", color: "#39FF14", timezone: "Sydney/Tokyo", plain: "Australian Dollar vs US Dollar" },
+  "GBP/JPY":  { bot: "forex", color: "#B8FF5A", timezone: "London/Tokyo", plain: "British Pound vs Japanese Yen" },
   // Commodities
-  "XAU/USD":  { bot: "gold", color: "#D4AF37", timezone: "24h", plain: "Gold" },
-  "XAG/USD":  { bot: "gold", color: "#C0C0C0", timezone: "24h", plain: "Silver" },
+  "XAU/USD":  { bot: "gold", color: "#C8FF00", timezone: "24h", plain: "Gold" },
+  "XAG/USD":  { bot: "gold", color: "#9AFF9A", timezone: "24h", plain: "Silver" },
   // Crypto
-  "BTC/USD":  { bot: "crypto", color: "#F7931A", timezone: "24h", plain: "Bitcoin" },
-  "ETH/USD":  { bot: "crypto", color: "#627EEA", timezone: "24h", plain: "Ethereum" },
+  "BTC/USD":  { bot: "crypto", color: "#00E676", timezone: "24h", plain: "Bitcoin" },
+  "ETH/USD":  { bot: "crypto", color: "#69F0AE", timezone: "24h", plain: "Ethereum" },
 };
 
 const BOT_PLAIN = { forex: "Forex bot", gold: "Gold bot", crypto: "Crypto bot" };
@@ -243,8 +245,12 @@ function ThemeToggle() {
   }, [dark]);
 
   return (
-    <button className="theme-toggle" onClick={() => setDark((d) => !d)} title={dark ? "Switch to light mode" : "Switch to dark mode"}>
-      {dark ? "☀" : "☾"}
+    <button
+      className="theme-toggle"
+      onClick={() => setDark((d) => !d)}
+      title={dark ? "Enter the Construct (light)" : "Back to the Matrix (dark)"}
+    >
+      {dark ? "▣" : "▤"}
     </button>
   );
 }
@@ -2146,18 +2152,41 @@ export default function App() {
   const selectedBotName = selectedPair ? PAIR_META[selectedPair]?.bot : null;
   const selectedBotData = selectedBotName ? overview?.bots?.[selectedBotName] : null;
 
-  if (mode === "loading") return <div className="auth-screen"><div className="auth-spinner" /></div>;
-  if (mode === "setup") return <SetupScreen onSetup={setup} />;
-  if (mode === "login") return <LoginScreen onLogin={login} />;
+  if (mode === "loading") {
+    return (
+      <div className="matrix-shell">
+        <MatrixRain />
+        <div className="auth-screen"><div className="auth-spinner" /></div>
+      </div>
+    );
+  }
+  if (mode === "setup") {
+    return (
+      <div className="matrix-shell">
+        <MatrixRain />
+        <SetupScreen onSetup={setup} />
+      </div>
+    );
+  }
+  if (mode === "login") {
+    return (
+      <div className="matrix-shell">
+        <MatrixRain />
+        <LoginScreen onLogin={login} />
+      </div>
+    );
+  }
 
   return (
     <UiModeContext.Provider value={{ isWatcher, uiMode }}>
+    <div className="matrix-shell">
+    <MatrixRain />
     <div className={`app ${isWatcher ? "app-watcher" : "app-advanced"}`} role="main">
       <header className="app-header">
         <div>
-          <h1>Hermes</h1>
+          <h1>HERMES</h1>
           <p className="app-sub">
-            {isWatcher ? "your trading bots at a glance" : "self-improving trading system — live monitor"}
+            {isWatcher ? "system status · bots at a glance" : "self-improving trading system — live monitor"}
           </p>
         </div>
         <div className="app-status">
@@ -2227,7 +2256,13 @@ export default function App() {
           {!overview ? (
             <SkeletonPortfolio />
           ) : (
-            <StatusHero overview={overview} marketClosed={marketClosed} botStatus={botStatus} />
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.35 }}
+            >
+              <StatusHero overview={overview} marketClosed={marketClosed} botStatus={botStatus} />
+            </motion.div>
           )}
 
           <section className={`bot-section ${tourStep === 1 ? "tour-highlight-section" : ""}`} data-tour="cards">
@@ -2383,6 +2418,7 @@ export default function App() {
         tourStep={tourStep}
         onTourChatOpen={() => { if (tourStep === 2) finishTour(); }}
       />
+    </div>
     </div>
     </UiModeContext.Provider>
   );
