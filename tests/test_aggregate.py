@@ -251,6 +251,48 @@ def test_single_source_low_confidence():
     assert c["n_sources"] == 1
 
 
+def test_single_source_refreshes_across_cycles():
+    """XAG-style single-source must not starve after STALE_S (no_candle loop).
+
+    Regression: low_conf + prefer-last_good returned a stale candle whose ts
+    failed [L01], so silver blinked no_candle forever after the first minute.
+    """
+    import time as _time
+
+    agg = PriceAggregator(
+        ["XAG/USD"],
+        sources=_fake_sources(frank=None, alpha=None, metals={"XAG/USD": 59.0}, yf=None),
+        stale_s=0.05,
+    )
+    c1 = agg.fetch_fn("XAG/USD")
+    assert c1 is not None and abs(c1["price"] - 59.0) < 1e-9
+    _time.sleep(0.06)  # older than stale_s
+    c2 = agg.fetch_fn("XAG/USD")
+    assert c2 is not None, "single-source must keep emitting fresh candles"
+    assert abs(c2["price"] - 59.0) < 1e-9
+    assert float(c2["ts"]) > float(c1["ts"])
+
+
+def test_disagreement_prefers_fresh_last_good():
+    """Wide multi-source spread prefers last-good only while it is still fresh."""
+    import time as _time
+
+    agg = PriceAggregator(
+        ["EUR/USD"],
+        sources=_fake_sources(frank=1.10, alpha=1.12, yf=1.11),
+        stale_s=5.0,
+    )
+    # Seed an agreeing last-good, then poll a divergent set.
+    agg._last_good["EUR/USD"] = {
+        "pair": "EUR/USD", "price": 1.101, "high": 1.101, "low": 1.101,
+        "candle_ts": _time.time(), "ts": _time.time(), "n_sources": 3,
+    }
+    c = agg.fetch_fn("EUR/USD")
+    assert c is not None
+    assert abs(c["price"] - 1.101) < 1e-9  # preferred last-good, not divergent median
+
+
+
 def test_all_sources_fail_soft_none():
     agg = PriceAggregator(["EUR/USD"], sources=_fake_sources(frank=None, alpha=None, yf=None))
     assert agg.fetch_fn("EUR/USD") is None

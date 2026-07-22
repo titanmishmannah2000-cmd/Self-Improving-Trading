@@ -494,13 +494,22 @@ class PriceAggregator:
         # Spread check: delayed free sources (Alpha Vantage ~15min, yfinance) can
         # legitimately differ from Frankfurter by >1% intraday, so we do NOT hard
         # reject on disagreement (that would starve the bot). Instead we flag
-        # low_confidence and prefer a fresh last-good when sources diverge widely.
+        # low_confidence and prefer a FRESH last-good when sources diverge widely.
+        #
+        # CRITICAL: single-source is NORMAL for XAG/USD (GoldAPI only — PAXG and
+        # yfinance don't cover silver). Treating n<2 like disagreement and
+        # returning the OLD last_good made [L01] stale-guard return None after
+        # 60s → perpetual no_candle → regime blank on the dashboard while the
+        # sticky price still showed the last good tick.
         lo, hi = min(prices), max(prices)
         spread = (hi - lo) / consensus if consensus else 0.0
-        low_conf = (len(prices) < 2) or (spread > self.consensus_pct)
-        if low_conf and pair in self._last_good:
-            # prefer the fresher last-good consensus over a divergent single/median
-            return self._last_good[pair]
+        disagree = spread > self.consensus_pct
+        low_conf = (len(prices) < 2) or disagree
+        if disagree and pair in self._last_good:
+            prev = self._last_good[pair]
+            prev_age = time.time() - float(prev.get("ts", 0))
+            if prev_age <= self.stale_s:
+                return prev
         now = time.time()
         candle = {
             "pair": pair,

@@ -496,7 +496,14 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
   else if (openTrade) { statusKey = "in-trade"; statusLabel = "In a trade"; }
   else if (lastSkip) { statusKey = "waiting"; statusLabel = "Waiting for better conditions"; }
 
-  const waitReason = lastSkip && !openTrade ? humanizeSkip(lastSkip.reason_skipped) : null;
+  const waitReason = (() => {
+    if (!lastSkip || openTrade) return null;
+    const raw = String(lastSkip.reason_skipped || lastSkip.reason || "");
+    // Sticky price already on the card — don't nag "waiting for fresh price data"
+    // for a transient no_candle (XAG single-source flicker).
+    if (raw === "no_candle" || raw.startsWith("no_candle")) return null;
+    return humanizeSkip(raw);
+  })();
 
   return (
     <div

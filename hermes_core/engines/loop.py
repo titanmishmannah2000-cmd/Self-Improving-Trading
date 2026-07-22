@@ -497,7 +497,12 @@ def run_cycle(
     session_token = _session_token_for(hour)
     last_price = 0.0
     chart_contexts: dict[str, str] = {}
-    regimes: dict[str, str] = {}          # pair -> 'trend'|'range' (dashboard regime cards)
+    # Sticky regimes: start from last cycle so a transient no_candle (common for
+    # single-source XAG) doesn't blank the dashboard Regime field.
+    regimes: dict[str, str] = {
+        p: r for p, r in (getattr(run_cycle, "_regimes", {}) or {}).items()
+        if p in pairs
+    }
     cortex = Cortex(bot)                   # per-cycle; exile SET persists to disk
     # [GUARD L35] evaluate policy once per cycle from cortex WRs, then apply
     # suppressions before opening new positions.
@@ -750,6 +755,7 @@ def run_cycle(
             traceback.print_exc()
     # Persist rolling price history across cycles (continuous sparkline).
     run_cycle._price_history = {p: price_history.get(p, []) for p in set(price_history) | set(getattr(run_cycle, "_price_history", {}) or {})}
+    run_cycle._regimes = dict(regimes)
     if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
         # [GUARD L24] circuit open: caller should pause; reset the counter so a
         # single pause doesn't permanently lock the breaker closed.
