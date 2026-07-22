@@ -178,6 +178,25 @@ def test_momentum_atr_vol_proxy_when_vol_above_false():
     ) is None
 
 
+def test_momentum_legacy_vol_yaml_remapped_for_live_atr():
+    """Deployed gold/AUD YAMLs with daily-scale vol floors must still open on live ATR%."""
+    from hermes_core.engines.entry import _vol_gate
+
+    legacy = {
+        "vol_threshold_pct": 1.0,
+        "vol_min_pct": 0.2,
+        "vol_max_pct": 5.0,
+    }
+    # ~0.02% ATR on XAU-like price — blocked by raw YAML, allowed after remap.
+    assert _vol_gate(legacy, atr=0.85, last=4150.0, vol_above=False) is True
+    # Still reject truly flat ATR
+    assert _vol_gate(legacy, atr=0.0, last=4150.0, vol_above=False) is False
+    # Explicit live-scale YAML should not be remapped away
+    live = {"vol_threshold_pct": 0.01, "vol_min_pct": 0.005, "vol_max_pct": 5.0}
+    assert _vol_gate(live, atr=0.85, last=4150.0, vol_above=False) is True
+    assert _vol_gate(live, atr=0.1, last=4150.0, vol_above=False) is False
+
+
 def test_no_io_in_entry_engine():
     """S4 DO-NOT: entry engine must stay pure (no network/file calls)."""
     import ast

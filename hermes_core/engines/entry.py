@@ -88,15 +88,22 @@ def _vol_gate(strategy: dict, atr: float, last: float, vol_above: bool) -> bool:
     adapters). When the live runner has no volume source (``vol_above=False``),
     use ATR% vs YAML ``vol_threshold_pct`` / ``vol_min_pct`` / ``vol_max_pct``
     so gold + AUD momentum can actually fire.
+
+    Legacy strategy YAMLs used daily-scale floors (``vol_min_pct`` ≥ 0.2 and
+    ``vol_threshold_pct`` ≥ 0.5). On live tick / short-bar ATR% for FX/metals
+    (~0.01–0.05) those floors never open → perpetual ``no_signal``. Remap that
+    legacy signature in-code so deployed volume copies keep working.
     """
     if vol_above:
         return True
     if last <= 0:
         return False
     atr_pct = (float(atr) / float(last)) * 100.0
-    lo = float(strategy.get("vol_min_pct", 0.2) or 0.2)
+    lo = float(strategy.get("vol_min_pct", 0.005) or 0.005)
     hi = float(strategy.get("vol_max_pct", 5.0) or 5.0)
-    thr = float(strategy.get("vol_threshold_pct", 1.0) or 1.0)
+    thr = float(strategy.get("vol_threshold_pct", 0.01) or 0.01)
+    if lo >= 0.1 and thr >= 0.5:
+        lo, thr = 0.005, 0.01
     return lo <= atr_pct <= hi and atr_pct >= thr
 
 

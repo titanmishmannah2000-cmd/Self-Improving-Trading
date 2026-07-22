@@ -1,5 +1,5 @@
 pair: AUD/USD
-version: "00"
+version: '00'
 strategy_type: rsi_momentum
 entry:
   indicator: rsi

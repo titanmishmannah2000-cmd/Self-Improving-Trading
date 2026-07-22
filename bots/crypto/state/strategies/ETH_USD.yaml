@@ -17,8 +17,8 @@ atr_multiplier: 2.0
 atr_floor_pct: 0.5
 use_atr_floor: true
 adx_threshold: 20
-vol_threshold_pct: 1.0
+vol_threshold_pct: 0.01
 vol_max_pct: 8.0
-vol_min_pct: 0.2
+vol_min_pct: 0.005
 minimum_entry_quality: 6
 allow_bear_entries: false

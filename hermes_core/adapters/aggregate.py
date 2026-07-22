@@ -18,6 +18,7 @@ DESIGN (discipline, same as every engine this session):
 from __future__ import annotations
 
 import asyncio
+import calendar
 import contextlib
 import os
 import time
@@ -33,6 +34,19 @@ from hermes_core.adapters.ws_price import STALE_S_MAX, PriceStream
 STALE_S_MAX_LOCAL = STALE_S_MAX
 CONSENSUS_PCT = 0.01  # sources must agree within 1% or consensus is rejected
 SOURCE_TIMEOUT = 3.0  # per-source httpx timeout (seconds)
+# Indicator seeding needs a real multi-bar series. Yahoo intermittently returns
+# empty/"delisted" for FX+futures; below that floor we use Frankfurter daily
+# (FX) and/or the live rolling tick buffer instead of a single last-good tick.
+HISTORY_MIN_BARS = 50
+TICK_HISTORY_MAX = 300
+# Only sample a new live tick into the rolling buffer when price moves or enough
+# wall time has passed (avoids stuffing 300 identical quotes → BB bandwidth 0).
+TICK_MOVE_MIN_PCT = 1e-5   # 0.001%
+TICK_SAMPLE_MIN_S = 45.0
+
+# crypto pairs served by a live websocket stream (Coinbase public WS, free RT)
+_CRYPTO_PAIRS = {"BTC/USD", "ETH/USD"}
+_METAL_PAIRS = frozenset({"XAU/USD", "XAG/USD"})
 
 
 # ── source adapters ───────────────────────────────────────────────────────────
@@ -58,16 +72,16 @@ def _yf_history(pair: str, max_candles: int = 300) -> list[dict]:
     """
     if pair == "XAU/USD":
         try:
-            return _yf_seed_history("XAU/USD", max_candles=max_candles)
+            return _yf_seed_history("XAU/USD", max_candles=max_candles) or []
         except Exception:  # noqa: BLE001
             return []
     if pair == "XAG/USD":
         try:
-            silver = _yf_seed_history("XAG/USD", max_candles=max_candles)
+            silver = _yf_seed_history("XAG/USD", max_candles=max_candles) or []
             if silver:
                 return silver
             # SI=F empty → rescale gold history into silver price space
-            gold_h = _yf_seed_history("XAU/USD", max_candles=max_candles)
+            gold_h = _yf_seed_history("XAU/USD", max_candles=max_candles) or []
             if not gold_h:
                 return []
             xau = _goldapi_spot("XAU")
@@ -88,6 +102,76 @@ def _yf_history(pair: str, max_candles: int = 300) -> list[dict]:
         except Exception:  # noqa: BLE001
             return []
     return []
+
+
+def _frankfurter_fx_history(pair: str, max_candles: int = 300) -> list[dict]:
+    """Daily ECB FX history via Frankfurter (free, no key). Fail-soft -> [].
+
+    Used when yfinance returns empty/'delisted' for FX so mean-reversion still
+    gets a real multi-bar series (BB/RSI/ADX) instead of a single live tick.
+    """
+    if "/" not in pair or pair in _METAL_PAIRS or pair in _CRYPTO_PAIRS:
+        return []
+    base, quote = pair.split("/", 1)
+    if not base or not quote:
+        return []
+    try:
+        # ~max_candles weekdays ≈ calendar span with slack for weekends/holidays.
+        days = max(int(max_candles * 1.7), 90)
+        end = time.strftime("%Y-%m-%d", time.gmtime())
+        start = time.strftime("%Y-%m-%d", time.gmtime(time.time() - days * 86400))
+        url = f"https://api.frankfurter.dev/v1/{start}..{end}"
+        r = httpx.get(url, params={"base": base, "symbols": quote}, timeout=8.0)
+        r.raise_for_status()
+        rates = r.json().get("rates") or {}
+        if not isinstance(rates, dict) or not rates:
+            return []
+        out: list[dict] = []
+        for day in sorted(rates.keys()):
+            row = rates[day]
+            if not isinstance(row, dict):
+                continue
+            val = row.get(quote)
+            if val is None:
+                continue
+            price = float(val)
+            # Approximate a daily candle_ts at 16:00 UTC (ECB ref window-ish).
+            try:
+                y, m, d = (int(x) for x in day.split("-"))
+                candle_ts = calendar.timegm((y, m, d, 16, 0, 0, 0, 0, 0))
+            except Exception:  # noqa: BLE001
+                candle_ts = time.time()
+            out.append({
+                "pair": pair,
+                "price": price,
+                "high": price,
+                "low": price,
+                "ts": time.time(),
+                "candle_ts": float(candle_ts),
+            })
+        return out[-max_candles:]
+    except Exception:  # noqa: BLE001 — fail-soft
+        return []
+
+
+def _external_history(pair: str, max_candles: int = 300) -> list[dict]:
+    """Best-effort multi-bar history from free external sources (no broker)."""
+    if pair in _METAL_PAIRS:
+        return _yf_history(pair, max_candles)
+    if pair in _CRYPTO_PAIRS:
+        return []
+    # FX: Frankfurter daily first (reliable, no key), then yfinance 5m as backup.
+    frank = _frankfurter_fx_history(pair, max_candles=max_candles)
+    if len(frank) >= HISTORY_MIN_BARS:
+        return frank
+    try:
+        yf_h = _yf_seed_history(pair, max_candles=max_candles) or []
+    except Exception:  # noqa: BLE001
+        yf_h = []
+    if len(yf_h) >= HISTORY_MIN_BARS:
+        return yf_h
+    # Prefer whatever non-empty series we got (even if short) over [].
+    return frank or yf_h
 
 
 class _BaseSource:
@@ -401,11 +485,6 @@ class CoinbaseTickerSource(_BaseSource):
         return out if isinstance(out, float) else None
 
 
-# crypto pairs served by a live websocket stream (Coinbase public WS, free RT)
-_CRYPTO_PAIRS = {"BTC/USD", "ETH/USD"}
-_METAL_PAIRS = frozenset({"XAU/USD", "XAG/USD"})
-
-
 # ── aggregator ────────────────────────────────────────────────────────────────
 class PriceAggregator:
     """Multi-source consensus price feed exposing a drop-in sync `fetch_fn`."""
@@ -446,6 +525,9 @@ class PriceAggregator:
             on_tick=on_tick,
         )
         self._last_good: dict[str, dict] = {}
+        # Rolling live consensus ticks for indicator seeding when Yahoo/Frankfurter
+        # history is empty. Oldest-first; capped at TICK_HISTORY_MAX.
+        self._tick_history: dict[str, list[dict]] = {p: [] for p in pairs}
         self._lock = asyncio.Lock()
 
     async def connect(self) -> None:
@@ -524,7 +606,32 @@ class PriceAggregator:
         if any_up:
             async with self._lock:
                 self._last_good[pair] = candle
+                self._record_tick_unlocked(pair, candle)
         return candle
+
+    def _record_tick_unlocked(self, pair: str, candle: dict) -> None:
+        """Append ``candle`` to the rolling live buffer (caller holds ``_lock``)."""
+        hist = self._tick_history.setdefault(pair, [])
+        price = float(candle.get("price") or 0)
+        ts = float(candle.get("ts") or time.time())
+        if price <= 0:
+            return
+        if hist:
+            prev = hist[-1]
+            prev_price = float(prev.get("price") or 0)
+            prev_ts = float(prev.get("ts") or 0)
+            moved = (
+                prev_price > 0
+                and abs(price - prev_price) / prev_price >= TICK_MOVE_MIN_PCT
+            )
+            aged = (ts - prev_ts) >= TICK_SAMPLE_MIN_S
+            if not moved and not aged:
+                # Refresh the tip timestamp/price without growing identical bars.
+                hist[-1] = dict(candle)
+                return
+        hist.append(dict(candle))
+        if len(hist) > TICK_HISTORY_MAX:
+            del hist[: len(hist) - TICK_HISTORY_MAX]
 
     def _consensus(self, prices: list[float]) -> float:
         """Median; if spread > consensus_pct, keep median but flag via caller."""
@@ -583,28 +690,51 @@ class PriceAggregator:
             )
 
     def seed_history_fn(self, pair: str, max_candles: int = 300) -> list[dict]:
-        """Buffered recent consensus candles (oldest-first) for indicator seeding.
-        FX/metals seed from yfinance history (GC=F / SI=F); crypto uses the live
-        websocket buffer. [GUARD L61]"""
+        """Multi-bar history for indicator seeding (oldest-first). [GUARD L61]
+
+        Priority:
+          1. Crypto websocket buffer
+          2. External history (Frankfurter daily for FX; yfinance for metals)
+          3. Rolling live consensus tick buffer (built as the bot cycles)
+          4. Last-good single tick (degenerate — loop will usually BB-skip)
+
+        Yahoo intermittently returns empty/"delisted" for FX+futures; without
+        (2)/(3) the bot collapses to one tick → ``bb_bandwidth:0`` forever.
+        """
         if pair in _CRYPTO_PAIRS:
             return self._crypto.seed_history_fn(pair, max_candles)
-        # FX uses the last good tick; metals get a real yfinance history series
-        # so indicators (RSI/ADX/BB) are meaningful.
-        if pair in _METAL_PAIRS:
-            return _yf_history(pair, max_candles)
-        # [FIX] FX pairs need a real multi-candle series, not a single last
-        # tick. Previously this returned [last_good_tick] (1 candle), which
-        # made compute_all/evaluate_entry (and the GP shadow hook) run on a
-        # degenerate single point. Seed from yfinance history (proven to return
-        # ~300 candles for FX) so indicators are meaningful.
+
+        external: list[dict] = []
         try:
-            fx_h = _yf_seed_history(pair, max_candles=max_candles)
-            if fx_h:
-                return fx_h
-        except Exception:  # noqa: BLE001 — fall back to last good tick
-            pass
-        last = self._last_good.get(pair)
-        return [last] if last is not None else []
+            external = _external_history(pair, max_candles=max_candles) or []
+        except Exception:  # noqa: BLE001 — fail-soft into live buffer
+            external = []
+
+        live = self._last_good.get(pair)
+        if len(external) >= HISTORY_MIN_BARS:
+            out = [dict(c) for c in external[-max_candles:]]
+            # Stitch the freshest live quote onto the tip so indicators see now.
+            if live is not None and out:
+                tip = dict(out[-1])
+                tip["price"] = float(live["price"])
+                tip["high"] = max(float(tip.get("high", tip["price"])), float(live["price"]))
+                tip["low"] = min(float(tip.get("low", tip["price"])), float(live["price"]))
+                tip["ts"] = float(live.get("ts", tip.get("ts", time.time())))
+                out[-1] = tip
+            return out
+
+        buf = list(self._tick_history.get(pair) or [])
+        if len(buf) >= 30:
+            return buf[-max_candles:]
+
+        # Prefer a short external series over a single tick when that's all we have.
+        if len(external) >= 2:
+            return external[-max_candles:]
+        if len(buf) >= 2:
+            return buf[-max_candles:]
+        if live is not None:
+            return [live]
+        return []
 
 
 def make_aggregator_fetch(

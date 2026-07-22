@@ -1,12 +1,12 @@
-pair: AUD/USD
-version: "00"
+pair: XAG/USD
+version: '00'
 strategy_type: rsi_momentum
 entry:
   indicator: rsi
   direction: long
   threshold: 55
   bb_std_dev: 2.0
-  session_filter: asian_only
+  session_filter: 24h
 stop_loss_pct: 1.5
 profit_target_pct: 3.0
 trailing_stop_pct: 0.0

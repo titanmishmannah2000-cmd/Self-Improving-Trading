@@ -262,13 +262,56 @@ def test_aggregate_fx_history_is_multi_candle(monkeypatch):
     import hermes_core.adapters.aggregate as agg
     monkeypatch.setattr(agg, "make_aggregator_fetch", lambda *a, **k: None)
     fake = [{"price": 1.0 + i * 0.001} for i in range(300)]
-    monkeypatch.setattr(agg, "_yf_seed_history", lambda pair, max_candles=300: fake)
+    monkeypatch.setattr(agg, "_external_history", lambda pair, max_candles=300: fake)
     a = agg.PriceAggregator(["EUR/USD", "GBP/USD", "XAU/USD", "XAG/USD", "BTC/USD"])
     for fx in ["EUR/USD", "GBP/USD", "AUD/USD"]:
         hist = a.seed_history_fn(fx, max_candles=300)
         assert len(hist) >= 50, f"{fx} history too short: {len(hist)}"
         # candles must carry a numeric price
         assert all(isinstance(c.get("price"), (int, float)) for c in hist)
+
+
+def test_seed_history_uses_live_tick_buffer_when_external_empty(monkeypatch):
+    """When Yahoo/Frankfurter return nothing, use the rolling live buffer."""
+    import hermes_core.adapters.aggregate as agg
+    monkeypatch.setattr(agg, "_external_history", lambda pair, max_candles=300: [])
+    a = agg.PriceAggregator(["EUR/USD", "XAU/USD"], sources=[])
+    # Simulate 40 distinct live consensus ticks (would take ~cycles in prod).
+    for i in range(40):
+        candle = {
+            "pair": "EUR/USD",
+            "price": 1.10 + i * 0.0002,
+            "high": 1.10 + i * 0.0002,
+            "low": 1.10 + i * 0.0002,
+            "ts": 1_000_000.0 + i * 60.0,
+            "candle_ts": 1_000_000.0 + i * 60.0,
+        }
+        a._last_good["EUR/USD"] = candle
+        a._record_tick_unlocked("EUR/USD", candle)
+    hist = a.seed_history_fn("EUR/USD", max_candles=300)
+    assert len(hist) >= 30
+    assert hist[0]["price"] < hist[-1]["price"]
+
+
+def test_seed_history_metals_falls_back_to_buffer(monkeypatch):
+    """Metals must not return [] when yfinance is dead — use live buffer."""
+    import hermes_core.adapters.aggregate as agg
+    monkeypatch.setattr(agg, "_external_history", lambda pair, max_candles=300: [])
+    a = agg.PriceAggregator(["XAU/USD"], sources=[])
+    for i in range(35):
+        candle = {
+            "pair": "XAU/USD",
+            "price": 4000.0 + i,
+            "high": 4000.0 + i,
+            "low": 4000.0 + i,
+            "ts": 1_000_000.0 + i * 60.0,
+            "candle_ts": 1_000_000.0 + i * 60.0,
+        }
+        a._last_good["XAU/USD"] = candle
+        a._record_tick_unlocked("XAU/USD", candle)
+    hist = a.seed_history_fn("XAU/USD")
+    assert len(hist) >= 30
+    assert hist[-1]["price"] == 4034.0
 
 
 def test_gp_ensemble_signal_promote_tags_entry_type():
