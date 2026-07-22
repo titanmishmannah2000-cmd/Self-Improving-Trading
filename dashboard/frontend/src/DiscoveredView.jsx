@@ -232,6 +232,14 @@ export default function DiscoveredView({ apiBase, isActive = true }) {
     return out;
   }, [data, botFilter]);
 
+  // Always show every known bot in the filter bar (including 0-indicator bots),
+  // so crypto stays clickable after a rediscovery wipe.
+  const tabBots = useMemo(() => {
+    const s = new Set(botNames);
+    Object.keys(data?.bots || {}).forEach((b) => s.add(b));
+    return [...s].sort();
+  }, [botNames, data]);
+
   if (loading) return <SkeletonDiscovered />;
   if (error) {
     return (
@@ -246,13 +254,17 @@ export default function DiscoveredView({ apiBase, isActive = true }) {
     );
   }
 
+  const globalTotal = data?.total_indicators || 0;
   const totalInd =
     botFilter === "all"
-      ? data?.total_indicators || 0
+      ? globalTotal
       : Object.values(filteredPairs).reduce((n, inds) => n + inds.length, 0);
   const totalPairs = Object.keys(filteredPairs).length;
 
-  if (!data || totalInd === 0) {
+  // Truly empty catalog (no bot has indicators). Keep a single empty page.
+  // Do NOT use this path for a bot filter with 0 rows — that hid the tabs and
+  // looked like a broken/black page when clicking crypto/gold/forex.
+  if (!data || globalTotal === 0) {
     return (
       <div className="discovered">
         <div className="discovered-head">
@@ -261,7 +273,7 @@ export default function DiscoveredView({ apiBase, isActive = true }) {
             Genetic programming indicators the entry engine can vote with
           </p>
         </div>
-        <div className="discovered-empty">
+        <div className="discovered-empty" data-testid="discovered-empty-global">
           <Help>
             No indicators yet. GP discovery runs on a schedule (and when the bot is stuck).
             Until a pair has admitted indicators, the{" "}
@@ -316,23 +328,28 @@ export default function DiscoveredView({ apiBase, isActive = true }) {
         </Help>
       </div>
 
-      {botNames.length > 1 && (
+      {tabBots.length > 1 && (
         <div className="discovered-bot-tabs" role="tablist" aria-label="Filter by bot">
           <button
             type="button"
+            role="tab"
+            aria-selected={botFilter === "all"}
             className={`discovered-bot-tab${botFilter === "all" ? " active" : ""}`}
             onClick={() => setBotFilter("all")}
           >
             All
           </button>
-          {botNames.map((b) => (
+          {tabBots.map((b) => (
             <button
               key={b}
               type="button"
+              role="tab"
+              aria-selected={botFilter === b}
               className={`discovered-bot-tab${botFilter === b ? " active" : ""}`}
               onClick={() => setBotFilter(b)}
             >
               {b}
+              {data?.bots?.[b]?.total_indicators === 0 ? " (0)" : ""}
             </button>
           ))}
         </div>
@@ -359,6 +376,17 @@ export default function DiscoveredView({ apiBase, isActive = true }) {
         </div>
       </div>
 
+      {totalInd === 0 ? (
+        <div className="discovered-empty" data-testid="discovered-empty-filter">
+          <Help>
+            No discovered indicators for <strong>{botFilter}</strong> yet. Traditional
+            RSI / mean-reversion can still trade. GP Brain needs S10-approved formulas
+            from discovery — check heartbeats and wait for the next invent cycle, or
+            switch back to <strong>All</strong>.
+          </Help>
+        </div>
+      ) : (
+        <>
       <p className="discovered-count">
         <span className="discovered-legend">
           <span className="lg">
@@ -472,6 +500,8 @@ export default function DiscoveredView({ apiBase, isActive = true }) {
               ))}
           </div>
         </div>
+      )}
+        </>
       )}
     </section>
   );

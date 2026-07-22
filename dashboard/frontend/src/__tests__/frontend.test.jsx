@@ -54,14 +54,19 @@ function mockDiscovered() {
   return {
     pairs: {
       "EUR/USD": [
-        { name: "rsi_div", win_rate: 0.6, fitness: 0.8 },
-        { name: "macd_cross", win_rate: 0.55, fitness: 0.7 },
+        { name: "rsi_div", win_rate: 0.6, fitness: 0.8, _bot: "forex" },
+        { name: "macd_cross", win_rate: 0.55, fitness: 0.7, _bot: "forex" },
       ],
     },
     ensemble: { "EUR/USD": { signal: 0.4 } },
     total_indicators: 2,
     total_pairs: 1,
     degradation: {},
+    bots: {
+      forex: { total_indicators: 2, total_pairs: 1 },
+      gold: { total_indicators: 0, total_pairs: 0 },
+      crypto: { total_indicators: 0, total_pairs: 0 },
+    },
   };
 }
 
@@ -151,11 +156,87 @@ describe("Phase 17 dashboard frontend", () => {
   it("test_discovered_tab", async () => {
     render(<App />);
     await screen.findAllByTestId("pair-card");
+    fireEvent.click(screen.getByRole("button", { name: "Watcher" }));
     fireEvent.click(screen.getByRole("tab", { name: "Discovered" }));
     const items = await screen.findAllByTestId("gp-indicators");
     expect(items.length).toBeGreaterThan(0);
     expect(screen.getAllByText("rsi_div").length).toBeGreaterThan(0);
     expect(screen.getAllByText("macd_cross").length).toBeGreaterThan(0);
+  });
+
+  it("test_discovered_crypto_filter_keeps_tabs", async () => {
+    render(<App />);
+    await screen.findAllByTestId("pair-card");
+    fireEvent.click(screen.getByRole("button", { name: "Watcher" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Discovered" }));
+    await screen.findByText("rsi_div");
+    fireEvent.click(screen.getByRole("tab", { name: /crypto/i }));
+    expect(await screen.findByTestId("discovered-empty-filter")).toBeTruthy();
+    // Tabs must remain so the page does not look like a broken blank state.
+    expect(screen.getByRole("tab", { name: "All" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /crypto/i })).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "All" }));
+    expect(await screen.findByText("rsi_div")).toBeTruthy();
+  });
+
+  it("test_discovered_gold_and_forex_empty_filters_keep_tabs", async () => {
+    // Same blank-page bug path as crypto: filter to a bot with 0 rows.
+    installFetchMock({
+      ...mockOverview(),
+    });
+    global.fetch = vi.fn(async (url) => {
+      const u = String(url);
+      if (u.includes("/api/auth/status")) {
+        return { ok: true, status: 200, json: async () => AUTH_READY };
+      }
+      if (u.includes("/api/auth/verify")) {
+        return { ok: true, status: 200, json: async () => AUTH_VALID };
+      }
+      if (u.includes("/api/overview")) {
+        return { ok: true, status: 200, json: async () => mockOverview() };
+      }
+      if (u.includes("/api/discovered")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            pairs: {
+              "BTC/USD": [
+                { name: "btc_mom", win_rate: 0.5, fitness: 0.4, _bot: "crypto" },
+              ],
+            },
+            ensemble: { "BTC/USD": { signal: 0.1 } },
+            total_indicators: 1,
+            total_pairs: 1,
+            degradation: {},
+            bots: {
+              forex: { total_indicators: 0, total_pairs: 0 },
+              gold: { total_indicators: 0, total_pairs: 0 },
+              crypto: { total_indicators: 1, total_pairs: 1 },
+            },
+          }),
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+
+    render(<App />);
+    await screen.findAllByTestId("pair-card");
+    fireEvent.click(screen.getByRole("button", { name: "Watcher" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Discovered" }));
+    await screen.findByText("btc_mom");
+
+    for (const bot of ["gold", "forex"]) {
+      fireEvent.click(screen.getByRole("tab", { name: new RegExp(bot, "i") }));
+      expect(await screen.findByTestId("discovered-empty-filter")).toHaveTextContent(
+        new RegExp(bot, "i"),
+      );
+      expect(screen.getByRole("tab", { name: "All" })).toBeTruthy();
+      expect(screen.getByRole("tab", { name: /crypto/i })).toBeTruthy();
+    }
+
+    fireEvent.click(screen.getByRole("tab", { name: "All" }));
+    expect(await screen.findByText("btc_mom")).toBeTruthy();
   });
 
   it("test_empty_state_diagnostic", async () => {
