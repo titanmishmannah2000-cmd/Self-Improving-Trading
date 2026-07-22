@@ -458,16 +458,17 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
     if (lastClosed) { setFresh(true); const t = setTimeout(() => setFresh(false), 4000); return () => clearTimeout(t); }
   }, [lastClosed?.pnl_pct]);
 
-  // ── Sparkline (mini price chart) ──
+  // ── Sparkline (mini price chart) — Advanced face only ──
   const [sparkPrices, setSparkPrices] = useState(null);
   useEffect(() => {
+    if (isWatcher) { setSparkPrices(null); return; }
     let cancelled = false;
     fetch(`${API_BASE}/api/spark?pair=${encodeURIComponent(pair)}`)
       .then(r => r.json())
       .then(d => { if (!cancelled && d.prices?.length >= 2) setSparkPrices(d.prices); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [pair]);
+  }, [pair, isWatcher]);
 
   const sparkLine = sparkPrices ? (() => {
     const w = 72, h = 22, pad = 1;
@@ -511,13 +512,6 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(pair); } }}
       style={{ "--accent": meta.color }}
     >
-      {sparkLine && isWatcher && (
-        <div className="pc-spark-bg" aria-hidden="true">
-          <svg width="100%" height="100%" viewBox="0 0 72 22" preserveAspectRatio="none">
-            <polyline fill="none" stroke={sparkLine.clr} strokeWidth="1.2" opacity="0.22" points={sparkLine.pts} />
-          </svg>
-        </div>
-      )}
       {botPaused && <span className="pair-disabled-badge">Paused</span>}
       {openTrade && <span className="pc-trade-badge-abs" title="In position" />}
 
