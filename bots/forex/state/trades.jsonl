@@ -1,2 +1,0 @@
-{"id": "t_forex_1", "pair": "EUR/USD", "pnl_pct": 1.2, "exit_reason": "tp", "hold_cycles": 6, "entry_price": 1.08, "exit_price": 1.093}
-{"id": "t_forex_2", "pair": "XAU/USD", "pnl_pct": -0.4, "exit_reason": "sl", "hold_cycles": 3, "entry_price": 2300, "exit_price": 2290}
