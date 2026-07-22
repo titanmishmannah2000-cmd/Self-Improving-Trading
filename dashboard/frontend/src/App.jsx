@@ -82,17 +82,17 @@ function getMarketCountdown(marketClosed) {
 
 
 const PAIR_META = {
-  // Forex
-  "EUR/USD":  { bot: "forex", color: "#00FF41", timezone: "London/NY", plain: "Euro vs US Dollar" },
-  "GBP/USD":  { bot: "forex", color: "#7CFF9B", timezone: "London/NY", plain: "British Pound vs US Dollar" },
-  "AUD/USD":  { bot: "forex", color: "#39FF14", timezone: "Sydney/Tokyo", plain: "Australian Dollar vs US Dollar" },
-  "GBP/JPY":  { bot: "forex", color: "#B8FF5A", timezone: "London/Tokyo", plain: "British Pound vs Japanese Yen" },
+  // Forex — contrasting HUD accents (green reserved for rain)
+  "EUR/USD":  { bot: "forex", color: "#3DDCFF", timezone: "London/NY", plain: "Euro vs US Dollar" },
+  "GBP/USD":  { bot: "forex", color: "#FFB020", timezone: "London/NY", plain: "British Pound vs US Dollar" },
+  "AUD/USD":  { bot: "forex", color: "#C77DFF", timezone: "Sydney/Tokyo", plain: "Australian Dollar vs US Dollar" },
+  "GBP/JPY":  { bot: "forex", color: "#FF6B9D", timezone: "London/Tokyo", plain: "British Pound vs Japanese Yen" },
   // Commodities
-  "XAU/USD":  { bot: "gold", color: "#C8FF00", timezone: "24h", plain: "Gold" },
-  "XAG/USD":  { bot: "gold", color: "#9AFF9A", timezone: "24h", plain: "Silver" },
+  "XAU/USD":  { bot: "gold", color: "#F5D76E", timezone: "24h", plain: "Gold" },
+  "XAG/USD":  { bot: "gold", color: "#B0BEC5", timezone: "24h", plain: "Silver" },
   // Crypto
-  "BTC/USD":  { bot: "crypto", color: "#00E676", timezone: "24h", plain: "Bitcoin" },
-  "ETH/USD":  { bot: "crypto", color: "#69F0AE", timezone: "24h", plain: "Ethereum" },
+  "BTC/USD":  { bot: "crypto", color: "#FF8A3D", timezone: "24h", plain: "Bitcoin" },
+  "ETH/USD":  { bot: "crypto", color: "#5B8CFF", timezone: "24h", plain: "Ethereum" },
 };
 
 const BOT_PLAIN = { forex: "Forex bot", gold: "Gold bot", crypto: "Crypto bot" };
