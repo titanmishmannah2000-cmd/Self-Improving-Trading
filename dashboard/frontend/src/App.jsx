@@ -10,7 +10,7 @@ import { SkeletonCard, SkeletonPortfolio, SkeletonActivity } from "./Skeleton.js
 import BotToggle from "./components/BotToggle.jsx";
 import PipelineGap from "./components/PipelineGap.jsx";
 import ReportsView from "./components/ReportsView.jsx";
-import MatrixRain from "./components/MatrixRain.jsx";
+import AuroraBackdrop from "./components/AuroraBackdrop.jsx";
 import { useAuth, SetupScreen, LoginScreen } from "./components/Auth.jsx";
 import { motion } from "framer-motion";
 
@@ -82,17 +82,17 @@ function getMarketCountdown(marketClosed) {
 
 
 const PAIR_META = {
-  // Forex — contrasting HUD accents (green reserved for rain)
-  "EUR/USD":  { bot: "forex", color: "#3DDCFF", timezone: "London/NY", plain: "Euro vs US Dollar" },
-  "GBP/USD":  { bot: "forex", color: "#FFB020", timezone: "London/NY", plain: "British Pound vs US Dollar" },
-  "AUD/USD":  { bot: "forex", color: "#C77DFF", timezone: "Sydney/Tokyo", plain: "Australian Dollar vs US Dollar" },
-  "GBP/JPY":  { bot: "forex", color: "#FF6B9D", timezone: "London/Tokyo", plain: "British Pound vs Japanese Yen" },
+  // Forex — prismatic observatory accents
+  "EUR/USD":  { bot: "forex", color: "#60A5FA", timezone: "London/NY", plain: "Euro vs US Dollar" },
+  "GBP/USD":  { bot: "forex", color: "#A78BFA", timezone: "London/NY", plain: "British Pound vs US Dollar" },
+  "AUD/USD":  { bot: "forex", color: "#5EEAD4", timezone: "Sydney/Tokyo", plain: "Australian Dollar vs US Dollar" },
+  "GBP/JPY":  { bot: "forex", color: "#F472B6", timezone: "London/Tokyo", plain: "British Pound vs Japanese Yen" },
   // Commodities
-  "XAU/USD":  { bot: "gold", color: "#F5D76E", timezone: "24h", plain: "Gold" },
-  "XAG/USD":  { bot: "gold", color: "#B0BEC5", timezone: "24h", plain: "Silver" },
+  "XAU/USD":  { bot: "gold", color: "#FBBF24", timezone: "24h", plain: "Gold" },
+  "XAG/USD":  { bot: "gold", color: "#94A3B8", timezone: "24h", plain: "Silver" },
   // Crypto
-  "BTC/USD":  { bot: "crypto", color: "#FF8A3D", timezone: "24h", plain: "Bitcoin" },
-  "ETH/USD":  { bot: "crypto", color: "#5B8CFF", timezone: "24h", plain: "Ethereum" },
+  "BTC/USD":  { bot: "crypto", color: "#FB923C", timezone: "24h", plain: "Bitcoin" },
+  "ETH/USD":  { bot: "crypto", color: "#818CF8", timezone: "24h", plain: "Ethereum" },
 };
 
 const BOT_PLAIN = { forex: "Forex bot", gold: "Gold bot", crypto: "Crypto bot" };
@@ -248,9 +248,9 @@ function ThemeToggle() {
     <button
       className="theme-toggle"
       onClick={() => setDark((d) => !d)}
-      title={dark ? "Enter the Construct (light)" : "Back to the Matrix (dark)"}
+      title={dark ? "Day observatory (light)" : "Night observatory (dark)"}
     >
-      {dark ? "▣" : "▤"}
+      {dark ? "☀" : "☾"}
     </button>
   );
 }
@@ -1430,10 +1430,20 @@ function StatusHero({ overview, marketClosed, botStatus }) {
     ? `${verdict}. ${openCount} open trades, ${closedCount} finished. Open trades are ${fmtPct(avgPnl)} on average.`
     : `Portfolio: ${openCount} open positions, ${closedCount} closed trades, average ${fmtPct(avgPnl)}`;
 
+  // Iridescent skyline — one tower per market group + open-trade energy
+  const skyBars = [
+    { h: botStatus?.forex === "paused" ? 28 : openCount > 0 ? 72 : 48, a: "#93C5FD", b: "#60A5FA", d: "0s" },
+    { h: botStatus?.gold === "paused" ? 24 : openCount > 1 ? 64 : 40, a: "#FDE68A", b: "#FBBF24", d: "0.2s" },
+    { h: botStatus?.crypto === "paused" ? 22 : 56, a: "#C4B5FD", b: "#A78BFA", d: "0.4s" },
+    { h: Math.min(90, 30 + openCount * 18), a: "#99F6E4", b: "#5EEAD4", d: "0.55s" },
+    { h: mood === "down" ? 36 : mood === "up" ? 78 : 52, a: "#F9A8D4", b: "#A78BFA", d: "0.7s" },
+    { h: closedCount > 0 ? 44 : 30, a: "#818CF8", b: "#6366F1", d: "0.85s" },
+  ];
+
   return (
     <div className={`pulse status-hero status-hero-${mood}`} role="status" aria-live="polite" aria-label={aria} data-tour="hero">
       <div className="pulse-main">
-        <div className="pulse-label">{isWatcher ? "How are things?" : "Portfolio pulse"}</div>
+        <div className="pulse-label">{isWatcher ? "Observatory view" : "Portfolio pulse"}</div>
         <div className="status-hero-verdict">{verdict}</div>
         {openCount > 0 ? (
           <>
@@ -1451,6 +1461,20 @@ function StatusHero({ overview, marketClosed, botStatus }) {
               : "No open positions"}
           </div>
         )}
+      </div>
+      <div className="status-hero-skyline" aria-hidden="true">
+        {skyBars.map((b, i) => (
+          <span
+            key={i}
+            className="sky-bar"
+            style={{
+              height: `${b.h}%`,
+              "--bar-a": b.a,
+              "--bar-b": b.b,
+              animationDelay: b.d,
+            }}
+          />
+        ))}
       </div>
       <div className="pulse-stats">
         <div className="pulse-stat">
@@ -2154,24 +2178,24 @@ export default function App() {
 
   if (mode === "loading") {
     return (
-      <div className="matrix-shell">
-        <MatrixRain />
+      <div className="aurora-shell">
+        <AuroraBackdrop />
         <div className="auth-screen"><div className="auth-spinner" /></div>
       </div>
     );
   }
   if (mode === "setup") {
     return (
-      <div className="matrix-shell">
-        <MatrixRain />
+      <div className="aurora-shell">
+        <AuroraBackdrop />
         <SetupScreen onSetup={setup} />
       </div>
     );
   }
   if (mode === "login") {
     return (
-      <div className="matrix-shell">
-        <MatrixRain />
+      <div className="aurora-shell">
+        <AuroraBackdrop />
         <LoginScreen onLogin={login} />
       </div>
     );
@@ -2179,14 +2203,14 @@ export default function App() {
 
   return (
     <UiModeContext.Provider value={{ isWatcher, uiMode }}>
-    <div className="matrix-shell">
-    <MatrixRain />
+    <div className="aurora-shell">
+    <AuroraBackdrop />
     <div className={`app ${isWatcher ? "app-watcher" : "app-advanced"}`} role="main">
       <header className="app-header">
         <div>
-          <h1>HERMES</h1>
+          <h1>Hermes</h1>
           <p className="app-sub">
-            {isWatcher ? "system status · bots at a glance" : "self-improving trading system — live monitor"}
+            {isWatcher ? "aurora observatory · bots at a glance" : "self-improving trading system — live monitor"}
           </p>
         </div>
         <div className="app-status">
