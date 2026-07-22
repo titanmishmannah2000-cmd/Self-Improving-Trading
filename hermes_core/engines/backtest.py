@@ -26,7 +26,13 @@ Discipline (S10 contract, blueprint 1310-1325):
   * GP formulas use the SAME hard gates via ``backtest_gp_indicator`` (item 9/15).
 
 The price source is injectable (``fetch_prices``) so the pipeline is testable
-without network; the default pulls yfinance history but tests pass candles in.
+without network; the default pulls yfinance history (5m preferred, shared
+ticker map) but tests pass candles in.
+
+Entry simulation uses the live BB/RSI/ADX core from ``evaluate_entry``, plus
+session (L04), ensemble consensus (L13), and stop-loss cooldown (L15/L23).
+Chart vision hard/soft blocks remain live-only (no chart context in the gate).
+Crisis stress relaxes ADX so the stop/DD gate is not vacated.
 """
 
 from __future__ import annotations
@@ -61,90 +67,256 @@ def _kb_path() -> Path:
 
 # ── price source (injectable) ─────────────────────────────────────────────
 def _default_fetch(pair: str) -> list[float]:  # pragma: no cover - needs network
-    import yfinance as yf
+    """Close series for the gate when callers do not inject ``prices``.
 
-    ticker = {
-        "EUR/USD": "EURUSD=X", "GBP/USD": "GBPUSD=X",
-        "AUD/USD": "AUDUSD=X", "GBP/JPY": "GBPJPY=X",
-    }.get(pair, pair)
-    df = yf.download(ticker, period="6mo", interval="1h", progress=False)
-    return [float(c) for c in df["Close"].dropna().tolist()]
+    Uses the shared Yahoo ticker map (EURUSD=X, GC=F, BTC-USD, …) via
+    ``seed_history_interval_sync`` — never raw pair strings like XAU/USD.
+    Prefers 5m bars (live indicator cadence); falls back to daily if 5m is short.
+    """
+    from hermes_core.adapters.price import seed_history_interval_sync
+
+    for interval, period in (("5m", "60d"), ("1d", "2y")):
+        try:
+            hist = seed_history_interval_sync(
+                pair, interval=interval, period=period, max_candles=500,
+            ) or []
+        except Exception:  # noqa: BLE001 — fail-soft into next interval
+            hist = []
+        closes = [
+            float(c["price"]) for c in hist
+            if isinstance(c, dict) and c.get("price") is not None
+        ]
+        if len(closes) >= 10:
+            return closes
+    return []
 
 
 # ── simulation primitives ─────────────────────────────────────────────────
-def _mr_signal(prices: list[float], strat_type: str, win: int = 10) -> list[float]:
-    """Directional long-intent (+1) of the strategy at each bar.
+def _session_token_for_hour(hour: int) -> str:
+    """UTC hour → session token (same windows as ``loop._session_token_for``)."""
+    if 0 <= hour < 8:
+        return "ASIA"
+    if 8 <= hour < 17:
+        return "LDN"
+    if 17 <= hour < 21:
+        return "NY"
+    return "OTHER"
 
-    Mean-reversion: long when price sits below its local mean (oversold -> bounce).
-    Momentum: long when price sits above its local mean (breakout).
 
-    This is what Phase 0 correlates against forward returns: a strategy with real
-    edge produces a signal that agrees with next-step price moves, so |corr| is
-    meaningfully above the 0.15 noise floor. Raw price slope does NOT (it is ~0).
+def _bar_sessions(
+    n: int,
+    candle_ts: list[float] | None,
+    *,
+    bar_seconds: float = 300.0,
+) -> list[str]:
+    """Session token per price bar.
 
-    Vectorized with numpy: a trailing-window mean via prefix sums, then a
-    thresholded deviation. Numerically identical to the original scalar loop
-    (same window, same threshold, same 0.0/1.0 decisions) so the gate contracts
-    are unchanged — only the compute path is array-based.
+    Prefer real ``candle_ts`` when provided; otherwise synthesize evenly spaced
+    bars ending at ``time.time()`` so session filters still engage on float-only
+    history (reflection injects closes without timestamps).
     """
-    if len(prices) < 3:
-        return [0.0] * max(0, len(prices) - 1)
-    p = np.asarray(prices, dtype=float)
-    n = len(p)
-    idx = np.arange(1, n - 1)                 # bar indices 1 .. n-2
-    csum = np.concatenate(([0.0], np.cumsum(p)))
-    lo = np.maximum(0, idx - win)
-    win_sum = csum[idx + 1] - csum[lo]        # sum(prices[lo .. i])
-    win_len = (idx - lo + 1).astype(float)
-    mean = win_sum / win_len
-    dev = (p[idx] - mean) / mean
-    sig = np.zeros(n - 1, dtype=float)        # sig[0] pad stays 0.0
-    if strat_type == "mean_reversion":
-        sig[idx] = np.where(dev < -0.002, 1.0, 0.0)
-    elif strat_type == "rsi_momentum":
-        sig[idx] = np.where(dev > 0.002, 1.0, 0.0)
-    else:
-        sig[idx] = 0.0
-    return sig.tolist()
+    import time as _time
+
+    if candle_ts is not None and len(candle_ts) >= n:
+        out = []
+        for i in range(n):
+            hour = int(_time.gmtime(float(candle_ts[i])).tm_hour)
+            out.append(_session_token_for_hour(hour))
+        return out
+    now = _time.time()
+    out = []
+    for i in range(n):
+        ts = now - (n - 1 - i) * bar_seconds
+        hour = int(_time.gmtime(ts).tm_hour)
+        out.append(_session_token_for_hour(hour))
+    return out
+
+
+def _ensemble_series(
+    prices: list[float],
+    strategy: dict,
+    pair: str,
+    *,
+    stride: int = 20,
+    injected: str | list[str] | None = None,
+) -> list[str]:
+    """Per-bar ensemble consensus for L13 (bearish blocks MR).
+
+    ``injected``: constant string or per-bar list from the caller.
+    Otherwise sample GP shadow consensus every ``stride`` bars (fail-soft →
+    neutral when no discovered/approved indicators).
+    """
+    n = len(prices)
+    if n < 2:
+        return ["neutral"] * max(0, n - 1)
+    if isinstance(injected, list) and injected:
+        out = []
+        for i in range(n - 1):
+            out.append(injected[i] if i < len(injected) else injected[-1])
+        return out
+    if isinstance(injected, str) and injected:
+        return [injected] * (n - 1)
+
+    cons = ["neutral"] * (n - 1)
+    try:
+        from hermes_core.engines.entry import gp_ensemble_signal
+    except Exception:  # noqa: BLE001
+        return cons
+    last = "neutral"
+    for i in range(50, n - 1, max(1, stride)):
+        try:
+            sig = gp_ensemble_signal(pair, prices[: i + 1], strategy, promote=False)
+        except Exception:  # noqa: BLE001
+            sig = None
+        if sig is not None:
+            last = str((sig.meta or {}).get("consensus") or "neutral")
+        for j in range(i, min(i + stride, n - 1)):
+            cons[j] = last
+    return cons
+
+
+def _entry_signal(
+    prices: list[float],
+    strat_type: str,
+    threshold: float,
+    *,
+    strategy: dict | None = None,
+    pair: str = "EUR/USD",
+    candle_ts: list[float] | None = None,
+    ensemble_consensus: str | list[str] | None = None,
+    relax_adx: bool = False,
+    min_lookback: int = 40,
+    apply_session: bool = True,
+    apply_ensemble: bool = True,
+) -> list[float]:
+    """Bar-aligned long intent matching ``evaluate_entry`` (BB/RSI/ADX + L04/L13).
+
+    Session (L04) and ensemble (L13) are applied here. Cooldown (L15/L23) is
+    applied inside ``_simulate`` because it depends on simulated exits.
+    Crisis stress may set ``relax_adx=True`` so the stop/DD gate is not vacated.
+    """
+    from hermes_core.engines.entry import (
+        _BEARISH_CONSENSUS,
+        _session_allowed,
+    )
+    from hermes_core.indicators import compute_all
+
+    strategy = strategy or {
+        "strategy_type": strat_type,
+        "entry": {"threshold": threshold, "session_filter": "24h"},
+        "session_filter": "24h",
+    }
+    n = len(prices)
+    if n < min_lookback + 2:
+        return [0.0] * max(0, n - 1)
+
+    sessions = _bar_sessions(n, candle_ts) if apply_session else ["LDN"] * n
+    ensembles = (
+        _ensemble_series(prices, strategy, pair, injected=ensemble_consensus)
+        if apply_ensemble else ["neutral"] * (n - 1)
+    )
+
+    sig = [0.0] * (n - 1)
+    for i in range(min_lookback, n - 1):
+        if apply_session and not _session_allowed(strategy, sessions[i]):
+            continue
+        if (
+            apply_ensemble
+            and strat_type == "mean_reversion"
+            and ensembles[i] in _BEARISH_CONSENSUS
+        ):
+            continue
+        ind = compute_all(prices[: i + 1])
+        last = prices[i]
+        rsi = float(ind["rsi"])
+        if strat_type == "mean_reversion":
+            at_band = last <= float(ind["bb"]["lower"])
+            oversold = rsi <= threshold
+            calm = True if relax_adx else (float(ind["adx"]) < 25.0)
+            if at_band and oversold and calm:
+                sig[i] = 1.0
+        elif strat_type == "rsi_momentum":
+            if rsi <= threshold:
+                sig[i] = 1.0
+    return sig
+
+
+def _mr_signal(prices: list[float], strat_type: str, win: int = 10) -> list[float]:
+    """Backward-compatible alias — delegates to indicator-based ``_entry_signal``."""
+    del win  # unused; kept for call-site compatibility
+    return _entry_signal(prices, strat_type, threshold=30.0)
 
 
 def _simulate(prices: list[float], strat_type: str, threshold: float,
-              stop_pct: float, target_pct: float) -> dict:
-    """Vectorized backtest: take mean-reversion / momentum entries off the
-    local-mean-deviation signal, apply stop & target, and report pnl%, wr%,
-    entries and max_drawdown (fraction).
+              stop_pct: float, target_pct: float, *,
+              strategy: dict | None = None,
+              pair: str = "EUR/USD",
+              candle_ts: list[float] | None = None,
+              ensemble_consensus: str | list[str] | None = None,
+              relax_adx: bool = False,
+              apply_cooldown: bool = True) -> dict:
+    """Backtest entries with live BB/RSI/ADX + session/ensemble/cooldown gates.
 
-    Same deterministic model as before — numpy computes the trade moves, clips
-    them to the stop/target band, and accumulates P&L/drawdown as sequential
-    array ops (np.cumsum matches the original running sum order exactly), so
-    the gate contracts (OOS/crisis/permutation) are unchanged. The win is that
-    this path now scales to full OHLC history and large permutation counts.
+    Stop-loss exits arm a re-entry cooldown (L15/L23). Target/flat exits do not
+    — matching the spirit of not immediately re-buying after getting stopped
+    in this next-bar PnL model.
     """
+    from hermes_core.engines.entry import REENTRY_COOLDOWN_CYCLES
+
     if len(prices) < 10:
         return {"pnl": 0.0, "wr": 0.0, "entries": 0, "max_dd": 0.0}
+    raw = _entry_signal(
+        prices, strat_type, threshold,
+        strategy=strategy, pair=pair, candle_ts=candle_ts,
+        ensemble_consensus=ensemble_consensus, relax_adx=relax_adx,
+    )
     p = np.asarray(prices, dtype=float)
     n = len(p)
-    sig = np.asarray(_mr_signal(prices, strat_type), dtype=float)
-    ii = np.arange(1, n - 1)
-    mask = sig[ii] != 0.0
-    move = (p[1:] - p[:-1]) / p[:-1] * 100.0          # transition i -> i+1
-    trade_moves = np.clip(move[ii][mask], -stop_pct, target_pct)
-    if trade_moves.size == 0:
+    trade_moves: list[float] = []
+    last_stop_bar: int | None = None
+    for i in range(1, n - 1):
+        if raw[i] == 0.0:
+            continue
+        if (
+            apply_cooldown
+            and last_stop_bar is not None
+            and (i - last_stop_bar) < REENTRY_COOLDOWN_CYCLES
+        ):
+            continue
+        move = (p[i + 1] - p[i]) / p[i] * 100.0
+        clipped = float(np.clip(move, -stop_pct, target_pct))
+        trade_moves.append(clipped)
+        if move <= -stop_pct:
+            last_stop_bar = i
+    if not trade_moves:
         return {"pnl": 0.0, "wr": 0.0, "entries": 0, "max_dd": 0.0}
-    cum = np.cumsum(trade_moves)
+    tm = np.asarray(trade_moves, dtype=float)
+    cum = np.cumsum(tm)
     peak = np.maximum.accumulate(cum)
     dd = (peak - cum) / 100.0
-    max_dd = float(dd.max())
-    wins = int(np.count_nonzero(trade_moves > 0))
-    entries = int(trade_moves.size)
+    wins = int(np.count_nonzero(tm > 0))
+    entries = int(tm.size)
     wr = wins / entries * 100.0
     return {"pnl": round(float(cum[-1]), 4), "wr": round(wr, 1),
-            "entries": entries, "max_dd": round(max_dd, 4)}
+            "entries": entries, "max_dd": round(float(dd.max()), 4)}
 
 
-def _strategy_signal(prices: list[float], strat_type: str, threshold: float) -> list[float]:
-    """Phase-0 directional signal (delegates to the shared MR/momentum rule)."""
-    return _mr_signal(prices, strat_type)
+def _strategy_signal(
+    prices: list[float],
+    strat_type: str,
+    threshold: float,
+    *,
+    strategy: dict | None = None,
+    pair: str = "EUR/USD",
+    candle_ts: list[float] | None = None,
+    ensemble_consensus: str | list[str] | None = None,
+) -> list[float]:
+    """Phase-0 directional signal (live entry core + session/ensemble)."""
+    return _entry_signal(
+        prices, strat_type, threshold,
+        strategy=strategy, pair=pair, candle_ts=candle_ts,
+        ensemble_consensus=ensemble_consensus,
+    )
 
 
 def _classify_regime(prices: list[float]) -> str:
@@ -161,18 +333,25 @@ def _classify_regime(prices: list[float]) -> str:
 
 
 def _crisis_backtest(prices: list[float], strat_type: str, threshold: float,
-                     stop_pct: float, target_pct: float) -> dict:
+                     stop_pct: float, target_pct: float, *,
+                     strategy: dict | None = None,
+                     pair: str = "EUR/USD",
+                     candle_ts: list[float] | None = None,
+                     ensemble_consensus: str | list[str] | None = None) -> dict:
     """Crisis stress: a change must survive a high-vol drawdown regime.
 
-    We sharpen the stop (tighter risk) and measure the realized max drawdown on
-    the crisis window. If DD blows past CRISIS_DD_LIMIT the change is rejected —
-    a parameter that only 'works' because stops are loose in calm markets fails
-    here. Fatal unless the historical delta is large (>= CRISIS_DELTA_OK).
+    Uses the same BB/RSI + session/ensemble entry triggers as live, but relaxes
+    the ADX calm filter (crisis windows elevate ADX and would otherwise vacate
+    this gate). Measures max drawdown under the **proposed** stop.
     """
     if _classify_regime(prices) != "crisis":
         return {"approved": True, "reason": "not a crisis window"}
-    tight_stop = max(0.5, stop_pct * 0.5)
-    res = _simulate(prices, strat_type, threshold, tight_stop, target_pct)
+    res = _simulate(
+        prices, strat_type, threshold, stop_pct, target_pct,
+        strategy=strategy, pair=pair, candle_ts=candle_ts,
+        ensemble_consensus=ensemble_consensus, relax_adx=True,
+        apply_cooldown=False,  # stress the stop itself, not re-entry spacing
+    )
     approved = res["max_dd"] <= CRISIS_DD_LIMIT
     return {"approved": approved,
             "reason": f"crisis DD {res['max_dd']:.3f} <= {CRISIS_DD_LIMIT}"
@@ -310,6 +489,8 @@ def backtest_with_history(
     *,
     strategy: dict | None = None,
     prices: list[float] | None = None,
+    candle_ts: list[float] | None = None,
+    ensemble_consensus: str | list[str] | None = None,
     fetch_prices: Callable[[str], list[float]] = _default_fetch,
     bot: str = "forex",
 ) -> dict:
@@ -318,7 +499,14 @@ def backtest_with_history(
     Shadow by default: records to the hypothesis KB and computes the bumped
     version, but does NOT mutate the live strategy file (that is the explicit
     approval-gated deploy step upstream).
+
+    Entry simulation applies live BB/RSI/ADX plus session (L04), ensemble (L13),
+    and stop-loss cooldown (L15/L23). Optional ``candle_ts`` / ``ensemble_consensus``
+    refine those gates; when omitted, sessions are synthesized and GP consensus
+    is sampled (fail-soft → neutral).
     """
+    from hermes_core.engines.entry import _entry_rsi_threshold
+
     # KB short-circuit: a previously-rejected proposal is not re-run.
     cached = _kb_hit(pair, param, old_val, new_val)
     if cached is not None and not cached.get("approved", False):
@@ -328,7 +516,7 @@ def backtest_with_history(
     if strategy is None:
         strategy = load_strategy_for_pair(pair, bot)
     strat_type = strategy.get("strategy_type", "mean_reversion")
-    threshold = (strategy.get("entry") or {}).get("threshold", 30)
+    threshold = _entry_rsi_threshold(strategy)
     target_pct = float(strategy.get("profit_target_pct", 3.0))
     old_stop = float(old_val) if param == "stop_loss_pct" else float(
         strategy.get("stop_loss_pct", 1.5))
@@ -341,6 +529,11 @@ def backtest_with_history(
         _kb_record(pair, param, old_val, new_val, False, verdict["reason"])
         return verdict
 
+    sim_kw = dict(
+        strategy=strategy, pair=pair, candle_ts=candle_ts,
+        ensemble_consensus=ensemble_consensus,
+    )
+
     phases: dict[str, object] = {}
     reasons: list[str] = []
 
@@ -348,11 +541,31 @@ def backtest_with_history(
     # correlated against forward returns (real edge shows above the 0.15 floor).
     oos_idx = int(len(prices) * (1 - OOS_FRACTION))
     oos_prices = prices[oos_idx:]
-    signal = _strategy_signal(prices, strat_type, threshold)
-    oos_signal = _strategy_signal(oos_prices, strat_type, threshold)
+    oos_ts = candle_ts[oos_idx:] if candle_ts and len(candle_ts) >= len(prices) else None
+    oos_ens = None
+    if isinstance(ensemble_consensus, list) and len(ensemble_consensus) >= len(prices) - 1:
+        oos_ens = ensemble_consensus[oos_idx:]
+    elif isinstance(ensemble_consensus, str):
+        oos_ens = ensemble_consensus
+    signal = _strategy_signal(
+        prices, strat_type, threshold, strategy=strategy, pair=pair,
+        candle_ts=candle_ts, ensemble_consensus=ensemble_consensus,
+    )
+    oos_signal = _strategy_signal(
+        oos_prices, strat_type, threshold, strategy=strategy, pair=pair,
+        candle_ts=oos_ts, ensemble_consensus=oos_ens,
+    )
     oos_corr = phase0_corr(oos_signal, oos_prices)
-    oos_old = _simulate(oos_prices, strat_type, threshold, old_stop, target_pct)
-    oos_new = _simulate(oos_prices, strat_type, threshold, new_stop, target_pct)
+    oos_kw = dict(
+        strategy=strategy, pair=pair, candle_ts=oos_ts,
+        ensemble_consensus=oos_ens,
+    )
+    oos_old = _simulate(
+        oos_prices, strat_type, threshold, old_stop, target_pct, **oos_kw,
+    )
+    oos_new = _simulate(
+        oos_prices, strat_type, threshold, new_stop, target_pct, **oos_kw,
+    )
     oos_delta = oos_new["pnl"] - oos_old["pnl"]
     oos_approved = oos_corr >= OOS_CORR_MIN and oos_delta > OOS_DELTA_OK
     phases["phase0_oos"] = {
@@ -363,8 +576,8 @@ def backtest_with_history(
         reasons.append(f"OOS FAIL: corr={oos_corr} (>= {OOS_CORR_MIN}) delta={oos_delta} (>-0.2)")
 
     # Phase 1 — historical delta (full window, old vs new)
-    old_res = _simulate(prices, strat_type, threshold, old_stop, target_pct)
-    new_res = _simulate(prices, strat_type, threshold, new_stop, target_pct)
+    old_res = _simulate(prices, strat_type, threshold, old_stop, target_pct, **sim_kw)
+    new_res = _simulate(prices, strat_type, threshold, new_stop, target_pct, **sim_kw)
     delta = new_res["pnl"] - old_res["pnl"]
     hist_ok = delta > HIST_DELTA_OK
     phases["phase1_hist"] = {"delta": round(delta, 4), "ok": hist_ok}
@@ -372,7 +585,9 @@ def backtest_with_history(
         reasons.append(f"HIST FAIL: delta={delta} (>-0.1)")
 
     # Phase 1.5 — crisis stress
-    crisis = _crisis_backtest(prices, strat_type, threshold, new_stop, target_pct)
+    crisis = _crisis_backtest(
+        prices, strat_type, threshold, new_stop, target_pct, **sim_kw,
+    )
     phases["phase1_5_crisis"] = crisis
     if not crisis.get("approved", True) and delta < CRISIS_DELTA_OK:
         reasons.append(f"CRISIS FAIL: {crisis['reason']}")
@@ -472,8 +687,7 @@ def _crisis_backtest_gp(prices: list[float], signal: list[float],
                         stop_pct: float, target_pct: float) -> dict:
     if _classify_regime(prices) != "crisis":
         return {"approved": True, "reason": "not a crisis window"}
-    tight_stop = max(0.5, stop_pct * 0.5)
-    res = _simulate_gp(prices, signal, tight_stop, target_pct)
+    res = _simulate_gp(prices, signal, stop_pct, target_pct)
     approved = res["max_dd"] <= CRISIS_DD_LIMIT
     return {
         "approved": approved,

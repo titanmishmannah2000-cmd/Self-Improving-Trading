@@ -343,26 +343,37 @@ def test_make_aggregator_fetch_returns_callable():
     assert c is None or isinstance(c, dict)
 
 
-def test_seed_history_fn():
+def test_seed_history_fn(monkeypatch):
+    import hermes_core.adapters.aggregate as agg_mod
+
+    monkeypatch.setattr(agg_mod, "_external_history", lambda *a, **k: [])
+    monkeypatch.setattr(agg_mod, "_frankfurter_fx_history", lambda *a, **k: [])
     agg = PriceAggregator(["EUR/USD"], sources=_fake_sources(frank=1.10, alpha=1.101, yf=1.099))
     agg.fetch_fn("EUR/USD")
     hist = agg.seed_history_fn("EUR/USD")
     assert isinstance(hist, list)
 
 
-# ── run_cycle integration (reuse S18 harness) ─────────────────────────────────
-def test_aggregator_through_run_cycle():
-    import test_integration_e2e as e2e  # reuse S18 _Feed + run_cycle
+# ── run_cycle integration (no dashboard/fastapi dependency) ───────────────────
+def test_aggregator_through_run_cycle(monkeypatch):
+    from hermes_core.engines.loop import run_cycle
+    import hermes_core.adapters.aggregate as agg_mod
+
+    # Network-free: no Yahoo / Frankfurter during history seeding.
+    monkeypatch.setattr(agg_mod, "_external_history", lambda *a, **k: [])
+    monkeypatch.setattr(agg_mod, "_frankfurter_fx_history", lambda *a, **k: [])
 
     # A rolling source so the loop sees price movement and can take a trade.
     class _Roller:
-        def __init__(self): self.i = 0
+        def __init__(self):
+            self.i = 0
+
         async def fetch(self, pair):
             self.i += 1
             return 1.10 + 0.01 * ((self.i // 5) % 4)  # steps 1.10..1.13
 
     roller = _Roller()
-    # wrap roller as the sole FX source for EUR/USD (async lambdas for the rest)
+
     async def _none(p):
         return None
 
@@ -380,12 +391,17 @@ def test_aggregator_through_run_cycle():
     y.fetch = _none
     agg = PriceAggregator(["EUR/USD"], sources=[f, a, p, m, c, y])
 
+    def _hist(pair):
+        # Enough synthetic bars for indicators without touching the network.
+        return [{"price": 1.10 + i * 0.0001} for i in range(80)]
+
     positions: dict = {}
     reentry: dict = {}
     for cyc in range(1, 80):
-        e2e.run_cycle(
+        run_cycle(
             "forex", cyc,
             fetch_fn=agg.fetch_fn,
+            history_fn=_hist,
             now_fn=lambda c=cyc: c * 3600.0,
             chart_context_fn=lambda p: "",
             ensemble_fn=lambda p: "neutral",

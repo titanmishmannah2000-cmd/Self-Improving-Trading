@@ -34,9 +34,10 @@ from hermes_core.adapters.ws_price import STALE_S_MAX, PriceStream
 STALE_S_MAX_LOCAL = STALE_S_MAX
 CONSENSUS_PCT = 0.01  # sources must agree within 1% or consensus is rejected
 SOURCE_TIMEOUT = 3.0  # per-source httpx timeout (seconds)
-# Indicator seeding needs a real multi-bar series. Yahoo intermittently returns
-# empty/"delisted" for FX+futures; below that floor we use Frankfurter daily
-# (FX) and/or the live rolling tick buffer instead of a single last-good tick.
+# Indicator seeding needs a real multi-bar series. Prefer yfinance 5m (live
+# indicator cadence). Yahoo intermittently returns empty/"delisted" for FX;
+# below that floor we use Frankfurter daily and/or the live rolling tick buffer
+# instead of a single last-good tick.
 HISTORY_MIN_BARS = 50
 TICK_HISTORY_MAX = 300
 # Only sample a new live tick into the rolling buffer when price moves or enough
@@ -154,24 +155,39 @@ def _frankfurter_fx_history(pair: str, max_candles: int = 300) -> list[dict]:
         return []
 
 
+def _yf_intraday_history(pair: str, max_candles: int = 300) -> list[dict]:
+    """Yahoo intraday history (5m → 15m → 1h). Fail-soft → []."""
+    from hermes_core.adapters.price import seed_history_interval_sync
+
+    for interval, period in (("5m", "60d"), ("15m", "60d"), ("1h", "60d")):
+        try:
+            hist = seed_history_interval_sync(
+                pair, interval=interval, period=period, max_candles=max_candles,
+            ) or []
+        except Exception:  # noqa: BLE001
+            hist = []
+        if len(hist) >= HISTORY_MIN_BARS:
+            return hist
+    return []
+
+
 def _external_history(pair: str, max_candles: int = 300) -> list[dict]:
-    """Best-effort multi-bar history from free external sources (no broker)."""
+    """Best-effort INTRADAY history from free external sources (no broker).
+
+    FX/crypto/metals: yfinance 5m/15m/1h only. Frankfurter daily is intentionally
+    NOT returned here — daily bars mismatch live indicator cadence; seed_history_fn
+    may use Frankfurter only as a cold-start last resort after the tick buffer.
+    """
     if pair in _METAL_PAIRS:
-        return _yf_history(pair, max_candles)
+        # metals: prefer dedicated 5m seed (GC=F / SI=F), then intraday ladder
+        yf = _yf_history(pair, max_candles)
+        if len(yf) >= HISTORY_MIN_BARS:
+            return yf
+        return _yf_intraday_history(pair, max_candles)
     if pair in _CRYPTO_PAIRS:
-        return []
-    # FX: Frankfurter daily first (reliable, no key), then yfinance 5m as backup.
-    frank = _frankfurter_fx_history(pair, max_candles=max_candles)
-    if len(frank) >= HISTORY_MIN_BARS:
-        return frank
-    try:
-        yf_h = _yf_seed_history(pair, max_candles=max_candles) or []
-    except Exception:  # noqa: BLE001
-        yf_h = []
-    if len(yf_h) >= HISTORY_MIN_BARS:
-        return yf_h
-    # Prefer whatever non-empty series we got (even if short) over [].
-    return frank or yf_h
+        return _yf_intraday_history(pair, max_candles)
+    # FX: intraday Yahoo only (no daily Frankfurter at this layer).
+    return _yf_intraday_history(pair, max_candles)
 
 
 class _BaseSource:
@@ -693,16 +709,31 @@ class PriceAggregator:
         """Multi-bar history for indicator seeding (oldest-first). [GUARD L61]
 
         Priority:
-          1. Crypto websocket buffer
-          2. External history (Frankfurter daily for FX; yfinance for metals)
+          1. Crypto websocket buffer (when long enough)
+          2. External INTRADAY history (yfinance 5m/15m/1h)
           3. Rolling live consensus tick buffer (built as the bot cycles)
-          4. Last-good single tick (degenerate — loop will usually BB-skip)
+          4. Frankfurter daily FX (cold-start last resort only — wrong cadence)
+          5. Last-good single tick (degenerate — loop will usually BB-skip)
 
         Yahoo intermittently returns empty/"delisted" for FX+futures; without
         (2)/(3) the bot collapses to one tick → ``bb_bandwidth:0`` forever.
+        Daily Frankfurter must NOT outrank the live tick buffer.
         """
         if pair in _CRYPTO_PAIRS:
-            return self._crypto.seed_history_fn(pair, max_candles)
+            ws = self._crypto.seed_history_fn(pair, max_candles) or []
+            if len(ws) >= HISTORY_MIN_BARS:
+                return ws
+            try:
+                external = _external_history(pair, max_candles=max_candles) or []
+            except Exception:  # noqa: BLE001
+                external = []
+            if len(external) >= HISTORY_MIN_BARS:
+                return external[-max_candles:]
+            if len(ws) >= 2:
+                return ws
+            if len(external) >= 2:
+                return external[-max_candles:]
+            return ws or external
 
         external: list[dict] = []
         try:
@@ -726,6 +757,15 @@ class PriceAggregator:
         buf = list(self._tick_history.get(pair) or [])
         if len(buf) >= 30:
             return buf[-max_candles:]
+
+        # Cold-start only: daily ECB FX when Yahoo + tick buffer are both short.
+        if pair not in _METAL_PAIRS and pair not in _CRYPTO_PAIRS:
+            try:
+                frank = _frankfurter_fx_history(pair, max_candles=max_candles) or []
+            except Exception:  # noqa: BLE001
+                frank = []
+            if len(frank) >= HISTORY_MIN_BARS:
+                return frank[-max_candles:]
 
         # Prefer a short external series over a single tick when that's all we have.
         if len(external) >= 2:

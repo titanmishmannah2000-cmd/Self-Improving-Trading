@@ -314,6 +314,73 @@ def test_seed_history_metals_falls_back_to_buffer(monkeypatch):
     assert hist[-1]["price"] == 4034.0
 
 
+def test_seed_history_crypto_falls_back_to_yahoo(monkeypatch):
+    """Crypto must use Yahoo (BTC-USD) when the websocket buffer is short."""
+    import hermes_core.adapters.aggregate as agg
+
+    fake = [{"price": 60_000.0 + i, "ts": float(i), "candle_ts": float(i)}
+            for i in range(80)]
+    monkeypatch.setattr(
+        agg, "_external_history",
+        lambda pair, max_candles=300: fake if pair == "BTC/USD" else [],
+    )
+    a = agg.PriceAggregator(["BTC/USD"], sources=[])
+    # WS buffer empty / short by default
+    hist = a.seed_history_fn("BTC/USD", max_candles=300)
+    assert len(hist) >= 50
+    assert hist[0]["price"] < hist[-1]["price"]
+
+
+def test_external_history_fx_prefers_yf_5m(monkeypatch):
+    """FX external history is Yahoo intraday only (no Frankfurter at this layer)."""
+    import hermes_core.adapters.aggregate as agg
+
+    yf_calls = []
+
+    def fake_intraday(pair, max_candles=300):
+        yf_calls.append(pair)
+        return [{"price": 1.10 + i * 0.0001} for i in range(max_candles)]
+
+    def fake_frank(pair, max_candles=300):
+        raise AssertionError("Frankfurter must not run inside _external_history")
+
+    monkeypatch.setattr(agg, "_yf_intraday_history", fake_intraday)
+    monkeypatch.setattr(agg, "_frankfurter_fx_history", fake_frank)
+    hist = agg._external_history("EUR/USD", max_candles=100)
+    assert len(hist) == 100
+    assert yf_calls == ["EUR/USD"]
+
+
+def test_seed_history_prefers_tick_buffer_over_frankfurter(monkeypatch):
+    """When Yahoo is empty, live ticks beat daily Frankfurter (cadence match)."""
+    import hermes_core.adapters.aggregate as agg
+
+    monkeypatch.setattr(agg, "_external_history", lambda pair, max_candles=300: [])
+    frank = [{"price": 1.0 + i * 0.001} for i in range(200)]
+    monkeypatch.setattr(
+        agg, "_frankfurter_fx_history",
+        lambda pair, max_candles=300: frank,
+    )
+    a = agg.PriceAggregator(["EUR/USD"], sources=[])
+    for i in range(40):
+        candle = {
+            "pair": "EUR/USD",
+            "price": 1.10 + i * 0.0002,
+            "high": 1.10 + i * 0.0002,
+            "low": 1.10 + i * 0.0002,
+            "ts": 1_000_000.0 + i * 60.0,
+            "candle_ts": 1_000_000.0 + i * 60.0,
+        }
+        a._last_good["EUR/USD"] = candle
+        a._record_tick_unlocked("EUR/USD", candle)
+    hist = a.seed_history_fn("EUR/USD", max_candles=300)
+    assert len(hist) >= 30
+    # Tick buffer prices, not Frankfurter's 1.0+ series
+    assert hist[0]["price"] >= 1.10
+    assert hist[-1]["price"] < 1.12
+
+
+
 def test_gp_ensemble_signal_promote_tags_entry_type():
     """When promote=True the returned Signal must be a real (paper) entry:
     shadow=False and entry_type='gp_ensemble', so the live loop opens it
