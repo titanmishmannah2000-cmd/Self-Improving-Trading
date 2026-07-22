@@ -130,6 +130,19 @@ class Cortex:
         wins = sum(e["outcome"] for e in outcomes)
         return wins / len(outcomes)
 
+    def evidence_n(self, pair: str, entry_type: str) -> int:
+        """Closed-outcome count for (pair, entry_type) — HIF Phase-1 probe gate.
+
+        Only rows with a recorded outcome count; open/unscored entries do not.
+        """
+        return sum(
+            1
+            for e in self._entries
+            if e.get("pair") == pair
+            and e.get("type") == entry_type
+            and e.get("outcome") is not None
+        )
+
     # ── best entry type (router) ────────────────────────────────────────────
     def best_entry_type(self, pair: str | None = None) -> str:
         """Return the entry type with the higher known win-rate, falling back to
@@ -244,6 +257,31 @@ class Cortex:
                 "exiled": st.get("exiled", False),
                 "by_type": {"gp_ensemble": gp_block} if gp_block else {},
             }
+        # HIF Phase-1: per (pair, entry_type) closed evidence for probe/full UI.
+        from hermes_core.engines.risk import PROBE_EVIDENCE_MIN, evidence_state_for
+
+        probe_by_key: dict[str, dict] = {}
+        for e in self._entries:
+            if e.get("outcome") is None:
+                continue
+            p, t = e.get("pair"), e.get("type")
+            if not p or not t or t in ("hypothesis", "discovery"):
+                continue
+            key = f"{p}|{t}"
+            bucket = probe_by_key.setdefault(key, {"pair": p, "entry_type": t, "n": 0})
+            bucket["n"] += 1
+        for bucket in probe_by_key.values():
+            n = int(bucket["n"])
+            bucket["evidence_n"] = n
+            # enabled=True here: state is about evidence thickness only; the Live
+            # badge still respects PROBE_SIZING via open-trade size_mode.
+            bucket["evidence_state"] = evidence_state_for(
+                n, enabled=True, evidence_min=PROBE_EVIDENCE_MIN,
+            )
+            bucket["size_mode_if_enabled"] = (
+                "probe" if bucket["evidence_state"] == "thin" else "full"
+            )
+
         return {
             "summary": {
                 # Closed outcomes only — UI labels this "completed".
@@ -259,9 +297,17 @@ class Cortex:
             "by_entry_type": by_type,
             "by_pair": by_pair,
             "type_wr": {t: self.entry_type_wr(t) for t in VALID_ENTRY_TYPES},
+            "probe_evidence": {
+                "threshold": PROBE_EVIDENCE_MIN,
+                "by_key": probe_by_key,
+            },
             "gates": {
                 "exile": f"GP indicator WR < {EXILE_WR:.0%} after ≥{EXILE_MIN_ATTEMPTS} attempts → exiled",
                 "reinstate": f"After {EXILE_DECAY_ENTRIES} entries, reinstate if WR ≥ {REINSTATE_WR:.0%}",
                 "best_entry": "Router picks the entry type with the higher known win-rate",
+                "probe": (
+                    f"HIF Phase-1: when PROBE_SIZING=1 and closed evidence "
+                    f"< {PROBE_EVIDENCE_MIN} for (pair, entry_type) → 25% probe size"
+                ),
             },
         }

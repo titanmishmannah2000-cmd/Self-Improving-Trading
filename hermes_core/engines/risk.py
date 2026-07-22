@@ -9,6 +9,11 @@ Guards:
   L40  — param-range hard gate (stop 0.5-10, target 0.5-20, position_size_r 0.05-1)
   RR guard  — reject R:R < 1.0
   ATR floor — stop distance >= floor_pct
+
+HIF Phase 1 — Probe sizing (L30/L33-lite):
+  When PROBE_SIZING=1 and cortex evidence for (pair, entry_type) is thin
+  (< PROBE_EVIDENCE_MIN closed outcomes), shrink size to PROBE_SIZE_FRACTION.
+  Never blocks a trade. Fail-open to full size when evidence is unknown.
 """
 
 from __future__ import annotations
@@ -19,6 +24,10 @@ NEUTRAL_MULT = 0.6
 BEAR_MULT = 0.3
 OPEN_BULLISH_PENALTY = 0.15      # per open bullish position beyond the first
 RR_GUARD_MIN = 1.0               # reward:risk below this is rejected
+
+# HIF Phase 1 — probe sizing (matches policy_engine.PROBE_CORTEX_THRESHOLD)
+PROBE_EVIDENCE_MIN = 5           # closed outcomes before full size
+PROBE_SIZE_FRACTION = 0.25       # 25% of computed size while evidence is thin
 
 
 def _raw_size(base: float, regime: str, open_bullish: int) -> float:
@@ -38,6 +47,59 @@ def compute_position_size(regime, vol, open_bullish_count, config) -> float:
     """Blueprint-exact Phase-6 signature. Returns position size in (0, 0.5]."""
     base = float(config.get("position_size_r", 0.15))
     return _raw_size(base, regime, int(open_bullish_count))
+
+
+def evidence_state_for(
+    evidence_n: int | None,
+    *,
+    enabled: bool,
+    evidence_min: int = PROBE_EVIDENCE_MIN,
+) -> str:
+    """Dashboard label: disabled | unknown | thin | ok."""
+    if not enabled:
+        return "disabled"
+    if evidence_n is None:
+        return "unknown"
+    return "thin" if int(evidence_n) < int(evidence_min) else "ok"
+
+
+def apply_probe_sizing(
+    base_size: float,
+    *,
+    enabled: bool,
+    evidence_n: int | None,
+    evidence_min: int = PROBE_EVIDENCE_MIN,
+    probe_fraction: float = PROBE_SIZE_FRACTION,
+) -> dict:
+    """Apply HIF Phase-1 probe sizing. Never blocks; may only shrink size.
+
+    ``evidence_n is None`` means cortex missing / unread → fail-open to **full**
+    (same capital as today). Thin evidence (< evidence_min) → probe fraction.
+    """
+    base = float(base_size)
+    base_clamped = min(max(0.0, base), MAX_POSITION_SIZE)
+    state = evidence_state_for(
+        evidence_n, enabled=enabled, evidence_min=evidence_min,
+    )
+    if state in ("disabled", "unknown", "ok"):
+        return {
+            "size": base_clamped,
+            "base_size": base_clamped,
+            "size_mode": "full",
+            "evidence_n": None if evidence_n is None else int(evidence_n),
+            "evidence_state": state,
+            "probe_fraction": float(probe_fraction),
+        }
+    # thin → probe
+    sized = min(MAX_POSITION_SIZE, max(0.0, base_clamped * float(probe_fraction)))
+    return {
+        "size": sized,
+        "base_size": base_clamped,
+        "size_mode": "probe",
+        "evidence_n": int(evidence_n),
+        "evidence_state": "thin",
+        "probe_fraction": float(probe_fraction),
+    }
 
 
 def size(strategy, regime, vol, gp_state) -> float:

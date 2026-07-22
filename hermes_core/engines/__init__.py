@@ -71,9 +71,13 @@ from hermes_core.engines.reflect import (
 )
 from hermes_core.engines.risk import (
     MAX_POSITION_SIZE,
+    PROBE_EVIDENCE_MIN,
+    PROBE_SIZE_FRACTION,
+    apply_probe_sizing,
     check_rr_guard,
     compute_atr_stop,
     compute_position_size,
+    evidence_state_for,
     param_range_gate,
     size,
 )
@@ -83,6 +87,8 @@ __all__ = [
     "Exit", "evaluate_exit", "should_circuit_break",
     "MAX_POSITION_SIZE", "check_rr_guard", "compute_atr_stop",
     "compute_position_size", "param_range_gate", "size",
+    "apply_probe_sizing", "PROBE_EVIDENCE_MIN", "PROBE_SIZE_FRACTION",
+    "evidence_state_for",
     "get_chart_context", "get_all_chart_contexts", "analyze_chart",
     "hard_block", "soft_block",
     "aggregate_trades", "layer1_rule_based", "combined_reflect",

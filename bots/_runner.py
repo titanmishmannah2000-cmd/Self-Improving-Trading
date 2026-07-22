@@ -188,6 +188,12 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
             "held_cycles": pos.get("held_cycles", 0),
             "unrealised_pct": pos.get("unrealised_pct"),
             "gp_indicators": pos.get("gp_indicators") or [],
+            # HIF Phase-1 probe sizing (dashboard Live / Detail indicators)
+            "size_mode": pos.get("size_mode", "full"),
+            "evidence_n": pos.get("evidence_n"),
+            "evidence_state": pos.get("evidence_state", "disabled"),
+            "base_size": pos.get("base_size"),
+            "probe_fraction": pos.get("probe_fraction"),
         }
         for pair, pos in open_positions.items()
     ]

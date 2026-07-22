@@ -118,6 +118,9 @@ export default function CortexView({ apiBase, isActive = true }) {
   const allocation = policy.allocation || {};
   const prioDisc = policy.priority_discovery;
   const rollback = policy.rollback;
+  const probeEv = (botData && botData.probe_evidence) || {};
+  const probeByKey = probeEv.by_key || {};
+  const probeThreshold = probeEv.threshold ?? 5;
 
   const hasPolicyBlock =
     Object.keys(suppressions).length > 0 ||
@@ -197,6 +200,53 @@ export default function CortexView({ apiBase, isActive = true }) {
           </div>
         </div>
 
+        <div className="report-card" style={{ marginBottom: 16 }} data-testid="cortex-probe-evidence">
+          <div className="report-card-header">Probe sizing evidence</div>
+          <Help>
+            HIF Phase 1: when <code>PROBE_SIZING=1</code>, pairs/styles with fewer than{" "}
+            {probeThreshold} closed cortex outcomes open at 25% size (probe). At{" "}
+            {probeThreshold}+ closed outcomes they use full size. This never blocks a
+            trade — it only shrinks risk while learning. Flag default is OFF.
+          </Help>
+          {Object.keys(probeByKey).length === 0 ? (
+            <p className="detail-muted">
+              No closed outcomes remembered yet — if Probe Sizing is enabled, new
+              entries will open in probe mode until evidence builds.
+            </p>
+          ) : (
+            <table className="trade-table" style={{ marginTop: 4, fontSize: "0.85em" }}>
+              <thead>
+                <tr>
+                  <th>Pair</th>
+                  <th>Entry style</th>
+                  <th>Closed</th>
+                  <th>Evidence</th>
+                  <th>If enabled</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(probeByKey).map(([key, row]) => (
+                  <tr key={key}>
+                    <td>{row.pair || key.split("|")[0]}</td>
+                    <td>{fmtType(row.entry_type)}</td>
+                    <td>{row.evidence_n ?? row.n ?? 0}</td>
+                    <td>
+                      <span className={row.evidence_state === "thin" ? "dp-probe" : "dp-full"}>
+                        {row.evidence_state || "—"}
+                      </span>
+                    </td>
+                    <td>
+                      <span className={row.size_mode_if_enabled === "probe" ? "dp-probe" : "dp-full"}>
+                        {(row.size_mode_if_enabled || "full").toUpperCase()}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
         {hasPolicyBlock && (
           <div className="report-card cortex-policy" style={{ marginBottom: 16 }}>
             <div className="report-card-header">Active policy decisions</div>
@@ -205,7 +255,7 @@ export default function CortexView({ apiBase, isActive = true }) {
               style from opening new trades. This does not close positions already
               open — it only blocks new entries of the benched type.
             </Help>
-            {(gates.suppress_gp || gates.exile) && (
+            {(gates.suppress_gp || gates.exile || gates.probe) && (
               <ul className="cortex-gates">
                 {gates.suppress_gp && <li>{gates.suppress_gp}</li>}
                 {gates.suppress_mr && <li>{gates.suppress_mr}</li>}
@@ -213,6 +263,7 @@ export default function CortexView({ apiBase, isActive = true }) {
                 {gates.rollback && <li>{gates.rollback}</li>}
                 {gates.exile && <li>{gates.exile}</li>}
                 {gates.reinstate && <li>{gates.reinstate}</li>}
+                {gates.probe && <li>{gates.probe}</li>}
               </ul>
             )}
             {Object.keys(suppressions).length > 0 ? (

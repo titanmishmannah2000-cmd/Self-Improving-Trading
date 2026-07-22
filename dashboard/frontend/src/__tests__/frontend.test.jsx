@@ -246,4 +246,35 @@ describe("Phase 17 dashboard frontend", () => {
       "pipeline gap for crypto",
     );
   });
+
+  it("test_probe_size_mode_badge", async () => {
+    const overview = mockOverview();
+    overview.bots.forex.recent_open_trades = [
+      {
+        id: "forex:EUR/USD:1",
+        pair: "EUR/USD",
+        entry_type: "mean_reversion",
+        entry_price: 1.1,
+        size: 0.1,
+        base_size: 0.4,
+        size_mode: "probe",
+        evidence_n: 2,
+        evidence_state: "thin",
+        probe_fraction: 0.25,
+        entry_ts: "2026-01-01T00:00:00Z",
+        held_cycles: 3,
+        unrealised_pct: 0.2,
+      },
+    ];
+    overview.bots.forex.open_count = 1;
+    overview.totals.open_trades = 1;
+    installFetchMock(overview);
+
+    render(<App />);
+    await screen.findAllByTestId("pair-card");
+    // Probe badge is Advanced-face only (same as strategy / GP badges).
+    fireEvent.click(screen.getByRole("button", { name: "Watcher" }));
+    const badge = await screen.findByTestId("size-mode-badge");
+    expect(badge).toHaveTextContent(/Probe 25%/i);
+  });
 });

@@ -41,6 +41,7 @@ from hermes_core.engines.genetic import discover as gp_discover
 from hermes_core.engines.policy_engine import PolicyEngine
 from hermes_core.engines.risk import (
     MAX_POSITION_SIZE,
+    apply_probe_sizing,
     check_rr_guard,
     compute_atr_stop,
     compute_position_size,
@@ -698,6 +699,20 @@ def run_cycle(
                 summary["skips"] += 1
                 continue
             size = compute_position_size(session_token, atr, 0, strategy)
+            # HIF Phase-1 probe sizing: shrink only when PROBE_SIZING=1 and
+            # cortex evidence for (pair, entry_type) is thin. Never skips.
+            # Fail-open to full size if cortex cannot be read.
+            _probe_enabled = get_env("PROBE_SIZING", "0") == "1"
+            _evidence_n: int | None = None
+            if _probe_enabled:
+                try:
+                    _evidence_n = int(cortex.evidence_n(pair, _etype))
+                except Exception:  # noqa: BLE001 — fail-open → full
+                    _evidence_n = None
+            _probe = apply_probe_sizing(
+                size, enabled=_probe_enabled, evidence_n=_evidence_n,
+            )
+            size = float(_probe["size"])
             stop = _atr_stop_for(strategy, price, atr)
             open_positions[pair] = {
                 "id": f"{bot}:{pair}:{int(time.time())}",
@@ -713,6 +728,12 @@ def run_cycle(
                 # B9: firing GP indicator IDs so that on close ONLY these are
                 # credited (per-vote credit, not the whole ensemble blob).
                 "gp_indicators": sig.meta.get("gp_indicators", []),
+                # HIF Phase-1 dashboard fields
+                "size_mode": _probe["size_mode"],
+                "evidence_n": _probe.get("evidence_n"),
+                "evidence_state": _probe["evidence_state"],
+                "base_size": _probe.get("base_size"),
+                "probe_fraction": _probe.get("probe_fraction"),
             }
             # [CORTEX] record the entry (per-type memory; exile persists across cycles)
             with contextlib.suppress(Exception):

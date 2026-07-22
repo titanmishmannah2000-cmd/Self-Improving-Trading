@@ -282,7 +282,19 @@ body {
   color: #5fd0e6;
   border: 1px solid #2c7d92;
 }
+.pc-strategy-probe {
+  background: #3a2e14;
+  color: #e6c45f;
+  border: 1px solid #92782c;
+}
+.pc-strategy-full {
+  background: #143a22;
+  color: #7fd0a0;
+  border: 1px solid #2c9260;
+}
 .dp-gp { color: #5fd0e6; }
+.dp-probe { color: #e6c45f; }
+.dp-full { color: #7fd0a0; }
 
 /* Portfolio-pulse "GP brain" stat tile — distinct teal so you can spot the
    genetic-programming entries at a glance among traditional trades. */
