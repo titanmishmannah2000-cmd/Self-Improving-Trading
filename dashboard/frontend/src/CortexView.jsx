@@ -125,6 +125,7 @@ export default function CortexView({ apiBase, isActive = true }) {
   const hasPolicyBlock =
     Object.keys(suppressions).length > 0 ||
     Object.keys(allocation).length > 0 ||
+    policy.soft_weights === true ||
     prioDisc === true ||
     (Array.isArray(prioDisc) && prioDisc.length > 0) ||
     rollback === true ||
@@ -264,6 +265,7 @@ export default function CortexView({ apiBase, isActive = true }) {
                 {gates.exile && <li>{gates.exile}</li>}
                 {gates.reinstate && <li>{gates.reinstate}</li>}
                 {gates.probe && <li>{gates.probe}</li>}
+                {gates.soft_weights && <li>{gates.soft_weights}</li>}
               </ul>
             )}
             {Object.keys(suppressions).length > 0 ? (
@@ -306,6 +308,60 @@ export default function CortexView({ apiBase, isActive = true }) {
                 consider reviewing strategy params.
               </p>
             )}
+            {policy.soft_weights && (
+              <p className="cortex-flag" data-testid="soft-weights-flag">
+                Soft weights ON — L35 benches shrink size instead of blocking new entries.
+              </p>
+            )}
+          </div>
+        )}
+
+        {Object.keys(allocation).length > 0 && (
+          <div className="report-card" style={{ marginBottom: 16 }} data-testid="cortex-expert-weights">
+            <div className="report-card-header">Expert weights (Layer A)</div>
+            <Help>
+              Per-pair size multipliers for each entry style. When{" "}
+              <code>SOFT_WEIGHTS=1</code>, a style that would have been hard-benched
+              still trades at a lower weight. Empty / all 100% usually means the flag
+              is off or there is no suppress signal yet.
+            </Help>
+            <table className="trade-table" style={{ marginTop: 4, fontSize: "0.85em" }}>
+              <thead>
+                <tr>
+                  <th>Pair</th>
+                  <th>Mean Rev</th>
+                  <th>Momentum</th>
+                  <th>GP Brain</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(allocation).map(([pair, types]) => {
+                  const cell = (etype) => {
+                    const info = (types && types[etype]) || {};
+                    const w = info.weight;
+                    if (w == null) return "—";
+                    const pct = `${Math.round(Number(w) * 100)}%`;
+                    const soft = info.suppressed_soft;
+                    return (
+                      <span className={soft ? "dp-soft" : Number(w) < 0.999 ? "dp-probe" : "dp-full"}>
+                        {pct}{soft ? " *" : ""}
+                      </span>
+                    );
+                  };
+                  return (
+                    <tr key={pair}>
+                      <td>{pair}</td>
+                      <td>{cell("mean_reversion")}</td>
+                      <td>{cell("rsi_momentum")}</td>
+                      <td>{cell("gp_ensemble")}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <p className="detail-muted" style={{ marginTop: 8 }}>
+              * = soft-suppress (would have been hard-blocked when SOFT_WEIGHTS is off)
+            </p>
           </div>
         )}
 

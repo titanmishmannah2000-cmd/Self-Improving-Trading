@@ -38,7 +38,8 @@ from hermes_core.engines.decision_cortex import Cortex
 from hermes_core.engines.entry import evaluate_entry, _entry_rsi_threshold
 from hermes_core.engines.exit import evaluate_exit
 from hermes_core.engines.genetic import discover as gp_discover
-from hermes_core.engines.policy_engine import PolicyEngine
+from hermes_core.engines.policy_engine import PolicyEngine, soft_weights_enabled
+from hermes_core.engines.expert_weights import apply_expert_weight, expert_weight
 from hermes_core.engines.risk import (
     MAX_POSITION_SIZE,
     apply_probe_sizing,
@@ -687,7 +688,17 @@ def run_cycle(
             # Prefer meta.entry_type; fall back to Signal.type so momentum is never
             # mis-labelled as mean_reversion (which poisoned cortex/policy WRs).
             _etype = sig.meta.get("entry_type") or getattr(sig, "type", None) or "mean_reversion"
-            if policy is not None and policy.is_suppressed(pair, _etype):
+            _suppressed = bool(
+                policy is not None and policy.is_suppressed(pair, _etype)
+            )
+            # HIF Phase-2: soft weights turn L35 benches into size shrinks.
+            # Flag OFF → hard skip (legacy). Flag ON → never skip for policy.
+            _soft = False
+            try:
+                _soft = soft_weights_enabled()
+            except Exception:  # noqa: BLE001
+                _soft = False
+            if _suppressed and not _soft:
                 _log_skip(bot, pair, cycle, f"policy_suppress:{_etype}")
                 summary["skips"] += 1
                 continue
@@ -704,7 +715,7 @@ def run_cycle(
             # Fail-open to full size if cortex cannot be read.
             _probe_enabled = get_env("PROBE_SIZING", "0") == "1"
             _evidence_n: int | None = None
-            if _probe_enabled:
+            if _probe_enabled or _soft:
                 try:
                     _evidence_n = int(cortex.evidence_n(pair, _etype))
                 except Exception:  # noqa: BLE001 — fail-open → full
@@ -713,6 +724,20 @@ def run_cycle(
                 size, enabled=_probe_enabled, evidence_n=_evidence_n,
             )
             size = float(_probe["size"])
+            # HIF Phase-2 soft expert weight (after probe, before cap).
+            _wr = None
+            try:
+                _wr = cortex.entry_type_wr(_etype, pair=pair)
+            except Exception:  # noqa: BLE001
+                _wr = None
+            _winfo = expert_weight(
+                enabled=_soft,
+                suppressed=_suppressed,
+                evidence_n=_evidence_n,
+                wr=_wr,
+            )
+            _weighted = apply_expert_weight(size, _winfo)
+            size = float(_weighted["size"])
             stop = _atr_stop_for(strategy, price, atr)
             open_positions[pair] = {
                 "id": f"{bot}:{pair}:{int(time.time())}",
@@ -730,10 +755,15 @@ def run_cycle(
                 "gp_indicators": sig.meta.get("gp_indicators", []),
                 # HIF Phase-1 dashboard fields
                 "size_mode": _probe["size_mode"],
-                "evidence_n": _probe.get("evidence_n"),
+                "evidence_n": _probe.get("evidence_n") if _probe_enabled else _evidence_n,
                 "evidence_state": _probe["evidence_state"],
                 "base_size": _probe.get("base_size"),
                 "probe_fraction": _probe.get("probe_fraction"),
+                # HIF Phase-2 dashboard fields
+                "expert_weight": _weighted.get("expert_weight"),
+                "expert_mode": _weighted.get("expert_mode"),
+                "suppressed_soft": _weighted.get("suppressed_soft"),
+                "expert_reasons": _weighted.get("expert_reasons") or [],
             }
             # [CORTEX] record the entry (per-type memory; exile persists across cycles)
             with contextlib.suppress(Exception):

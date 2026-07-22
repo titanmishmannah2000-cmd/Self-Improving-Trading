@@ -54,7 +54,14 @@ from hermes_core.engines.loop import (
     run_cycle,
     write_heartbeat,
 )
-from hermes_core.engines.policy_engine import Policy, PolicyEngine
+from hermes_core.engines.policy_engine import Policy, PolicyEngine, soft_weights_enabled
+from hermes_core.engines.expert_weights import (
+    EXPERT_TYPES,
+    SOFT_SUPPRESS_MULT,
+    apply_expert_weight,
+    expert_weight,
+    pair_expert_weights,
+)
 from hermes_core.engines.reflect import (
     _is_reflection_done,
     _mark_reflection_done,
@@ -102,7 +109,9 @@ __all__ = [
     "GeneticEngine", "discover", "load_discovered_indicators", "redundancy_check",
     "GPIntelligence", "get_label", "gp_entry_score", "is_locked",
     "record_loss", "record_win", "should_suppress", "weight_for",
-    "Cortex", "Policy", "PolicyEngine",
+    "Cortex", "Policy", "PolicyEngine", "soft_weights_enabled",
+    "EXPERT_TYPES", "SOFT_SUPPRESS_MULT", "apply_expert_weight",
+    "expert_weight", "pair_expert_weights",
     "run_cycle", "write_heartbeat", "maybe_circuit_break",
     "MAX_CONSECUTIVE_FAILURES", "CIRCUIT_SLEEP_S",
 ]

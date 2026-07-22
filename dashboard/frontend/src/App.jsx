@@ -155,6 +155,11 @@ const GLOSSARY = {
     plain: "When Probe Sizing is ON (PROBE_SIZING=1), new trades open at 25% size until the cortex has enough closed trades for that pair and entry style (usually 5). Then they use full size. Probe never blocks a trade — it only shrinks risk while learning.",
     analogy: "Trying a new restaurant with a small plate first, then ordering the full meal once you know you like it.",
   },
+  expert_weight: {
+    term: "Expert weight (soft allocation)",
+    plain: "When Soft Weights is ON (SOFT_WEIGHTS=1), a weak entry style (e.g. GP when Mean Reversion is clearly better) still opens but at a smaller size instead of being blocked. Thin evidence keeps a small explore size so the bot keeps learning.",
+    analogy: "Turning the volume down on a noisy channel instead of muting it forever.",
+  },
   sharpe: {
     term: "Sharpe Ratio",
     plain: "Risk-adjusted return. Above 1.0 is solid, above 2.0 is excellent. A strategy with less profit but far less risk can beat one with more profit and wild swings.",
@@ -561,6 +566,15 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
                 Full size
               </span>
             )}
+            {openTrade?.expert_mode === "soft" && openTrade?.expert_weight != null && Number(openTrade.expert_weight) < 0.999 && (
+              <span
+                className="pc-strategy pc-strategy-soft"
+                data-testid="expert-weight-badge"
+                title={`Soft expert weight ${(Number(openTrade.expert_weight) * 100).toFixed(0)}%${openTrade.suppressed_soft ? " (policy soft-suppress)" : ""}`}
+              >
+                W{(Number(openTrade.expert_weight) * 100).toFixed(0)}%
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -954,6 +968,20 @@ function DetailPanel({ pair, botData, strategyParams, lastSkip }) {
                   </span>
                 </div>
               </>
+            )}
+            {!isWatcher && openTrade.expert_mode === "soft" && (
+              <div className="dp-row" data-testid="detail-expert-weight">
+                <span><GlossaryTerm id="expert_weight">Expert weight</GlossaryTerm></span>
+                <span className={`mono ${openTrade.suppressed_soft ? "dp-soft" : "dp-full"}`}>
+                  {openTrade.expert_weight != null
+                    ? `${(Number(openTrade.expert_weight) * 100).toFixed(0)}%`
+                    : "—"}
+                  {openTrade.suppressed_soft ? " · soft-suppress" : ""}
+                  {Array.isArray(openTrade.expert_reasons) && openTrade.expert_reasons.length
+                    ? ` · ${openTrade.expert_reasons.join(", ")}`
+                    : ""}
+                </span>
+              </div>
             )}
             <div className="dp-row">
               <span>Held</span>

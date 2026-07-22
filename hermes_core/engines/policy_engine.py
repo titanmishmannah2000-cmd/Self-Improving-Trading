@@ -13,6 +13,10 @@ Suppression rules (blueprint ENGINE 9 / Phase 15):
   * priority_discovery = True if >=2 indicators exiled fleet-wide
   * probe_interval = 10 if cortex has <5 entries
   * rollback flag if MR WR < 30% AND >=10 trades (fleet-level)
+
+HIF Phase-2: when SOFT_WEIGHTS=1 the loop treats suppressions as size weights
+(see expert_weights.py) instead of hard skips. Policy still records the L35
+suppression set + a per-pair ``allocation`` map for the dashboard.
 """
 
 from __future__ import annotations
@@ -21,6 +25,8 @@ import json
 from pathlib import Path
 
 from hermes_core.engines.decision_cortex import Cortex
+from hermes_core.engines.expert_weights import pair_expert_weights
+from hermes_core.env import get_env
 from hermes_core.state.paths import current_bot, policy_path
 
 # ── gates ──────────────────────────────────────────────────────────────────
@@ -48,18 +54,37 @@ def _save_policy(policy: dict, bot: str | None = None) -> None:
     path.write_text(json.dumps(policy, indent=2), encoding="utf-8")
 
 
+def soft_weights_enabled() -> bool:
+    """HIF Phase-2 flag — default OFF (hard L35 suppress unchanged)."""
+    return get_env("SOFT_WEIGHTS", "0") == "1"
+
+
 class Policy:
     """Immutable-ish view of the evaluated policy."""
 
-    def __init__(self, suppressions: dict, priority_discovery: bool,
-                 probe_interval: int, rollback: bool) -> None:
+    def __init__(
+        self,
+        suppressions: dict,
+        priority_discovery: bool,
+        probe_interval: int,
+        rollback: bool,
+        allocation: dict | None = None,
+        soft_weights: bool = False,
+    ) -> None:
         self.suppressions = suppressions          # {pair: set(entry_type)}
         self.priority_discovery = priority_discovery
         self.probe_interval = probe_interval
         self.rollback = rollback
+        self.allocation = allocation or {}        # {pair: {etype: weight_info}}
+        self.soft_weights = soft_weights
 
     def is_suppressed(self, pair: str, entry_type: str) -> bool:
         return entry_type in self.suppressions.get(pair, set())
+
+    def expert_weight_for(self, pair: str, entry_type: str) -> dict | None:
+        """Return soft-weight info for (pair, entry_type) if allocation present."""
+        by_type = self.allocation.get(pair) or {}
+        return by_type.get(entry_type)
 
     def to_dict(self) -> dict:
         return {
@@ -67,6 +92,21 @@ class Policy:
             "priority_discovery": self.priority_discovery,
             "probe_interval": self.probe_interval,
             "rollback": self.rollback,
+            "soft_weights": self.soft_weights,
+            "allocation": {
+                p: {
+                    et: {
+                        "weight": info.get("weight"),
+                        "mode": info.get("mode"),
+                        "suppressed_soft": info.get("suppressed_soft"),
+                        "evidence_n": info.get("evidence_n"),
+                        "wr": info.get("wr"),
+                        "reasons": info.get("reasons"),
+                    }
+                    for et, info in (types or {}).items()
+                }
+                for p, types in self.allocation.items()
+            },
         }
 
 
@@ -106,7 +146,20 @@ class PolicyEngine:
         rollback = (mr_wr is not None and mr_wr < ROLLBACK_MR_WR
                     and n_trades >= ROLLBACK_MIN_TRADES)
 
-        policy = Policy(suppressions, priority_discovery, probe_interval, rollback)
+        soft = soft_weights_enabled()
+        allocation: dict[str, dict] = {}
+        for pair in pairs:
+            try:
+                allocation[pair] = pair_expert_weights(
+                    pair, cortex, suppressions.get(pair, set()), enabled=soft,
+                )
+            except Exception:  # noqa: BLE001 — never break policy on alloc
+                allocation[pair] = {}
+
+        policy = Policy(
+            suppressions, priority_discovery, probe_interval, rollback,
+            allocation=allocation, soft_weights=soft,
+        )
         _save_policy(policy.to_dict(), current_bot())
         return policy
 
@@ -118,7 +171,11 @@ class PolicyEngine:
             d = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return None
-        return Policy({p: set(t) for p, t in d.get("suppressions", {}).items()},
-                      d.get("priority_discovery", False),
-                      d.get("probe_interval", 50),
-                      d.get("rollback", False))
+        return Policy(
+            {p: set(t) for p, t in d.get("suppressions", {}).items()},
+            d.get("priority_discovery", False),
+            d.get("probe_interval", 50),
+            d.get("rollback", False),
+            allocation=d.get("allocation") or {},
+            soft_weights=bool(d.get("soft_weights", False)),
+        )

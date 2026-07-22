@@ -277,4 +277,34 @@ describe("Phase 17 dashboard frontend", () => {
     const badge = await screen.findByTestId("size-mode-badge");
     expect(badge).toHaveTextContent(/Probe 25%/i);
   });
+
+  it("test_expert_weight_badge", async () => {
+    const overview = mockOverview();
+    overview.bots.forex.recent_open_trades = [
+      {
+        id: "forex:EUR/USD:2",
+        pair: "EUR/USD",
+        entry_type: "gp_ensemble",
+        entry_price: 1.1,
+        size: 0.1,
+        size_mode: "full",
+        expert_mode: "soft",
+        expert_weight: 0.25,
+        suppressed_soft: true,
+        expert_reasons: ["soft_suppress"],
+        entry_ts: "2026-01-01T00:00:00Z",
+        held_cycles: 1,
+        unrealised_pct: 0.0,
+      },
+    ];
+    overview.bots.forex.open_count = 1;
+    overview.totals.open_trades = 1;
+    installFetchMock(overview);
+
+    render(<App />);
+    await screen.findAllByTestId("pair-card");
+    fireEvent.click(screen.getByRole("button", { name: "Watcher" }));
+    const badge = await screen.findByTestId("expert-weight-badge");
+    expect(badge).toHaveTextContent(/W25%/i);
+  });
 });

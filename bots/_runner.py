@@ -154,6 +154,10 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
                     "suppress_mr": "Bench MR when GP WR ≥ 50%",
                     "priority_discovery": "≥2 exiled indicators → prioritize GP rediscovery",
                     "rollback": "Flag rollback when MR WR < 30% after ≥10 trades",
+                    "soft_weights": (
+                        "HIF Phase-2: when SOFT_WEIGHTS=1, L35 benches shrink size "
+                        "instead of blocking (explore floor keeps thin experts alive)"
+                    ),
                 },
             }
         except Exception:
@@ -194,6 +198,11 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
             "evidence_state": pos.get("evidence_state", "disabled"),
             "base_size": pos.get("base_size"),
             "probe_fraction": pos.get("probe_fraction"),
+            # HIF Phase-2 soft expert weights
+            "expert_weight": pos.get("expert_weight"),
+            "expert_mode": pos.get("expert_mode"),
+            "suppressed_soft": pos.get("suppressed_soft"),
+            "expert_reasons": pos.get("expert_reasons") or [],
         }
         for pair, pos in open_positions.items()
     ]
