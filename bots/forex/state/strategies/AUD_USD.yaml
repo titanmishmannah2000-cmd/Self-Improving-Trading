@@ -5,6 +5,7 @@ entry:
   indicator: rsi
   direction: long
   threshold: 55
+  min_oversold_pairs: 1   # Phase-1 L18: was hard-coded 2
   bb_std_dev: 2.0
   session_filter: asian_only
 stop_loss_pct: 1.5

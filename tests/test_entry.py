@@ -75,9 +75,17 @@ def test_aud_rsi_fires():
 
 
 def test_aud_rsi_confluence():
+    # Phase-1 default min_oversold_pairs=1: a single oversold pair may fire.
     strat = rsi_mom_strategy(session="ASIA", adx=22, vol_above=True, oversold_pairs=1)
     sig = evaluate_entry("AUD/USD", p, strat, "", "neutral", 1, True, {}, 100, "ASIA")
-    assert sig is None  # L18: confluence requires >=2 oversold pairs
+    assert sig is not None and sig.type == "rsi_momentum"
+    # Stricter YAML restores the old multi-pair gate.
+    strict = dict(strat)
+    strict["entry"] = {**(strat.get("entry") or {}), "min_oversold_pairs": 2}
+    blocked = evaluate_entry(
+        "AUD/USD", p, strict, "", "neutral", 1, True, {}, 100, "ASIA",
+    )
+    assert blocked is None  # L18: confluence requires >=2 when configured
 
 
 # --- Explicit L13 regression fixture: the v06->v07 cliff -------------------

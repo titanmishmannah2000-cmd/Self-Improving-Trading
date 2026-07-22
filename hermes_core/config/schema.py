@@ -50,11 +50,13 @@ STRATEGY_PARAM_RANGES: dict[str, tuple[float, float]] = {
     "position_size_r": (0.05, 1.0),
     "time_exit_cycles": (60, 2880),
     "entry.threshold": (5, 95),
+    "entry.min_oversold_pairs": (1, 10),
 }
 
 # Nested params are addressed by dotted path; the resolver maps them to a getter.
 _DOTTED_RESOLVERS = {
     "entry.threshold": lambda s: (s.get("entry") or {}).get("threshold"),
+    "entry.min_oversold_pairs": lambda s: (s.get("entry") or {}).get("min_oversold_pairs"),
 }
 
 # Minimum stop-loss, also referenced independently by some guards (L40 floor).

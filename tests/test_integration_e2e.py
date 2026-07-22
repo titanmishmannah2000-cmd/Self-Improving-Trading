@@ -419,9 +419,10 @@ def test_every_guard_fires_with_log_line(tmp_path):
             context="(conf=0.2) sell") is None
         fired.add("L16")
 
-        # L18 multi-pair confluence gate (needs >=2 oversold)
+        # L18 multi-pair confluence gate (YAML min_oversold_pairs; default 1)
         mom = dict(strat)
         mom["strategy_type"] = "rsi_momentum"
+        mom["entry"] = {**(mom.get("entry") or {}), "min_oversold_pairs": 2}
         assert entry.evaluate_entry("EUR/USD", _prices(1.1), mom,
                                     oversold_pairs=1, vol_above=True) is None
         fired.add("L18")

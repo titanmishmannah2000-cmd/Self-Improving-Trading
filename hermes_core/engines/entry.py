@@ -10,7 +10,8 @@ Guards enforced here (tagged so tools/verify_guard_tags.py can find them):
   L13  ensemble-context skip — an MR long is blocked when the discovered-indicator
        ensemble consensus is bearish/strong_bearish (the v06→v07 cliff guard)
   L15  re-entry cooldown — stopped-out pair may not re-enter within 30 cycles
-  L18  multi-pair confluence — RSI-momentum needs >=2 oversold pairs
+  L18  multi-pair confluence — RSI-momentum needs >= min_oversold_pairs
+       (YAML entry.min_oversold_pairs; default 1 after Phase-1 gate relaxation)
   L23  stop-loss cooldown — a stop-loss exit blocks re-entry for 30 cycles
   L14  chart hard-block — context containing "avoid"/"downtrend" -> skip (from chart vision)
   L16  chart soft-filter — context containing "sell" + low quality (<5) -> skip
@@ -79,6 +80,21 @@ def _entry_rsi_threshold(strategy: dict) -> float:
         except (TypeError, ValueError):
             pass
     return 50.0
+
+
+def _min_oversold_pairs(strategy: dict) -> int:
+    """L18 confluence floor: ``entry.min_oversold_pairs`` or top-level.
+
+    Phase-1 gate relaxation default is 1 (was hard-coded 2). Set YAML to 2 to
+    restore the stricter multi-pair confluence requirement.
+    """
+    entry = strategy.get("entry") or {}
+    raw = strategy.get("min_oversold_pairs", entry.get("min_oversold_pairs", 1))
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, n)
 
 
 def _vol_gate(strategy: dict, atr: float, last: float, vol_above: bool) -> bool:
@@ -194,8 +210,9 @@ def evaluate_entry(
         return None
 
     if stype == "rsi_momentum":
-        # [GUARD L18] multi-pair confluence gate
-        if oversold_pairs < 2:
+        # [GUARD L18] multi-pair confluence gate (YAML entry.min_oversold_pairs)
+        min_pairs = _min_oversold_pairs(strategy)
+        if oversold_pairs < min_pairs:
             return None
         oversold = rsi <= threshold
         if oversold and _vol_gate(strategy, ind["atr"], last, vol_above):
@@ -205,6 +222,7 @@ def evaluate_entry(
                 {
                     "rsi": rsi,
                     "oversold_pairs": oversold_pairs,
+                    "min_oversold_pairs": min_pairs,
                     "entry_type": "rsi_momentum",
                     "rsi_threshold": threshold,
                 },

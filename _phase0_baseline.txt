@@ -1,0 +1,82 @@
+=== PHASE 0 BASELINE ===
+ts_now=1784740404
+iso=2026-07-22T17:13:24Z
+note: Phase 1 will set L18 min_oversold_pairs 2 -> 1
+phase1_applied: entry.min_oversold_pairs default=1 (YAML + hermes_core.engines.entry._min_oversold_pairs)
+
+## forex
+### runtime: D:\Self Improving Trading\forex\state
+  skips_total_rows=53919
+  skips_24h=3754
+    top_reasons=[('bb_bandwidth:0.000000', 2727), ('no_signal', 911), ("chart_error:RuntimeError('chart api down')", 66), ("fetch_error:TimeoutError('feed timed out')", 48), ('flat_price:unchanged', 1), ('bb_bandwidth:0.000633', 1)]
+    by_pair=[('AUD/USD', 988), ('EUR/USD', 922), ('GBP/USD', 922), ('GBP/JPY', 922)]
+  skips_72h=17534
+    top_reasons=[('no_signal', 8594), ('bb_bandwidth:0.000000', 5946), ('no_candle', 2643), ("chart_error:RuntimeError('chart api down')", 187), ("fetch_error:TimeoutError('feed timed out')", 112), ('bb_bandwidth:0.000984', 6), ('bb_bandwidth:0.000604', 5), ('flat_price:unchanged', 4)]
+    by_pair=[('AUD/USD', 4757), ('GBP/JPY', 4268), ('EUR/USD', 4263), ('GBP/USD', 4246)]
+  skips_7d=53919
+    top_reasons=[('no_signal', 43367), ('bb_bandwidth:0.000000', 5946), ('no_candle', 2643), ("chart_error:RuntimeError('chart api down')", 1551), ("fetch_error:TimeoutError('feed timed out')", 360), ('bb_bandwidth:0.000984', 6), ('bb_bandwidth:0.000604', 5), ('flat_price:unchanged', 4)]
+    by_pair=[('AUD/USD', 18424), ('EUR/USD', 11915), ('GBP/JPY', 11852), ('GBP/USD', 11728)]
+  heartbeat={'cycle': 1}
+  trades.jsonl: rows=0
+    24h: rows=0 closedish=0
+    72h: rows=0 closedish=0
+    7d: rows=0 closedish=0
+### seed: D:\Self Improving Trading\bots\forex\state
+  skips_total_rows=1
+  skips_24h=0
+  skips_72h=0
+  skips_7d=1
+    top_reasons=[('no_setup', 1)]
+    by_pair=[('GBP/USD', 1)]
+  heartbeat_top_keys=['bot', 'last_cycle', 'ts', 'status', 'pnl_pct', 'open_trades']
+  trades.jsonl: rows=0
+    24h: rows=0 closedish=0
+    72h: rows=0 closedish=0
+    7d: rows=0 closedish=0
+
+## gold
+### runtime: D:\Self Improving Trading\gold\state
+  skips_total_rows=13948
+  skips_24h=134
+    top_reasons=[('no_signal', 134)]
+    by_pair=[('XAU/USD', 67), ('XAG/USD', 67)]
+  skips_72h=2522
+    top_reasons=[('no_signal', 2522)]
+    by_pair=[('XAU/USD', 1261), ('XAG/USD', 1261)]
+  skips_7d=13948
+    top_reasons=[('no_signal', 13948)]
+    by_pair=[('XAU/USD', 6974), ('XAG/USD', 6974)]
+  heartbeat={'cycle': 1}
+  trade_jsonl: none found
+### seed: D:\Self Improving Trading\bots\gold\state
+  skips_total_rows=1
+  skips_24h=0
+  skips_72h=0
+  skips_7d=1
+    top_reasons=[('no_setup', 1)]
+    by_pair=[('GBP/USD', 1)]
+  heartbeat_top_keys=['bot', 'last_cycle', 'ts', 'status', 'pnl_pct', 'open_trades']
+  trades.jsonl: rows=0
+    24h: rows=0 closedish=0
+    72h: rows=0 closedish=0
+    7d: rows=0 closedish=0
+
+## crypto
+### runtime: D:\Self Improving Trading\crypto\state
+  skips_total_rows=0
+  skips_24h=0
+  skips_72h=0
+  skips_7d=0
+  trade_jsonl: none found
+### seed: D:\Self Improving Trading\bots\crypto\state
+  skips_total_rows=1
+  skips_24h=0
+  skips_72h=0
+  skips_7d=1
+    top_reasons=[('no_setup', 1)]
+    by_pair=[('GBP/USD', 1)]
+  heartbeat_top_keys=['bot', 'last_cycle', 'ts', 'status', 'pnl_pct', 'open_trades']
+  trades.jsonl: rows=0
+    24h: rows=0 closedish=0
+    72h: rows=0 closedish=0
+    7d: rows=0 closedish=0
