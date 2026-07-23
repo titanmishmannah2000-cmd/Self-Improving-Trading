@@ -14,6 +14,19 @@ goal:
   one_variable_only: true
   reflection_every: 5
   target_return_30d: 5.0
+# GP invent: hourly TF + short horizon (not FX-style daily/h60). Smaller search
+# + longer timeout so invent finishes and shows on Discovered. BTC promote stays
+# gated by gp_promote_gate / GP_EXCLUDE_PAIRS until shadow expectancy improves.
+invent:
+  interval: 1h
+  period: 60d
+  max_candles: 800
+  horizon: 12
+  generations: 20
+  pop_size: 24
+  n_islands: 1
+  timeout_s: 180
+  min_bars: 200
 global:
   dashboard_url: ${DASHBOARD_API_URL}
   discord_webhook: ${DISCORD_ALERTS_WEBHOOK}

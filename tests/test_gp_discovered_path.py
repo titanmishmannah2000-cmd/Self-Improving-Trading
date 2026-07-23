@@ -109,9 +109,9 @@ def test_expr_str_fallback_votes(_tmp_discovered):
     """Indicators that only have expr_str (valid GP) still produce a shadow signal."""
     gp._save_discovered("EUR/USD", [
         {"name": "a", "expr_str": "(price-sma20)", "fitness": 0.4, "win_rate": 0.6,
-         "backtest_approved": True},
+         "backtest_approved": True, "interval": "1d", "horizon": 10},
         {"name": "b", "expr_str": "(ema20-sma20)", "fitness": 0.35, "win_rate": 0.55,
-         "backtest_approved": True},
+         "backtest_approved": True, "interval": "1d", "horizon": 10},
     ])
     # Re-load normalizes expr_str → expr
     rows = load_discovered_indicators("EUR/USD", include_shared=False)
@@ -141,9 +141,10 @@ def test_discover_persists_canonical_schema(_tmp_discovered):
         wave = 0.004 * math.sin(i / 7.0)
         prices.append(prices[-1] * (1 + wave + rng.uniform(-0.001, 0.001)))
 
-    # Match live discovery regime (daily/horizon-60) so S10 + genetic gates can clear.
+    # Match live forex invent regime (daily / horizon-10).
     inds = gp.discover(
-        "EUR/USD", prices, generations=40, pop_size=40, top_k=3, horizon=60,
+        "EUR/USD", prices, generations=40, pop_size=40, top_k=3, horizon=10,
+        interval="1d",
     )
     assert len(inds) >= 1
     path = _tmp_discovered / "EUR_USD.json"
@@ -154,5 +155,7 @@ def test_discover_persists_canonical_schema(_tmp_discovered):
         assert row.get("expr_str") == row["expr"]
         assert row.get("source") == "genetic"
         assert row.get("backtest_approved") is True
+        assert row.get("interval") == "1d"
+        assert int(row.get("horizon")) == 10
         assert "oos_corr" in row
         assert "perm_pvalue" in row

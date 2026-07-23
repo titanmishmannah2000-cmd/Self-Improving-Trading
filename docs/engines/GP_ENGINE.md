@@ -194,6 +194,17 @@ in run_cycle(), after traditional evaluate_entry():
 | `GP_PROMOTE_GATE_UNBAN` | `0.05` | mean % expectancy → unban if ≥ |
 | `GP_PROMOTE_GATE_COOLDOWN_S` | `86400` | seconds after a flip before another flip |
 
+**Per-bot invent** (`bots/<bot>/config.yaml` → `invent:` + `gp_invent_profile.py`):
+| Bot | interval | horizon | timeout | search |
+|-----|----------|---------|---------|--------|
+| forex | `1d` | 10 (shorter) | 90s | gens 40 / pop 40 / islands 2 |
+| gold | `1d` | 20 (medium) | 90s | gens 40 / pop 40 / islands 2 |
+| crypto | `1h` | 12 (short) | 180s | gens 20 / pop 24 / islands 1 |
+
+Formulas are tagged with `interval` + `horizon`; ensemble votes only same-regime
+formulas. Invent TF == live GP eval TF via `gp_invent_prices`. BTC stays
+promote-banned until shadow expectancy recovers (promote gate).
+
 **Historical daily-regime paper expectancy** (basis for the original exclude list):
 XAU/USD +4.28%, XAG/USD +4.28%, ETH/USD +16.77%, EUR/USD +1.43%, AUD/USD +0.79%,
 GBP/USD +0.53%, GBP/JPY −6.30% (seeded ban), BTC/USD −26.01% (seeded ban).

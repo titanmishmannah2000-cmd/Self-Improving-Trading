@@ -250,34 +250,48 @@ from hermes_core.engines.genetic import (  # noqa: E402
 
 _FEATURE_RE = re.compile(r"^[a-z0-9_]+$")
 
-# Daily close cache so GP indicators (discovered on DAILY bars) are evaluated on
-# the SAME regime. Without this the live loop fed them 5m bars -> a regime
-# mismatch (the indicators' sma50/roc20 are daily-scaled). [fixes prior caveat]
-_GP_DAILY_CACHE: dict[str, tuple[float, list[float]]] = {}
-_GP_DAILY_TTL_S = 1800  # refresh daily history at most every 30 min
+# Invent-regime close cache so GP formulas are evaluated on the SAME candle TF
+# they were invented on (never invent on 1d and trade on 5m). Keyed by
+# (pair, interval, period, max_candles).
+_GP_INVENT_CACHE: dict[tuple, tuple[float, list[float]]] = {}
+_GP_INVENT_TTL_S = 1800  # refresh invent history at most every 30 min
 
 
-def gp_daily_prices(pair: str) -> list[float] | None:
-    """Daily close series for `pair` (cached 30 min), or None on failure.
+def gp_invent_prices(
+    pair: str,
+    *,
+    interval: str = "1d",
+    period: str = "2y",
+    max_candles: int = 500,
+) -> list[float] | None:
+    """Close series for ``pair`` at invent candle TF (cached 30 min).
 
     Used so the GP brain is evaluated on the regime its indicators were
     discovered on. Caller falls back to the live series if this returns None.
     """
     try:
         now = _time.time()
-        cached = _GP_DAILY_CACHE.get(pair)
-        if cached and (now - cached[0]) < _GP_DAILY_TTL_S:
+        key = (pair, str(interval), str(period), int(max_candles))
+        cached = _GP_INVENT_CACHE.get(key)
+        if cached and (now - cached[0]) < _GP_INVENT_TTL_S:
             return cached[1]
         from hermes_core.adapters.price import seed_history_interval_sync
-        hist = seed_history_interval_sync(pair, interval="1d", period="2y",
-                                          max_candles=500)
+        hist = seed_history_interval_sync(
+            pair, interval=str(interval), period=str(period),
+            max_candles=int(max_candles),
+        )
         px = [float(c["price"]) for c in (hist or []) if c.get("price") is not None]
         if len(px) < 50:
             return None
-        _GP_DAILY_CACHE[pair] = (now, px)
+        _GP_INVENT_CACHE[key] = (now, px)
         return px
     except Exception:  # noqa: BLE001 — never break the entry path
         return None
+
+
+def gp_daily_prices(pair: str) -> list[float] | None:
+    """Backward-compatible alias: daily invent series (forex/gold default TF)."""
+    return gp_invent_prices(pair, interval="1d", period="2y", max_candles=500)
 
 
 def _gp_parse(expr_str: str):
@@ -382,11 +396,17 @@ def gp_ensemble_signal(pair: str, prices: list[float],
                        z_threshold: float = 0.5,
                        daily_prices: list[float] | None = None,
                        promote: bool = False,
-                       exiled_ids: set[str] | frozenset | None = None) -> Signal | None:
+                       exiled_ids: set[str] | frozenset | None = None,
+                       *,
+                       invent_interval: str | None = None,
+                       invent_horizon: int | None = None) -> Signal | None:
     """GP-ensemble vote of discovered indicators for `pair`.
 
-    Each indicator's expression is evaluated on the DAILY series (the regime it
-    was discovered on); falls back to the live `prices` only if daily is None.
+    Each indicator's expression is evaluated on the invent-regime series (the
+    candle TF it was discovered on); falls back to the live `prices` only if
+    that series is None. Only formulas tagged with the same ``interval`` +
+    ``horizon`` as the active invent profile may vote together.
+
     Direction = sign of the indicator's value z-scored vs its own signal series
     (scale-invariant). Weight = fitness * win_rate * shared_penalty.
 
@@ -400,7 +420,16 @@ def gp_ensemble_signal(pair: str, prices: list[float],
     but it still flows through the live loop's RR guard / position sizing / exit
     evaluation exactly like traditional entries.
     """
-    # Evaluate on the daily regime (fixes the prior 5m/1d mismatch caveat).
+    from hermes_core.engines.gp_invent_profile import (
+        indicator_matches_regime,
+        invent_profile,
+    )
+
+    prof = invent_profile(pair=pair)
+    req_interval = str(invent_interval or prof["interval"])
+    req_horizon = int(invent_horizon if invent_horizon is not None else prof["horizon"])
+
+    # Evaluate on the invent regime (fixes invent-TF ≠ live-TF mismatch).
     eval_prices = daily_prices if (daily_prices and len(daily_prices) >= 50) else prices
     if not eval_prices or len(eval_prices) < 50:
         return None
@@ -418,6 +447,11 @@ def gp_ensemble_signal(pair: str, prices: list[float],
         name = ind.get("name", "?")
         # [GUARD L36] cortex-exiled indicators cannot vote the ensemble.
         if name in banned:
+            continue
+        # Same-type only: candle TF + forward horizon must match invent profile.
+        if not indicator_matches_regime(
+            ind, interval=req_interval, horizon=req_horizon,
+        ):
             continue
         # Prefer expr; fall back to expr_str/name only when GP-grammar-valid
         # (skips dashboard seeds like ta.rsi(close,14)).
@@ -474,6 +508,11 @@ def gp_ensemble_signal(pair: str, prices: list[float],
     consensus = ("bullish" if strength > 0 else "bearish")
     if abs(strength) > 0.6:
         consensus = "strong_" + consensus
+    eval_on = (
+        req_interval
+        if (daily_prices and len(daily_prices) >= 50)
+        else "live"
+    )
     return Signal(
         "gp_ensemble", round(abs(strength), 4), size, pair,
         {
@@ -486,7 +525,9 @@ def gp_ensemble_signal(pair: str, prices: list[float],
             # not the whole ensemble blob).
             "gp_indicators": active_indicators,
             "entry_type": "gp_ensemble" if promote else "shadow",
-            "evaluated_on": "daily" if (daily_prices and len(daily_prices) >= 50) else "live",
+            "evaluated_on": eval_on,
+            "invent_interval": req_interval,
+            "invent_horizon": req_horizon,
         },
     )
 

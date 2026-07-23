@@ -393,25 +393,42 @@ GP_SHADOW_LOG_INTERVAL_S = 300  # at most one shadow record per 5 min per pair
 
 
 def _gp_vote(pair: str, prices: list[float], strategy: dict, *,
-             cortex=None, promote: bool = False, use_daily: bool = True):
+             cortex=None, promote: bool = False, use_invent_tf: bool = True,
+             bot: str | None = None, use_daily: bool | None = None):
     """Evaluate GP ensemble once; apply L36 exile filter. Fail-soft -> None.
 
-    ``use_daily=True`` (promote path) evaluates on the discovery regime.
-    ``use_daily=False`` (shadow/L13) uses the live series the cycle already has
-    — no extra network fetch, matches the original shadow logger.
+    ``use_invent_tf=True`` (default) evaluates on the bot invent candle TF so
+    invent TF == live GP eval TF. ``use_invent_tf=False`` uses the live series
+    only (legacy fast path; mismatched formulas will not vote).
+
+    ``use_daily`` is retained as a deprecated alias for ``use_invent_tf``.
     """
     try:
-        from hermes_core.engines.entry import gp_ensemble_signal, gp_daily_prices
+        from hermes_core.engines.entry import gp_ensemble_signal, gp_invent_prices
+        from hermes_core.engines.gp_invent_profile import invent_profile
+
+        if use_daily is not None:
+            use_invent_tf = bool(use_daily)
+        prof = invent_profile(bot, pair=pair)
         exiled: set[str] = set()
         if cortex is not None:
             with contextlib.suppress(Exception):
                 exiled = set(cortex.get_exiled_indicators() or [])
-        daily = gp_daily_prices(pair) if use_daily else None
+        invent_px = None
+        if use_invent_tf:
+            invent_px = gp_invent_prices(
+                pair,
+                interval=prof["interval"],
+                period=prof["period"],
+                max_candles=prof["max_candles"],
+            )
         return gp_ensemble_signal(
             pair, prices, strategy,
-            daily_prices=daily,
+            daily_prices=invent_px,
             promote=promote,
             exiled_ids=exiled,
+            invent_interval=prof["interval"],
+            invent_horizon=prof["horizon"],
         )
     except Exception:  # noqa: BLE001
         return None
@@ -431,10 +448,10 @@ def _log_gp_shadow(bot: str, pair: str, prices: list[float], strategy: dict,
             _GP_CONSENSUS_CACHE[pair] = consensus
             return consensus
         if sig is None:
-            # Shadow observation on the live series (no daily network fetch).
+            # Shadow observation on invent TF (same regime as formulas).
             sig = _gp_vote(
-                pair, prices, strategy, cortex=cortex,
-                promote=False, use_daily=False,
+                pair, prices, strategy, cortex=cortex, bot=bot,
+                promote=False, use_invent_tf=True,
             )
         if sig is not None:
             consensus = sig.meta.get("consensus") or "neutral"
@@ -497,18 +514,25 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
     from hermes_core.engines.genetic import (
         _discovered_path,
         apply_live_feedback,
-        indicator_expr,
-        is_backtest_approved,
         load_discovered_indicators,
+    )
+    from hermes_core.engines.gp_invent_profile import (
+        has_votable_for_regime,
+        invent_profile,
     )
     now = time.time()
     key = (bot, pair)
     if key in _DISCOVERY_LAST and (now - _DISCOVERY_LAST[key]) < DISCOVERY_INTERVAL_S:
         return
 
-    # Skip invent only when THIS pair already has S10-approved GP formulas.
+    prof = invent_profile(bot, pair=pair)
+    # Skip invent only when THIS pair already has S10-approved formulas on the
+    # *current* invent regime (interval + horizon). Old daily/h60 crypto junk
+    # must not block a fresh 1h invent.
     own = load_discovered_indicators(pair, include_shared=False)
-    discovered = any(indicator_expr(i) and is_backtest_approved(i) for i in own)
+    discovered = has_votable_for_regime(
+        own, interval=prof["interval"], horizon=prof["horizon"],
+    )
 
     def _work() -> None:
         import logging as _logging
@@ -520,32 +544,45 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
         if updated:
             _log.info("[discovery] %s: live feedback updated %d indicators",
                       pair, updated)
-        # (Re)discover only when THIS pair has no votable own formulas yet.
+        # (Re)discover only when THIS pair has no votable own formulas yet
+        # for the active invent regime.
         if discovered:
             return
-        # GP discovery runs on the OLD engine's working regime: 2y of DAILY
-        # bars with a 60-candle forward horizon. The old genetic_discovery.py
-        # is explicit that 5m/next-candle "almost never clear, by design" —
-        # only the daily/long-horizon objective produces predictive structure.
-        # We keep the live trade loop on 5m; discovery uses daily history.
-        hist = seed_history_interval_sync(pair, interval="1d", period="2y",
-                                          max_candles=500)
+        hist = seed_history_interval_sync(
+            pair,
+            interval=prof["interval"],
+            period=prof["period"],
+            max_candles=prof["max_candles"],
+        )
         series = [c["price"] for c in (hist or [])] or (prices or [])
-        _log.info("[discovery] %s: fetched %d daily candles for GP", pair, len(series))
-        if len(series) < 200:
-            _log.warning("[discovery] %s: <200 daily candles, GP skipped", pair)
+        _log.info(
+            "[discovery] %s: fetched %d %s candles (h=%s) for GP",
+            pair, len(series), prof["interval"], prof["horizon"],
+        )
+        if len(series) < int(prof["min_bars"]):
+            _log.warning(
+                "[discovery] %s: <%s %s candles, GP skipped",
+                pair, prof["min_bars"], prof["interval"],
+            )
             return
-        inds = gp_discover(pair, series, horizon=60, generations=40, pop_size=40,
-                           n_islands=2)
+        inds = gp_discover(
+            pair, series,
+            horizon=int(prof["horizon"]),
+            generations=int(prof["generations"]),
+            pop_size=int(prof["pop_size"]),
+            n_islands=int(prof["n_islands"]),
+            interval=str(prof["interval"]),
+        )
         _log.info("[discovery] %s: admitted=%d -> %s",
                   pair, len(inds), _discovered_path(pair))
 
     # Bound the work so a slow network/price API can't stall the trade loop.
-    # Discovery now runs in its own background thread, so a generous cap is safe.
+    # Discovery runs in its own background thread; crypto gets a longer cap so
+    # invent can finish and appear on Discovered.
     try:
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=1) as ex:
-            ex.submit(_work).result(timeout=60)
+            ex.submit(_work).result(timeout=int(prof["timeout_s"]))
     except Exception as _exc:  # surface the real reason instead of silent drop
         import logging as _logging
         _logging.getLogger("hermes.discovery").warning(
@@ -722,14 +759,12 @@ def run_cycle(
                 summary["skips"] += 1
                 continue
 
-        # ── GP vote once (live series): shadow log + L13 ensemble consensus ──
+        # ── GP vote once (invent TF): shadow log + L13 ensemble consensus ──
         # [GUARD L13] MR longs are blocked when GP consensus is bearish.
-        # Previously ensemble_fn defaulted to "neutral" so L13 never engaged.
-        # Use live prices here (no daily network fetch) so the heartbeat cycle
-        # stays fast; promote path below re-votes on daily when GP_PROMOTE=1.
+        # Invent TF == live GP eval TF (cached); mismatched formulas cannot vote.
         gp_shadow_sig = _gp_vote(
-            pair, prices, strategy, cortex=cortex,
-            promote=False, use_daily=False,
+            pair, prices, strategy, cortex=cortex, bot=bot,
+            promote=False, use_invent_tf=True,
         )
         gp_consensus = _log_gp_shadow(
             bot, pair, prices, strategy, cortex=cortex, sig=gp_shadow_sig,
@@ -812,8 +847,8 @@ def run_cycle(
                         continue
                     if not _sup:
                         gp_sig = _gp_vote(
-                            pair, prices, strategy, cortex=cortex,
-                            promote=True, use_daily=True,
+                            pair, prices, strategy, cortex=cortex, bot=bot,
+                            promote=True, use_invent_tf=True,
                         )
                 except Exception:  # noqa: BLE001 — GP must never break the cycle
                     gp_sig = None

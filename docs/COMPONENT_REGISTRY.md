@@ -99,6 +99,7 @@ log trades, and push full state to the dashboard.
 | `GP_PROMOTE` env | `"1"` to enable | promotes GP brain to real (paper) entries |
 | `GP_EXCLUDE_PAIRS` env | `"GBP/JPY,BTC/USD"` default | seeds initial promote-gate bans (auto ban/unban thereafter) |
 | `gp_promote_gate` | `state/gp_promote_gate.json` | per-pair ban from paper/shadow expectancy (hysteresis + cooldown) |
+| `invent:` in `bots/*/config.yaml` | per-bot | invent TF/horizon/size/timeout (`gp_invent_profile`) |
 
 ---
 

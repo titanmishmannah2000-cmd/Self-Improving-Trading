@@ -38,11 +38,19 @@ def _tmp_discovered(tmp_path, monkeypatch):
 def _write_discovered(pair: str, inds: list[dict]) -> None:
     # Item 9/15: ensemble requires backtest_approved; default True in tests
     # unless a case explicitly sets False/omits for reject coverage.
+    # Stamp invent regime tags so same-type voting matches the pair's profile
+    # unless the test already set them.
+    from hermes_core.engines.gp_invent_profile import invent_profile
+    prof = invent_profile(pair=pair)
     stamped = []
     for ind in inds:
         row = dict(ind)
         if "backtest_approved" not in row:
             row["backtest_approved"] = True
+        if "interval" not in row:
+            row["interval"] = prof["interval"]
+        if "horizon" not in row:
+            row["horizon"] = prof["horizon"]
         stamped.append(row)
     gp._save_discovered(pair, stamped)
 
@@ -224,6 +232,11 @@ def test_log_gp_shadow_writes_record(tmp_path, monkeypatch):
     # from their rolling means (z-score clears the gate -> a real signal).
     prices = [100.0 + 0.2 * i for i in range(110)] + [112.0 + 0.5 * j for j in range(10)]
     strategy = {"position_size_r": 0.1}
+    # Invent-TF fetch would hit the network; pin eval series to the fixture.
+    monkeypatch.setattr(
+        "hermes_core.engines.entry.gp_invent_prices",
+        lambda *a, **k: prices,
+    )
 
     loop._log_gp_shadow("goldbot", "EUR/USD", prices, strategy)
 
@@ -401,7 +414,7 @@ def test_gp_ensemble_signal_promote_tags_entry_type():
     assert sig is not None, "expected a promoted GP signal on a trending series"
     assert sig.meta.get("shadow") is False
     assert sig.meta.get("entry_type") == "gp_ensemble"
-    assert sig.meta.get("evaluated_on") == "daily"
+    assert sig.meta.get("evaluated_on") == "1d"
     # And the shadow (default) variant stays observation-only.
     sh = gp_ensemble_signal("EUR/USD", daily, daily_prices=daily, promote=False)
     assert sh.meta.get("shadow") is True
@@ -479,10 +492,10 @@ def test_b10_live_feedback_relabels_and_suppresses(tmp_path, monkeypatch):
 
     _write_discovered("EUR/USD", [
         {"name": "A_win", "expr": "A_win", "fitness": 0.30, "win_rate": 0.5,
-         "complexity": 2, "nodes": 2, "horizon": 60, "interval": "1d",
+         "complexity": 2, "nodes": 2, "horizon": 10, "interval": "1d",
          "source": "genetic"},
         {"name": "B_lose", "expr": "B_lose", "fitness": 0.40, "win_rate": 0.5,
-         "complexity": 2, "nodes": 2, "horizon": 60, "interval": "1d",
+         "complexity": 2, "nodes": 2, "horizon": 10, "interval": "1d",
          "source": "genetic"},
     ])
 
@@ -505,13 +518,13 @@ def test_b10_live_feedback_relabels_and_suppresses(tmp_path, monkeypatch):
     series = list([100.0] * 120) + [100.0 + i * 2 for i in range(30)]
     _write_discovered("EUR/USD", [
         {"name": "A_win", "expr": "price", "fitness": 0.30, "win_rate": 0.5,
-         "complexity": 2, "nodes": 2, "horizon": 60, "interval": "1d",
+         "complexity": 2, "nodes": 2, "horizon": 10, "interval": "1d",
          "source": "genetic", "live_flag": "promote", "live_fitness": 0.33},
         {"name": "C_ok", "expr": "price", "fitness": 0.30, "win_rate": 0.5,
-         "complexity": 2, "nodes": 2, "horizon": 60, "interval": "1d",
+         "complexity": 2, "nodes": 2, "horizon": 10, "interval": "1d",
          "source": "genetic", "live_flag": "promote", "live_fitness": 0.33},
         {"name": "B_lose", "expr": "price", "fitness": 0.40, "win_rate": 0.5,
-         "complexity": 2, "nodes": 2, "horizon": 60, "interval": "1d",
+         "complexity": 2, "nodes": 2, "horizon": 10, "interval": "1d",
          "source": "genetic", "live_flag": "suppress", "live_fitness": 0.37},
     ])
     sig = entry_mod.gp_ensemble_signal(
@@ -533,7 +546,7 @@ def test_b10_feedback_ignored_until_min_samples(tmp_path, monkeypatch):
 
     _write_discovered("EUR/USD", [
         {"name": "A_win", "expr": "A_win", "fitness": 0.30, "win_rate": 0.5,
-         "complexity": 2, "nodes": 2, "horizon": 60, "interval": "1d",
+         "complexity": 2, "nodes": 2, "horizon": 10, "interval": "1d",
          "source": "genetic"},
     ])
     cortex = cx.Cortex()

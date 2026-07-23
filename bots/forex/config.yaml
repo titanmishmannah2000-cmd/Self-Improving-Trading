@@ -14,6 +14,15 @@ goal:
   one_variable_only: true
   gemini_reflection: true
   gemini_min_trades: 5
+# GP invent: daily TF, shorter forward horizon than the old global h=60.
+invent:
+  interval: 1d
+  period: 2y
+  horizon: 10
+  generations: 40
+  pop_size: 40
+  n_islands: 2
+  timeout_s: 90
 global:
   dashboard_url: ${DASHBOARD_API_URL}
   discord_webhook: ${DISCORD_ALERTS_WEBHOOK}

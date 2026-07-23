@@ -1012,12 +1012,17 @@ def redundancy_check(new_signal: list[float], existing_signals: list[list[float]
 def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
              *, generations: int = 60, pop_size: int = 40, seed: int = 7,
              top_k: int = 5, horizon: int = 1,
-             n_islands: int | None = None) -> list[dict]:
+             n_islands: int | None = None,
+             interval: str = "1d") -> list[dict]:
     """Evolve and admit indicators for `pair` (Phase B superior GP).
 
     Phase B adds ε-lexicase regime selection, constant polish, MAP-Elites niche
     archive, and a discovery-run pulse for the dashboard. Admission still
     requires OOS + permutation + k-fold + pool-lift + S10 backtest.
+
+    ``interval`` is the candle size of ``prices`` (must match live GP eval TF).
+    Every admitted formula is tagged with ``interval`` + ``horizon`` so the
+    ensemble only votes same-regime formulas together.
     """
     rng = random.Random(seed)
     prices = list(prices)
@@ -1026,6 +1031,7 @@ def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
 
     run_id = f"{ENGINE_VERSION}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}_{uuid.uuid4().hex[:8]}"
     n_islands = max(1, int(n_islands if n_islands is not None else N_ISLANDS_DEFAULT))
+    interval = str(interval or "1d").strip() or "1d"
     h_bin = _horizon_bin(horizon)
 
     cut = int(len(prices) * 0.6)
@@ -1157,7 +1163,7 @@ def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
                 "complexity": cand["complexity"],
                 "nodes": cand["complexity"],
                 "horizon": horizon,
-                "interval": "1d",
+                "interval": interval,
                 "source": "genetic",
                 "engine_version": ENGINE_VERSION,
                 "run_id": run_id,
@@ -1187,6 +1193,8 @@ def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
         "pair": pair,
         "engine_version": ENGINE_VERSION,
         "ts": datetime.now(timezone.utc).isoformat(),
+        "interval": interval,
+        "horizon": horizon,
         "n_islands": n_islands,
         "generations": generations,
         "pop_size": pop_size,

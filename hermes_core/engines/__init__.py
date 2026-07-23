@@ -26,6 +26,8 @@ from hermes_core.engines.decision_cortex import Cortex
 from hermes_core.engines.entry import Signal, evaluate_entry
 from hermes_core.engines.entry import (
     gp_ensemble_signal,
+    gp_daily_prices,
+    gp_invent_prices,
     simulate_gp_paper_pnl,
     _gp_eval_last,
     _gp_parse,
@@ -105,6 +107,7 @@ from hermes_core.engines.gp_promote_gate import (
     record_pnl as gp_gate_record_pnl,
     refresh_from_pnls,
 )
+from hermes_core.engines.gp_invent_profile import invent_profile
 from hermes_core.engines.reflect import (
     _is_reflection_done,
     _mark_reflection_done,
@@ -169,6 +172,7 @@ __all__ = [
     "promote_skip_shadow_proposal",
     "analyze_skip_shadow", "format_skip_shadow_context", "propose_skip_shadow_notes",
     "is_promote_allowed", "gp_gate_record_pnl", "refresh_from_pnls", "observe_shadow",
+    "invent_profile", "gp_daily_prices", "gp_invent_prices",
     "run_cycle", "write_heartbeat", "maybe_circuit_break",
     "MAX_CONSECUTIVE_FAILURES", "CIRCUIT_SLEEP_S",
 ]

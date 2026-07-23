@@ -64,9 +64,11 @@ def test_ensemble_skips_unapproved_indicators():
     prices = [100.0 + 0.2 * i for i in range(120)]
     gp._save_discovered("EUR/USD", [
         {"name": "(price-sma20)", "expr": "(price-sma20)",
-         "fitness": 0.4, "win_rate": 0.6, "backtest_approved": False},
+         "fitness": 0.4, "win_rate": 0.6, "backtest_approved": False,
+         "interval": "1d", "horizon": 10},
         {"name": "(ema20-sma20)", "expr": "(ema20-sma20)",
-         "fitness": 0.35, "win_rate": 0.55},  # missing flag == not approved
+         "fitness": 0.35, "win_rate": 0.55,
+         "interval": "1d", "horizon": 10},  # missing flag == not approved
     ])
     assert gp_ensemble_signal("EUR/USD", prices, promote=False) is None
 
@@ -75,9 +77,11 @@ def test_ensemble_votes_only_approved():
     prices = [100.0 + 0.2 * i for i in range(110)] + [112.0 + 0.5 * j for j in range(10)]
     gp._save_discovered("EUR/USD", [
         {"name": "(price-sma20)", "expr": "(price-sma20)",
-         "fitness": 0.4, "win_rate": 0.6, "backtest_approved": True},
+         "fitness": 0.4, "win_rate": 0.6, "backtest_approved": True,
+         "interval": "1d", "horizon": 10},
         {"name": "(ema20-sma20)", "expr": "(ema20-sma20)",
-         "fitness": 0.35, "win_rate": 0.55, "backtest_approved": True},
+         "fitness": 0.35, "win_rate": 0.55, "backtest_approved": True,
+         "interval": "1d", "horizon": 10},
     ])
     sig = gp_ensemble_signal("EUR/USD", prices, promote=False)
     assert sig is not None
@@ -91,9 +95,12 @@ def test_discover_marks_backtest_approved():
         wave = 0.004 * math.sin(i / 7.0)
         prices.append(prices[-1] * (1 + wave + rng.uniform(-0.001, 0.001)))
     inds = gp.discover(
-        "EUR/USD", prices, generations=40, pop_size=40, top_k=3, horizon=60,
+        "EUR/USD", prices, generations=40, pop_size=40, top_k=3, horizon=10,
+        interval="1d",
     )
     assert len(inds) >= 1
     for ind in inds:
         assert ind.get("backtest_approved") is True
         assert "backtest_reason" in ind
+        assert ind.get("interval") == "1d"
+        assert int(ind.get("horizon")) == 10
