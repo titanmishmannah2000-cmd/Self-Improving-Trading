@@ -67,6 +67,13 @@ from hermes_core.engines.expert_weights import (
     expert_weight,
     pair_expert_weights,
 )
+from hermes_core.engines.skip_shadow_learn import (
+    analyze_skip_shadow,
+    format_skip_shadow_context,
+    maybe_skip_shadow_learn,
+    propose_skip_shadow_notes,
+    skip_shadow_reflect_enabled,
+)
 from hermes_core.engines.reflect import (
     _is_reflection_done,
     _mark_reflection_done,
@@ -118,6 +125,8 @@ __all__ = [
     "EXPERT_TYPES", "SOFT_SUPPRESS_MULT", "apply_expert_weight",
     "expert_weight", "pair_expert_weights",
     "apply_regime_sizing", "regime_size_mult", "regime_sizing_enabled",
+    "skip_shadow_reflect_enabled", "maybe_skip_shadow_learn",
+    "analyze_skip_shadow", "format_skip_shadow_context", "propose_skip_shadow_notes",
     "run_cycle", "write_heartbeat", "maybe_circuit_break",
     "MAX_CONSECUTIVE_FAILURES", "CIRCUIT_SLEEP_S",
 ]

@@ -262,6 +262,21 @@ export default function CortexView({ apiBase, isActive = true }) {
           </p>
         </div>
 
+        <div className="report-card" style={{ marginBottom: 16 }} data-testid="cortex-skip-shadow">
+          <div className="report-card-header">Skip / shadow learning (Phase 4)</div>
+          <Help>
+            When <code>SKIP_SHADOW_REFLECT=1</code>, quiet pairs still write{" "}
+            <strong>shadow hypotheses</strong> from skip reasons and GP shadow votes
+            (Activity feed). These never auto-change strategy YAML — they keep
+            intelligence moving while trade count is low. Rollback:{" "}
+            <code>SKIP_SHADOW_REFLECT=0</code>.
+          </Help>
+          <p className="detail-muted">
+            Look for hypothesis status <code>skip_shadow_note</code> /{" "}
+            <code>skip_shadow_proposed</code> in Activity / Reports.
+          </p>
+        </div>
+
         {hasPolicyBlock && (
           <div className="report-card cortex-policy" style={{ marginBottom: 16 }}>
             <div className="report-card-header">Active policy decisions</div>

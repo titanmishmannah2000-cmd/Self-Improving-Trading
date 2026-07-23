@@ -227,7 +227,10 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
         # dashboard Flatline tab works across Railway volumes (not filesystem).
         "flatlined_pairs": flatline_events,
         "recent_open_trades": recent_open_trades,
-        "meta": {"oversold_pairs": (summary or {}).get("oversold_pairs", 0)},
+        "meta": {
+            "oversold_pairs": (summary or {}).get("oversold_pairs", 0),
+            "skip_shadow": (summary or {}).get("skip_shadow") or {},
+        },
     }
     with contextlib.suppress(Exception):
         client.post(

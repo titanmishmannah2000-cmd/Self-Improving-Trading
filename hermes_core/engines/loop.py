@@ -806,6 +806,19 @@ def run_cycle(
                     goal=cfg.get("goal"),
                 )
 
+    # HIF Phase-4: skip + GP-shadow observational learning (shadow notes only).
+    try:
+        from hermes_core.engines.skip_shadow_learn import maybe_skip_shadow_learn
+        _strats: dict = {}
+        for p in pairs:
+            with contextlib.suppress(Exception):
+                _strats[p] = load_strategy_for_pair(p, bot)
+        summary["skip_shadow"] = maybe_skip_shadow_learn(
+            bot, list(pairs), strategies=_strats,
+        )
+    except Exception:  # noqa: BLE001
+        summary["skip_shadow"] = {"enabled": False}
+
     # --- heartbeat every cycle without exception --------------------------
     status = "ok" if consecutive_failures == 0 else "degraded"
     write_heartbeat(bot, cycle, consecutive_failures, last_price,

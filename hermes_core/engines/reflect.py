@@ -153,6 +153,8 @@ def combined_reflect(
 
     variable, old, new, reason, confidence = change
     stats = aggregate_trades(trades)
+    if skipped_json:
+        reason = f"{reason} | skip_ctx: {skipped_json[:400]}"
     rec = {
         "pair": pair,
         "bot": bot,
@@ -166,6 +168,8 @@ def combined_reflect(
         "ts": __import__("time").time(),
         "status": "proposed",  # NOT applied — awaits approval + backtest (S10)
     }
+    if skipped_json:
+        rec["skip_context"] = skipped_json[:2000]
     _log_hypothesis(rec)
     return [rec]
 
@@ -464,6 +468,7 @@ def run_reflection_pipeline(
     fetch_prices=None,
     llm_callers: dict | None = None,
     auto_deploy: bool = True,
+    skipped_json: str = "",
 ) -> dict:
     """L1 → (optional L2) → backtest → deploy. Returns a status dict.
 
@@ -481,7 +486,7 @@ def run_reflection_pipeline(
 
     proposals = combined_reflect(
         pair, trades, goal=goal, chart_context=chart_context,
-        strategy=strategy, bot=bot,
+        skipped_json=skipped_json, strategy=strategy, bot=bot,
     )
     if not proposals:
         return {"status": "no_proposal", "pair": pair, "deployed": False}
@@ -607,11 +612,30 @@ def maybe_reflect_pair(
         return {"status": "latched", "pair": pair, "closed": total, "deployed": False}
 
     batch = closed[-every:]
+    skipped_json = ""
+    try:
+        from hermes_core.engines.skip_shadow_learn import (
+            analyze_skip_shadow,
+            format_skip_shadow_context,
+            load_pair_shadow,
+            load_pair_skips,
+            skip_shadow_reflect_enabled,
+        )
+        if skip_shadow_reflect_enabled():
+            analysis = analyze_skip_shadow(
+                load_pair_skips(bot, pair),
+                load_pair_shadow(bot, pair),
+            )
+            skipped_json = format_skip_shadow_context(analysis)
+    except Exception:  # noqa: BLE001
+        skipped_json = ""
+
     try:
         result = run_reflection_pipeline(
             pair, batch, bot=bot, goal=goal, chart_context=chart_context,
             prices=prices, fetch_prices=fetch_prices, llm_callers=llm_callers,
             auto_deploy=auto_deploy,
+            skipped_json=skipped_json,
         )
     except Exception as exc:  # noqa: BLE001 — never break the trade loop
         result = {
@@ -621,4 +645,6 @@ def maybe_reflect_pair(
     _mark_reflection_done(pair, total, bot)
     result["closed"] = total
     result["reflection_every"] = every
+    if skipped_json:
+        result["skip_context"] = skipped_json
     return result

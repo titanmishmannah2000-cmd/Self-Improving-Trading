@@ -1403,13 +1403,20 @@ function ActivityFeed({ overview }) {
       const oldV = h.old_value ?? h.old;
       const newV = h.new_value ?? h.new;
       const pair = h.pair || "?";
+      const status = h.status || "";
+      const isSkipShadow =
+        status.startsWith("skip_shadow") || h.source === "skip_shadow_learn";
       events.push({
         ts: h.ts,
         type: "reflect",
         bot: botName,
         text: isWatcher
-          ? `${botLabel} adjusted settings for ${PAIR_META[pair]?.plain || pair}`
-          : `Reflection (${botName}/${pair}): ${h.variable || "?"} ${safeVal(oldV)} → ${safeVal(newV)}`,
+          ? (isSkipShadow
+            ? `${botLabel} noted a quiet-market lesson for ${PAIR_META[pair]?.plain || pair}`
+            : `${botLabel} adjusted settings for ${PAIR_META[pair]?.plain || pair}`)
+          : (isSkipShadow
+            ? `Skip/shadow (${botName}/${pair}): ${h.reason || status}`
+            : `Reflection (${botName}/${pair}): ${h.variable || "?"} ${safeVal(oldV)} → ${safeVal(newV)}`),
         good: null,
       });
     }
