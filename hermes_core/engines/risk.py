@@ -29,11 +29,48 @@ RR_GUARD_MIN = 1.0               # reward:risk below this is rejected
 PROBE_EVIDENCE_MIN = 5           # closed outcomes before full size
 PROBE_SIZE_FRACTION = 0.25       # 25% of computed size while evidence is thin
 
+# Session tokens must NEVER be treated as size regimes (loop bug: LDN/NY → NEUTRAL).
+_SESSION_TOKENS = frozenset({"ASIA", "LDN", "NY", "OTHER", "LONDON", "NEWYORK"})
+
+
+def size_regime_from_market(
+    regime: str | None,
+    fast_regime: str | None = None,
+) -> str:
+    """Map indicator regime labels → BULL / BEAR / NEUTRAL for base sizing.
+
+    Uses ``compute_all`` labels: regime ∈ {trend, range}, fast_regime ∈ {up, down, flat}.
+    Session tokens (LDN/NY/…) are rejected → NEUTRAL (fail-safe, never full BULL by accident).
+    """
+    raw = (regime or "").strip().upper()
+    if raw in _SESSION_TOKENS:
+        return "NEUTRAL"
+    if raw in ("BULL", "BEAR", "NEUTRAL"):
+        return raw
+
+    reg = (regime or "").strip().lower()
+    fast = (fast_regime or "").strip().lower()
+
+    if reg == "trend":
+        if fast == "up":
+            return "BULL"
+        if fast == "down":
+            return "BEAR"
+        return "NEUTRAL"  # trend + flat / unknown direction
+
+    # range or unknown: long book stays conservative unless short-horizon up
+    if fast == "down":
+        return "BEAR"
+    return "NEUTRAL"
+
 
 def _raw_size(base: float, regime: str, open_bullish: int) -> float:
-    if regime == "BULL":
+    label = (regime or "").strip().upper()
+    if label in _SESSION_TOKENS:
+        label = "NEUTRAL"
+    if label == "BULL":
         s = base * BULL_MULT
-    elif regime == "BEAR":
+    elif label == "BEAR":
         s = base * BEAR_MULT
     else:  # NEUTRAL or unknown -> conservative
         s = base * NEUTRAL_MULT
@@ -44,7 +81,12 @@ def _raw_size(base: float, regime: str, open_bullish: int) -> float:
 
 
 def compute_position_size(regime, vol, open_bullish_count, config) -> float:
-    """Blueprint-exact Phase-6 signature. Returns position size in (0, 0.5]."""
+    """Blueprint-exact Phase-6 signature. Returns position size in (0, 0.5].
+
+    ``regime`` must be BULL/BEAR/NEUTRAL (or indicator-mapped via
+    ``size_regime_from_market``). Session tokens fall through to NEUTRAL.
+    ``vol`` is accepted for blueprint compatibility (unused).
+    """
     base = float(config.get("position_size_r", 0.15))
     return _raw_size(base, regime, int(open_bullish_count))
 

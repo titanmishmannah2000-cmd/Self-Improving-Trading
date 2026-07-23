@@ -19,6 +19,7 @@ from hermes_core.engines import (
     compute_position_size,
     param_range_gate,
     size,
+    size_regime_from_market,
 )
 
 
@@ -29,17 +30,47 @@ def cfg(**kw):
 
 
 def test_size_bull():
-    assert compute_position_size("BULL", 0.05, 0, cfg(psr=0.25)) == 0.25
+    assert compute_position_size("BULL", 0.05, 0, cfg()) == 0.25
 
 
 def test_size_neutral():
     # NEUTRAL -> *0.6
-    assert compute_position_size("NEUTRAL", 0.05, 0, cfg(psr=0.25)) == pytest.approx(0.15)
+    assert compute_position_size("NEUTRAL", 0.05, 0, cfg()) == pytest.approx(0.15)
 
 
 def test_size_neutral_two_open():
-    s = compute_position_size("NEUTRAL", 0.05, 2, cfg(psr=0.25))
+    s = compute_position_size("NEUTRAL", 0.05, 2, cfg())
     assert s == pytest.approx(0.15 * 0.7)   # extra 30% (2*15%) reduction
+
+
+def test_session_token_is_not_bull():
+    """LDN/NY must not accidentally size as unknown→NEUTRAL… wait they DID.
+    Explicit: session tokens map to NEUTRAL sizing, never full BULL."""
+    assert compute_position_size("LDN", 0.05, 0, cfg()) == pytest.approx(0.15)
+    assert compute_position_size("NY", 0.05, 0, cfg()) == pytest.approx(0.15)
+    assert compute_position_size("ASIA", 0.05, 0, cfg()) == pytest.approx(0.15)
+
+
+def test_size_regime_from_market_trend_up_is_bull():
+    assert size_regime_from_market("trend", "up") == "BULL"
+    assert size_regime_from_market("trend", "down") == "BEAR"
+    assert size_regime_from_market("trend", "flat") == "NEUTRAL"
+    assert size_regime_from_market("range", "up") == "NEUTRAL"
+    assert size_regime_from_market("range", "down") == "BEAR"
+
+
+def test_size_regime_rejects_session_tokens():
+    assert size_regime_from_market("LDN") == "NEUTRAL"
+    assert size_regime_from_market("NY", "up") == "NEUTRAL"
+
+
+def test_market_mapped_size_matches_bull_full():
+    """trend+up → BULL → full position_size_r (not session NEUTRAL 0.6×)."""
+    label = size_regime_from_market("trend", "up")
+    assert label == "BULL"
+    assert compute_position_size(label, 0.05, 0, cfg()) == 0.25
+    # Old bug path would have used session token:
+    assert compute_position_size("LDN", 0.05, 0, cfg()) == pytest.approx(0.15)
 
 
 def test_rr_guard_blocks():

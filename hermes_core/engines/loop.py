@@ -54,6 +54,7 @@ from hermes_core.engines.risk import (
     compute_atr_stop,
     compute_position_size,
     param_range_gate,
+    size_regime_from_market,
 )
 from hermes_core.env import get_env, load_env
 from hermes_core.engines.guards import bb_bandwidth_guard, flat_price_guard
@@ -892,7 +893,16 @@ def run_cycle(
                 _log_skip(bot, pair, cycle, "rr_guard")
                 summary["skips"] += 1
                 continue
-            size = compute_position_size(session_token, atr, 0, strategy)
+            # Base size from MARKET regime (trend/range + fast direction), NOT
+            # session token — LDN/NY were incorrectly hitting NEUTRAL ×0.6 always.
+            _size_regime = size_regime_from_market(
+                ind.get("regime") or regimes.get(pair),
+                ind.get("fast_regime"),
+            )
+            _open_bullish = sum(1 for p in open_positions if p != pair)
+            size = compute_position_size(
+                _size_regime, atr, _open_bullish, strategy,
+            )
             # HIF Phase-1 probe sizing: shrink only when PROBE_SIZING=1 and
             # cortex evidence for (pair, entry_type) is thin. Never skips.
             # Fail-open to full size if cortex cannot be read.
@@ -1076,6 +1086,7 @@ def run_cycle(
                 "gp_indicators": sig.meta.get("gp_indicators", []),
                 # HIF Phase-1 dashboard fields
                 "size_mode": _probe["size_mode"],
+                "size_regime": _size_regime,
                 "evidence_n": _probe.get("evidence_n") if _probe_enabled else _evidence_n,
                 "evidence_state": _probe["evidence_state"],
                 "base_size": _probe.get("base_size"),

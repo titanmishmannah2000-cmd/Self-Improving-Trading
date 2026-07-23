@@ -124,6 +124,7 @@ from hermes_core.engines.risk import (
     evidence_state_for,
     param_range_gate,
     size,
+    size_regime_from_market,
 )
 
 __all__ = [
@@ -131,6 +132,7 @@ __all__ = [
     "Exit", "evaluate_exit", "should_circuit_break",
     "MAX_POSITION_SIZE", "check_rr_guard", "compute_atr_stop",
     "compute_position_size", "param_range_gate", "size",
+    "size_regime_from_market",
     "apply_probe_sizing", "PROBE_EVIDENCE_MIN", "PROBE_SIZE_FRACTION",
     "evidence_state_for",
     "get_chart_context", "get_all_chart_contexts", "analyze_chart",
