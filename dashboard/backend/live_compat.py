@@ -252,7 +252,16 @@ def _build_discovered(bot: str) -> dict:
             if isinstance(raw, dict):
                 pulse_raw = raw.get("__gp_pulse__")
                 if isinstance(pulse_raw, dict):
-                    pulse = pulse_raw
+                    # Stamp owning bot on each pair pulse for tab filtering.
+                    pulse = {}
+                    for pk, pv in pulse_raw.items():
+                        if isinstance(pv, dict):
+                            row = dict(pv)
+                            row.setdefault("_bot", bot)
+                            row.setdefault("pair", pk)
+                            pulse[pk] = row
+                        else:
+                            pulse[pk] = {"_bot": bot, "pair": pk, "raw": pv}
                 niche_raw = raw.get("__gp_niche_map__")
                 if isinstance(niche_raw, dict):
                     niche_map = niche_raw
@@ -459,9 +468,13 @@ def register(app, ingest_token_getter, valid_bots, on_price_broadcast=None):
             for p, e in d["ensemble"].items():
                 result["ensemble"][p] = e
             result["degradation"].update(d["degradation"])
-            # Merge Phase B pulse / niche maps (later bots overwrite same pair).
+            # Merge Phase B pulse / niche maps. Tag bot so the Discovered tab
+            # can filter (BTC pulses must not appear under Forex).
             for p, pulse in (d.get("discovery_pulse") or {}).items():
-                result["discovery_pulse"][p] = pulse
+                row = dict(pulse) if isinstance(pulse, dict) else {"raw": pulse}
+                row.setdefault("_bot", bot)
+                row.setdefault("pair", p)
+                result["discovery_pulse"][p] = row
             for p, nm in (d.get("niche_map") or {}).items():
                 result["niche_map"][p] = nm
         for p, inds in result["pairs"].items():

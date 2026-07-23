@@ -205,19 +205,24 @@ function DegCard({ pair, deg }) {
   );
 }
 
-function DiscoveryPulsePanel({ pulses, botFilter }) {
-  const entries = Object.entries(pulses || {}).filter(([pair]) => {
+function DiscoveryPulsePanel({ pulses, botFilter, pairBotMap }) {
+  const entries = Object.entries(pulses || {}).filter(([pair, p]) => {
     if (botFilter === "all") return true;
-    // Pulses are per-pair; show all when filtering by bot (pair may be shared).
-    return true;
+    const owner =
+      (p && p._bot) ||
+      (pairBotMap && pairBotMap[pair]) ||
+      null;
+    if (owner) return owner === botFilter;
+    // Unknown owner: hide on a specific bot tab (avoid BTC on Forex).
+    return false;
   });
   if (!entries.length) return null;
   return (
     <div className="gp-pulse-panel" data-testid="discovery-pulse">
       <h3 className="discovered-section-title">Discovery run pulse</h3>
       <Help>
-        Latest invent cycle stats: candidates evaluated, admit rate, MAP-Elites coverage,
-        and best OOS. Updates when bots push after discovery.
+        Latest invent cycle stats for this bot: candidates evaluated, admit rate,
+        MAP-Elites coverage, and best OOS. Updates when bots push after discovery.
       </Help>
       <div className="gp-pulse-grid">
         {entries
@@ -226,9 +231,21 @@ function DiscoveryPulsePanel({ pulses, botFilter }) {
             const cov = p?.map_elites?.coverage;
             const filled = p?.map_elites?.filled;
             const total = p?.map_elites?.total_cells;
+            const regime =
+              p?.interval && p?.horizon != null
+                ? `${p.interval}/h${p.horizon}`
+                : null;
             return (
-              <div className="gp-pulse-card" key={pair}>
-                <div className="gp-pulse-pair">{pair}</div>
+              <div className="gp-pulse-card" key={`${p?._bot || "x"}:${pair}`}>
+                <div className="gp-pulse-pair">
+                  {pair}
+                  {regime ? (
+                    <span className="gp-pulse-regime" title="Invent candle TF / horizon">
+                      {" "}
+                      · {regime}
+                    </span>
+                  ) : null}
+                </div>
                 <div className="gp-pulse-stats">
                   <span title="Engine version">
                     <b>{String(p.engine_version || "—").replace("gp_v2_", "")}</b>
@@ -378,6 +395,32 @@ export default function DiscoveredView({ apiBase, isActive = true }) {
     return out;
   }, [data, botFilter]);
 
+  // Pair → owning bot (from indicator tags + known bot configs).
+  const pairBotMap = useMemo(() => {
+    const map = {
+      "EUR/USD": "forex",
+      "GBP/USD": "forex",
+      "GBP/JPY": "forex",
+      "AUD/USD": "forex",
+      "XAU/USD": "gold",
+      "XAG/USD": "gold",
+      "BTC/USD": "crypto",
+      "ETH/USD": "crypto",
+    };
+    for (const [pair, inds] of Object.entries(data?.pairs || {})) {
+      for (const ind of inds || []) {
+        if (ind?._bot) {
+          map[pair] = ind._bot;
+          break;
+        }
+      }
+    }
+    for (const [pair, pulse] of Object.entries(data?.discovery_pulse || {})) {
+      if (pulse?._bot) map[pair] = pulse._bot;
+    }
+    return map;
+  }, [data]);
+
   // Always show every known bot in the filter bar (including 0-indicator bots),
   // so crypto stays clickable after a rediscovery wipe.
   const tabBots = useMemo(() => {
@@ -521,7 +564,11 @@ export default function DiscoveredView({ apiBase, isActive = true }) {
         </div>
       </div>
 
-      <DiscoveryPulsePanel pulses={data.discovery_pulse || {}} botFilter={botFilter} />
+      <DiscoveryPulsePanel
+        pulses={data.discovery_pulse || {}}
+        botFilter={botFilter}
+        pairBotMap={pairBotMap}
+      />
       <NicheMapPanel
         nicheMap={data.niche_map || {}}
         pairsFilter={Object.keys(filteredPairs)}

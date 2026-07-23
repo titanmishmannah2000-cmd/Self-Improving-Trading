@@ -41,7 +41,7 @@ BOT_INVENT_DEFAULTS: dict[str, dict[str, Any]] = {
         "generations": 40,
         "pop_size": 40,
         "n_islands": 2,
-        "timeout_s": 90,
+        "timeout_s": 300,
         "min_bars": 200,
     },
     "gold": {
@@ -52,7 +52,7 @@ BOT_INVENT_DEFAULTS: dict[str, dict[str, Any]] = {
         "generations": 40,
         "pop_size": 40,
         "n_islands": 2,
-        "timeout_s": 90,
+        "timeout_s": 300,
         "min_bars": 200,
     },
     "crypto": {

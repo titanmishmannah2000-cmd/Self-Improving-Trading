@@ -141,7 +141,13 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
     try:
         pulses = load_discovery_pulses(list(cfg.get("pairs") or []))
         if pulses:
-            discovered_pairs["__gp_pulse__"] = pulses
+            tagged = {}
+            for pk, pv in pulses.items():
+                row = dict(pv) if isinstance(pv, dict) else {"raw": pv}
+                row["_bot"] = bot
+                row.setdefault("pair", pk)
+                tagged[pk] = row
+            discovered_pairs["__gp_pulse__"] = tagged
         niche_maps = {}
         for p, inds in list(discovered_pairs.items()):
             if p.startswith("__") or not isinstance(inds, list):

@@ -1244,6 +1244,7 @@ body {
   border-radius: 8px; background: rgba(20, 48, 58, 0.35);
 }
 .gp-pulse-pair { font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+.gp-pulse-regime { font-weight: 500; color: var(--muted, #8b93a3); font-size: 11px; }
 .gp-pulse-stats {
   display: flex; flex-wrap: wrap; gap: 8px 12px; font-size: 11px;
   color: var(--ghost, #8b93a3);

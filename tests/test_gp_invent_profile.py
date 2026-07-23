@@ -25,11 +25,12 @@ def test_invent_profiles_per_bot():
     fx = invent_profile("forex")
     assert fx["interval"] == "1d"
     assert fx["horizon"] == 10
-    assert fx["timeout_s"] >= 90
+    assert fx["timeout_s"] >= 240
 
     gd = invent_profile("gold")
     assert gd["interval"] == "1d"
     assert gd["horizon"] == 20
+    assert gd["timeout_s"] >= 240
 
     cr = invent_profile("crypto")
     assert cr["interval"] == "1h"
