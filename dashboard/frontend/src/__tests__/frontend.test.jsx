@@ -458,4 +458,32 @@ describe("Phase 17 dashboard frontend", () => {
     const badge = await screen.findByTestId("exit-intel-badge");
     expect(badge).toHaveTextContent(/Exit/i);
   });
+
+  it("test_mfe_peak_badge", async () => {
+    const overview = mockOverview();
+    overview.bots.forex.recent_open_trades = [
+      {
+        id: "forex:EUR/USD:8",
+        pair: "EUR/USD",
+        entry_type: "mean_reversion",
+        entry_price: 1.1,
+        size: 0.2,
+        mfe_tracking: true,
+        peak_mfe_pct: 1.25,
+        trough_mae_pct: -0.4,
+        entry_ts: "2026-01-01T00:00:00Z",
+        held_cycles: 3,
+        unrealised_pct: 0.8,
+      },
+    ];
+    overview.bots.forex.open_count = 1;
+    overview.totals.open_trades = 1;
+    installFetchMock(overview);
+
+    render(<App />);
+    await screen.findAllByTestId("pair-card");
+    fireEvent.click(screen.getByRole("button", { name: "Watcher" }));
+    const badge = await screen.findByTestId("mfe-peak-badge");
+    expect(badge).toHaveTextContent(/MFE 1\.3%/i);
+  });
 });

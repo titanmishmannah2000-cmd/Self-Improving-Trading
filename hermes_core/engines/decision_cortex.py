@@ -99,10 +99,32 @@ class Cortex:
         self._entries.append({"pair": pair, "type": entry_type, "outcome": None})
         self._flush()
 
-    def record_outcome(self, pair: str, entry_type: str, pnl: float) -> None:
-        self._entries.append({"pair": pair, "type": entry_type,
-                              "outcome": 1 if pnl > 0 else 0,
-                              "pnl": float(pnl)})
+    def record_outcome(
+        self,
+        pair: str,
+        entry_type: str,
+        pnl: float,
+        *,
+        mfe_pct: float | None = None,
+        mae_pct: float | None = None,
+        giveback_pct: float | None = None,
+        giveback_frac: float | None = None,
+    ) -> None:
+        row = {
+            "pair": pair,
+            "type": entry_type,
+            "outcome": 1 if pnl > 0 else 0,
+            "pnl": float(pnl),
+        }
+        if mfe_pct is not None:
+            row["mfe_pct"] = float(mfe_pct)
+        if mae_pct is not None:
+            row["mae_pct"] = float(mae_pct)
+        if giveback_pct is not None:
+            row["giveback_pct"] = float(giveback_pct)
+        if giveback_frac is not None:
+            row["giveback_frac"] = float(giveback_frac)
+        self._entries.append(row)
         self._flush()
 
     def record_hypothesis(self, pair: str, text: str) -> None:
@@ -177,6 +199,54 @@ class Cortex:
             "n": len(outcomes),
             "avg_win": avg_win,
             "avg_loss": avg_loss,
+        }
+
+    def excursion_stats(self, pair: str, entry_type: str) -> dict:
+        """Average MFE/MAE/giveback for closed outcomes that recorded excursions."""
+        rows = [
+            e for e in self._entries
+            if e.get("pair") == pair
+            and e.get("type") == entry_type
+            and e.get("outcome") is not None
+            and e.get("mfe_pct") is not None
+        ]
+        if not rows:
+            return {
+                "n": 0,
+                "avg_mfe": None,
+                "avg_mae": None,
+                "avg_giveback": None,
+                "avg_giveback_frac": None,
+            }
+        mfes, maes, gbs, gfs = [], [], [], []
+        for e in rows:
+            try:
+                mfes.append(float(e["mfe_pct"]))
+            except (TypeError, ValueError, KeyError):
+                pass
+            try:
+                if e.get("mae_pct") is not None:
+                    maes.append(float(e["mae_pct"]))
+            except (TypeError, ValueError):
+                pass
+            try:
+                if e.get("giveback_pct") is not None:
+                    gbs.append(float(e["giveback_pct"]))
+            except (TypeError, ValueError):
+                pass
+            try:
+                if e.get("giveback_frac") is not None:
+                    gfs.append(float(e["giveback_frac"]))
+            except (TypeError, ValueError):
+                pass
+        return {
+            "n": len(rows),
+            "avg_mfe": round(sum(mfes) / len(mfes), 4) if mfes else None,
+            "avg_mae": round(sum(maes) / len(maes), 4) if maes else None,
+            "avg_giveback": round(sum(gbs) / len(gbs), 4) if gbs else None,
+            "avg_giveback_frac": (
+                round(sum(gfs) / len(gfs), 4) if gfs else None
+            ),
         }
 
     # ── best entry type (router) ────────────────────────────────────────────

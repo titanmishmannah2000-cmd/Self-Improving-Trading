@@ -238,6 +238,11 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
             "exit_intel_n": pos.get("exit_intel_n"),
             "exit_intel_reasons": pos.get("exit_intel_reasons") or [],
             "partial_enabled": pos.get("partial_enabled"),
+            "avg_giveback_frac": pos.get("avg_giveback_frac"),
+            # MFE/MAE peak tracking
+            "peak_mfe_pct": pos.get("peak_mfe_pct"),
+            "trough_mae_pct": pos.get("trough_mae_pct"),
+            "mfe_tracking": pos.get("mfe_tracking"),
         }
         for pair, pos in open_positions.items()
     ]

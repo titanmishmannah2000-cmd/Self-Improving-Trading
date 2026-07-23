@@ -177,8 +177,13 @@ const GLOSSARY = {
   },
   exit_intel: {
     term: "Exit intelligence",
-    plain: "When Exit Intel is ON (EXIT_INTEL=1), trail / breakeven / partial knobs are tuned from cortex history for that pair. Same entry fills — better harvested PnL. Thin history → stock exits.",
+    plain: "When Exit Intel is ON (EXIT_INTEL=1), trail / breakeven / partial knobs are tuned from cortex history for that pair. Same entry fills — better harvested PnL. Thin history → stock exits. With MFE tracking, high giveback pulls protection earlier.",
     analogy: "Same entry ticket, smarter seat for when to take profit or tighten the stop.",
+  },
+  mfe_tracking: {
+    term: "MFE / MAE (peak tracking)",
+    plain: "When MFE Tracking is ON (MFE_TRACKING=1), each open trade remembers its best (MFE) and worst (MAE) unrealised %. On close, giveback (peak minus exit) feeds cortex so Exit Intel can tighten stops on pairs that often give back gains.",
+    analogy: "A race car's best lap vs finish — if you always fade from the peak, pull into the pits sooner next time.",
   },
   book_mult: {
     term: "Book risk",
@@ -643,6 +648,15 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
                 title={`Exit intel: BE@${openTrade.be_trigger_frac ?? 0.5} TP · trail ${openTrade.trailing_atr_mult ?? "off"} · partial ${openTrade.partial_enabled ? "on" : "off"}`}
               >
                 Exit
+              </span>
+            )}
+            {openTrade?.mfe_tracking && openTrade?.peak_mfe_pct != null && (
+              <span
+                className="pc-strategy pc-strategy-mfe"
+                data-testid="mfe-peak-badge"
+                title={`Peak MFE ${Number(openTrade.peak_mfe_pct).toFixed(2)}% · MAE ${Number(openTrade.trough_mae_pct ?? 0).toFixed(2)}%`}
+              >
+                MFE {Number(openTrade.peak_mfe_pct).toFixed(1)}%
               </span>
             )}
           </div>
@@ -1116,9 +1130,26 @@ function DetailPanel({ pair, botData, strategyParams, lastSkip }) {
                     ? ` · trail×${openTrade.trailing_atr_mult}`
                     : " · trail off"}
                   {openTrade.partial_enabled ? " · partial" : ""}
+                  {openTrade.avg_giveback_frac != null
+                    ? ` · giveback ${openTrade.avg_giveback_frac}`
+                    : ""}
                   {Array.isArray(openTrade.exit_intel_reasons) && openTrade.exit_intel_reasons.length
                     ? ` · ${openTrade.exit_intel_reasons.join(", ")}`
                     : ""}
+                </span>
+              </div>
+            )}
+            {!isWatcher && openTrade.mfe_tracking && (
+              <div className="dp-row" data-testid="detail-mfe-mae">
+                <span><GlossaryTerm id="mfe_tracking">MFE / MAE</GlossaryTerm></span>
+                <span className="mono dp-mfe">
+                  peak {openTrade.peak_mfe_pct != null
+                    ? `${Number(openTrade.peak_mfe_pct).toFixed(2)}%`
+                    : "—"}
+                  {" · "}
+                  trough {openTrade.trough_mae_pct != null
+                    ? `${Number(openTrade.trough_mae_pct).toFixed(2)}%`
+                    : "—"}
                 </span>
               </div>
             )}

@@ -194,6 +194,14 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
         remain = full_size - closed_size
         entry_type = pos.get("entry_type", "mean_reversion")
         pnl = pos["unrealised_pct"]
+        _exc = {}
+        with contextlib.suppress(Exception):
+            from hermes_core.engines.excursion import (
+                excursion_from_position,
+                mfe_tracking_enabled,
+            )
+            if mfe_tracking_enabled():
+                _exc = excursion_from_position(pos, pnl)
         _log_trade(bot, {
             "id": (pos.get("id") or f"{bot}:{pair}:{int(time.time())}") + ":partial",
             "bot": bot, "pair": pair, "cycle": cycle,
@@ -205,9 +213,17 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
             "pnl_pct": pnl, "size": closed_size,
             "hold_cycles": pos.get("held_cycles", 0),
             "partial": True,
+            **{k: _exc[k] for k in ("mfe_pct", "mae_pct", "giveback_pct", "giveback_frac")
+               if k in _exc},
         })
         with contextlib.suppress(Exception):
-            cortex.record_outcome(pair, entry_type, pnl)
+            cortex.record_outcome(
+                pair, entry_type, pnl,
+                mfe_pct=_exc.get("mfe_pct"),
+                mae_pct=_exc.get("mae_pct"),
+                giveback_pct=_exc.get("giveback_pct"),
+                giveback_frac=_exc.get("giveback_frac"),
+            )
         pos["size"] = remain
         pos["partial_done"] = True
         pos["breakeven_set"] = True
@@ -217,6 +233,14 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
     # --- REAL close: log the trade with the keys the dashboard reads.
     entry_type = pos.get("entry_type", "mean_reversion")
     pnl = pos["unrealised_pct"]
+    _exc = {}
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.excursion import (
+            excursion_from_position,
+            mfe_tracking_enabled,
+        )
+        if mfe_tracking_enabled():
+            _exc = excursion_from_position(pos, pnl)
     _log_trade(bot, {
         "id": pos.get("id") or f"{bot}:{pair}:{int(time.time())}",
         "bot": bot, "pair": pair, "cycle": cycle,
@@ -228,6 +252,8 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
         "entry_ts": pos.get("entry_ts"), "exit_ts": _now_iso(),
         "pnl_pct": pnl, "size": pos["size"],
         "hold_cycles": pos.get("held_cycles", 0),
+        **{k: _exc[k] for k in ("mfe_pct", "mae_pct", "giveback_pct", "giveback_frac")
+           if k in _exc},
     })
     reentry[pair] = {"last_exit_cycle": cycle}
     del open_positions[pair]
@@ -244,7 +270,13 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
             "gp_ensemble", "shadow",
         )
         _record_type = "gp_ensemble" if is_gp else entry_type
-        cortex.record_outcome(pair, _record_type, pnl)
+        cortex.record_outcome(
+            pair, _record_type, pnl,
+            mfe_pct=_exc.get("mfe_pct"),
+            mae_pct=_exc.get("mae_pct"),
+            giveback_pct=_exc.get("giveback_pct"),
+            giveback_frac=_exc.get("giveback_frac"),
+        )
         if is_gp:
             _credited = pos.get("gp_indicators") or []
         else:
@@ -991,6 +1023,11 @@ def run_cycle(
                 "trailing_atr_mult": _xi.get("trailing_atr_mult"),
                 "exit_intel_n": _xi.get("exit_intel_n"),
                 "exit_intel_reasons": _xi.get("exit_intel_reasons") or [],
+                "avg_giveback_frac": _xi.get("avg_giveback_frac"),
+                # MFE/MAE peak tracking (updated each cycle when MFE_TRACKING=1)
+                "peak_mfe_pct": 0.0,
+                "trough_mae_pct": 0.0,
+                "mfe_tracking": False,
             }
             # [CORTEX] record the entry (per-type memory; exile persists across cycles)
             with contextlib.suppress(Exception):
@@ -1000,6 +1037,14 @@ def run_cycle(
             # --- exit evaluation (S5) --------------------------------------
             pos["held_cycles"] = pos.get("held_cycles", 0) + 1
             pos["unrealised_pct"] = (price - pos["entry_price"]) / pos["entry_price"] * 100.0
+            with contextlib.suppress(Exception):
+                from hermes_core.engines.excursion import (
+                    mfe_tracking_enabled,
+                    update_position_excursions,
+                )
+                if mfe_tracking_enabled():
+                    update_position_excursions(pos, pos["unrealised_pct"])
+                    pos["mfe_tracking"] = True
             ex = evaluate_exit(pos, price, prices)
             if ex is not None:
                 _process_exit(

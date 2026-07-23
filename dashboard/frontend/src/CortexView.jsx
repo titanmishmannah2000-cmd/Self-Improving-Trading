@@ -308,6 +308,16 @@ export default function CortexView({ apiBase, isActive = true }) {
           </Help>
         </div>
 
+        <div className="report-card" style={{ marginBottom: 16 }} data-testid="cortex-mfe-tracking">
+          <div className="report-card-header">MFE / MAE peak tracking</div>
+          <Help>
+            When <code>MFE_TRACKING=1</code>, opens track peak favourable (MFE)
+            and adverse (MAE) unrealised %. Closes store giveback in cortex so
+            Exit Intel can tighten BE/trail on high-giveback pairs. Live badge{" "}
+            <strong>MFE x.x%</strong>. Rollback: <code>MFE_TRACKING=0</code>.
+          </Help>
+        </div>
+
         <div className="report-card" style={{ marginBottom: 16 }} data-testid="cortex-skip-promote">
           <div className="report-card-header">Skip-shadow promote (gated)</div>
           <Help>

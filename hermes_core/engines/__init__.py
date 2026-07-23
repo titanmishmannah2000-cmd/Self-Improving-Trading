@@ -66,6 +66,11 @@ from hermes_core.engines.entry_ranking import (
 )
 from hermes_core.engines.exit_intel import apply_exit_intel, exit_intel_enabled
 from hermes_core.engines.book_risk import apply_book_risk, book_risk_enabled
+from hermes_core.engines.excursion import (
+    excursion_from_position,
+    mfe_tracking_enabled,
+    update_position_excursions,
+)
 from hermes_core.engines.regime_sizing import (
     apply_regime_sizing,
     regime_size_mult,
@@ -144,6 +149,7 @@ __all__ = [
     "entry_ranking_enabled", "score_candidate", "rank_candidates",
     "apply_exit_intel", "exit_intel_enabled",
     "apply_book_risk", "book_risk_enabled",
+    "mfe_tracking_enabled", "update_position_excursions", "excursion_from_position",
     "skip_shadow_reflect_enabled", "maybe_skip_shadow_learn",
     "skip_shadow_promote_enabled", "maybe_promote_skip_shadow",
     "promote_skip_shadow_proposal",
