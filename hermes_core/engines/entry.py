@@ -243,11 +243,12 @@ import re  # noqa: E402  (local import; entry.py is otherwise stdlib-only)
 import time as _time  # noqa: E402
 
 from hermes_core.engines.genetic import (  # noqa: E402
-    FEATURES, _eval_expr, _feature, indicator_expr, is_backtest_approved,
-    load_discovered_indicators,
+    CONSTANTS, FEATURES, ROLLING_OPS, UNARY_OPS, _eval_expr, _feature,
+    indicator_expr, is_backtest_approved, load_discovered_indicators,
+    prefer_niche_diverse,
 )
 
-_FEATURE_RE = re.compile(r"^[a-z0-9]+$")
+_FEATURE_RE = re.compile(r"^[a-z0-9_]+$")
 
 # Daily close cache so GP indicators (discovered on DAILY bars) are evaluated on
 # the SAME regime. Without this the live loop fed them 5m bars -> a regime
@@ -280,14 +281,16 @@ def gp_daily_prices(pair: str) -> list[float] | None:
 
 
 def _gp_parse(expr_str: str):
-    """Parse a fully-parenthesized infix GP expression into the (op,a,b) tree
-    form that genetic._eval_expr consumes -- so live evaluation uses the SAME
-    _feature math as discovery (identical numbers). No eval/exec.
+    """Parse a GP expression into the tree form genetic._eval_expr consumes.
 
-    Grammar: expr -> term (('+'|'-') term)* ; term -> factor (('*'|'/') factor)*
-             ; factor -> '(' expr ')' | FEATURE
+    Supports:
+      * legacy fully-parenthesized infix: ``(sma5+rsi)``, ``(price-sma20)``
+      * Phase A unary: ``abs(rsi)``, ``neg(vol)``, ``sign(ret)``
+      * Phase A rolling: ``mean(price,20)``, ``std(rsi,10)``
+      * named constants: ``k_p05``
+    No eval/exec.
     """
-    toks = re.findall(r"\(|\)|\+|-|\*|/|[a-z0-9]+", expr_str)
+    toks = re.findall(r"\(|\)|,|\+|-|\*|/|[a-z_][a-z0-9_]*|\d+", expr_str)
     pos = 0
 
     def peek():
@@ -322,9 +325,36 @@ def _gp_parse(expr_str: str):
             if peek() == ")":
                 pos += 1
             return node
+        if t in UNARY_OPS:
+            pos += 1
+            if peek() != "(":
+                return "price"
+            pos += 1
+            child = parse_expr()
+            if peek() == ")":
+                pos += 1
+            return (t, child)
+        if t in ROLLING_OPS:
+            pos += 1
+            if peek() != "(":
+                return "price"
+            pos += 1
+            child = parse_expr()
+            if peek() == ",":
+                pos += 1
+            w_tok = peek()
+            w = 20
+            if w_tok is not None and w_tok.isdigit():
+                w = int(w_tok)
+                pos += 1
+            if peek() == ")":
+                pos += 1
+            return (t, child, w)
         pos += 1
-        if t in FEATURES:
+        if t in FEATURES or t in CONSTANTS:
             return t
+        if t is not None and t.isdigit():
+            return int(t)
         return "price"
 
     return parse_expr()
@@ -377,6 +407,10 @@ def gp_ensemble_signal(pair: str, prices: list[float],
     inds = load_discovered_indicators(pair, include_shared=True)
     if not inds:
         return None
+    # Phase B: spread votes across MAP-Elites niches (still evaluates all,
+    # but prefers niche-diverse order so early z-threshold skips don't collapse
+    # to one behavior family). Cap 2 per niche for the voting pass.
+    inds = prefer_niche_diverse(inds, max_per_niche=2)
 
     banned = exiled_ids or set()
     votes = []  # (weighted_direction, weight, name)

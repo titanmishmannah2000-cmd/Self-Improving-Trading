@@ -1224,9 +1224,49 @@ body {
 .gp-flag-promote { color: #3fb950; border-color: rgba(63, 185, 80, 0.4); }
 .gp-flag-neutral { color: var(--ghost-strong, #a8afbd); }
 .gp-shared { font-size: 10.5px; color: #9b8cff; }
+.gp-meta-tag {
+  font-size: 10px; padding: 1px 6px; border-radius: 4px;
+  background: rgba(95, 208, 230, 0.1); color: #5fd0e6;
+  border: 1px solid rgba(95, 208, 230, 0.25);
+}
+.gp-meta-tag.gp-engine { color: #8ab4ff; background: rgba(74, 158, 255, 0.1); border-color: rgba(74, 158, 255, 0.25); }
 .gp-bot-tag {
   font-size: 10px; text-transform: uppercase; padding: 1px 5px; border-radius: 4px;
   background: rgba(74, 158, 255, 0.12); color: #8ab4ff;
+}
+.gp-pulse-panel, .gp-niche-panel { margin: 16px 0 20px; }
+.gp-pulse-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+.gp-pulse-card {
+  padding: 10px 12px; border: 1px solid var(--border, #262b36);
+  border-radius: 8px; background: rgba(20, 48, 58, 0.35);
+}
+.gp-pulse-pair { font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+.gp-pulse-stats {
+  display: flex; flex-wrap: wrap; gap: 8px 12px; font-size: 11px;
+  color: var(--ghost, #8b93a3);
+}
+.gp-pulse-stats b { color: var(--ghost-strong, #a8afbd); }
+.gp-niche-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: 6px;
+}
+.gp-niche-cell {
+  min-height: 52px; padding: 6px; border-radius: 6px;
+  border: 1px dashed var(--border, #262b36);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px; opacity: 0.45;
+}
+.gp-niche-cell.filled {
+  opacity: 1; border-style: solid; background: rgba(95, 208, 230, 0.08);
+  border-color: rgba(95, 208, 230, 0.35);
+}
+.gp-niche-n { font-weight: 700; font-size: 14px; color: #5fd0e6; }
+.gp-niche-label {
+  font-size: 9px; text-align: center; line-height: 1.2;
+  color: var(--ghost, #8b93a3);
 }
 .gp-src { padding: 1px 6px; border-radius: 6px; text-transform: capitalize; font-size: 10.5px; border: 1px solid var(--border, #262b36); }
 .gp-src-discovered { color: #8ab4ff; }

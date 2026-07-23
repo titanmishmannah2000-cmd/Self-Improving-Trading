@@ -75,6 +75,36 @@ def test_seed_fixture_does_not_migrate_or_block_invent(_tmp_discovered):
     assert not (_tmp_discovered / "EUR_USD.json").exists()
 
 
+def test_canon_seed_pollution_is_scrubbed(_tmp_discovered):
+    """Seed rows wrongly saved to EUR_USD.json must be deleted on load."""
+    canon = _tmp_discovered / "EUR_USD.json"
+    canon.parent.mkdir(parents=True, exist_ok=True)
+    canon.write_text(json.dumps([{
+        "name": "rsi_14", "expr_str": "ta.rsi(close,14)",
+        "fitness": 0.82, "win_rate": 0.61, "source": "seed",
+    }]), encoding="utf-8")
+    loaded = load_discovered_indicators("EUR/USD", include_shared=False)
+    assert loaded == []
+    assert not canon.exists()
+
+
+def test_live_feedback_does_not_persist_seed_fixtures(_tmp_discovered, monkeypatch):
+    """B10 must not re-write ta.*/seed fixtures into the canonical path."""
+    import hermes_core.engines.decision_cortex as cx
+    monkeypatch.setattr(cx, "CORTEX_DIR", _tmp_discovered / "cortex")
+    monkeypatch.setattr(cx, "MEMORY_PATH", _tmp_discovered / "cortex" / "m.json")
+    monkeypatch.setattr(cx, "EXILE_PATH", _tmp_discovered / "cortex" / "e.json")
+    legacy = _tmp_discovered / "EUR" / "USD.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(json.dumps([{
+        "name": "rsi_14", "expr_str": "ta.rsi(close,14)",
+        "fitness": 0.82, "win_rate": 0.61, "source": "seed",
+    }]), encoding="utf-8")
+    n = gp.apply_live_feedback("EUR/USD", cx.Cortex())
+    assert n == 0
+    assert not (_tmp_discovered / "EUR_USD.json").exists()
+
+
 def test_expr_str_fallback_votes(_tmp_discovered):
     """Indicators that only have expr_str (valid GP) still produce a shadow signal."""
     gp._save_discovered("EUR/USD", [

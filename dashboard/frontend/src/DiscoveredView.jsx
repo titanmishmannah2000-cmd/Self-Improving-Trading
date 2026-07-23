@@ -107,6 +107,36 @@ function IndicatorRow({ ind }) {
               {pnl.toFixed(2)}%
             </b>
           </span>
+          {ind.pool_lift != null && (
+            <span className="gp-stat" title="Marginal lift to the indicator pool IC">
+              lift <b>{Number(ind.pool_lift).toFixed(3)}</b>
+            </span>
+          )}
+          {ind.complexity != null && (
+            <span className="gp-stat" title="Expression tree complexity (nodes)">
+              cx <b>{ind.complexity}</b>
+            </span>
+          )}
+          {ind.island_id != null && (
+            <span className="gp-meta-tag" title="Island that produced this elite">
+              isl {ind.island_id}
+            </span>
+          )}
+          {ind.niche?.behavior && (
+            <span className="gp-meta-tag" title="Behavior niche from signal autocorrelation">
+              {ind.niche.behavior}
+            </span>
+          )}
+          {ind.niche?.complexity_bin && (
+            <span className="gp-meta-tag" title="Complexity bin">
+              {ind.niche.complexity_bin}
+            </span>
+          )}
+          {ind.engine_version && (
+            <span className="gp-meta-tag gp-engine" title={ind.run_id || ind.admit_reason || ""}>
+              {String(ind.engine_version).replace("gp_v2_", "")}
+            </span>
+          )}
           {flag && (
             <span className={`gp-flag ${flag.cls}`} title={flag.title}>
               {flag.label}
@@ -170,6 +200,122 @@ function DegCard({ pair, deg }) {
         <span>
           <b>{total}</b> total
         </span>
+      </div>
+    </div>
+  );
+}
+
+function DiscoveryPulsePanel({ pulses, botFilter }) {
+  const entries = Object.entries(pulses || {}).filter(([pair]) => {
+    if (botFilter === "all") return true;
+    // Pulses are per-pair; show all when filtering by bot (pair may be shared).
+    return true;
+  });
+  if (!entries.length) return null;
+  return (
+    <div className="gp-pulse-panel" data-testid="discovery-pulse">
+      <h3 className="discovered-section-title">Discovery run pulse</h3>
+      <Help>
+        Latest invent cycle stats: candidates evaluated, admit rate, MAP-Elites coverage,
+        and best OOS. Updates when bots push after discovery.
+      </Help>
+      <div className="gp-pulse-grid">
+        {entries
+          .sort((a, b) => String(a[0]).localeCompare(b[0]))
+          .map(([pair, p]) => {
+            const cov = p?.map_elites?.coverage;
+            const filled = p?.map_elites?.filled;
+            const total = p?.map_elites?.total_cells;
+            return (
+              <div className="gp-pulse-card" key={pair}>
+                <div className="gp-pulse-pair">{pair}</div>
+                <div className="gp-pulse-stats">
+                  <span title="Engine version">
+                    <b>{String(p.engine_version || "—").replace("gp_v2_", "")}</b>
+                  </span>
+                  <span title="Unique candidates considered">
+                    <b>{p.candidates_unique ?? "—"}</b> unique
+                  </span>
+                  <span title="Passed hard gates before admit">
+                    <b>{p.candidates_gated ?? "—"}</b> gated
+                  </span>
+                  <span title="Admitted this run">
+                    <b className={p.admitted ? "pc-up" : ""}>{p.admitted ?? 0}</b> admitted
+                  </span>
+                  <span title="Best OOS correlation among gated">
+                    best <b>{p.best_oos != null ? Number(p.best_oos).toFixed(2) : "—"}</b>
+                  </span>
+                  <span title="MAP-Elites niche coverage">
+                    niches{" "}
+                    <b>
+                      {filled != null && total != null
+                        ? `${filled}/${total}`
+                        : cov != null
+                          ? `${(Number(cov) * 100).toFixed(0)}%`
+                          : "—"}
+                    </b>
+                  </span>
+                  <span title="ε-lexicase regime cases">
+                    lex <b>{p.lexicase_cases ?? "—"}</b>
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+      </div>
+    </div>
+  );
+}
+
+function NicheMapPanel({ nicheMap, pairsFilter }) {
+  const pairs = Object.keys(nicheMap || {}).filter((p) => {
+    if (!pairsFilter) return true;
+    return pairsFilter.includes(p);
+  });
+  if (!pairs.length) return null;
+  // Aggregate counts across visible pairs.
+  const agg = {};
+  let totalCells = 27;
+  for (const p of pairs) {
+    const nm = nicheMap[p] || {};
+    totalCells = nm.total_cells || totalCells;
+    const counts = nm.counts || {};
+    for (const [cell, n] of Object.entries(counts)) {
+      agg[cell] = (agg[cell] || 0) + Number(n || 0);
+    }
+  }
+  const cells = Object.keys(agg).sort();
+  if (!cells.length) return null;
+  const filled = cells.filter((c) => agg[c] > 0).length;
+  return (
+    <div className="gp-niche-panel" data-testid="niche-map">
+      <h3 className="discovered-section-title">MAP-Elites niche map</h3>
+      <Help>
+        Behavior × complexity × horizon cells. Filled niches mean the archive has an elite
+        there — ensemble voting prefers spreading across these.
+      </Help>
+      <p className="discovered-count">
+        Coverage <b>{filled}</b> / {totalCells} cells
+      </p>
+      <div className="gp-niche-grid">
+        {cells.map((cell) => {
+          const n = agg[cell] || 0;
+          const [behavior, cx, hz] = cell.split("|");
+          return (
+            <div
+              key={cell}
+              className={`gp-niche-cell${n ? " filled" : ""}`}
+              title={`${cell}: ${n} indicator(s)`}
+            >
+              <span className="gp-niche-n">{n || "·"}</span>
+              <span className="gp-niche-label">
+                {behavior}
+                <br />
+                {cx} · {hz}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -315,11 +461,10 @@ export default function DiscoveredView({ apiBase, isActive = true }) {
 
       <div className="discovered-intro report-card">
         <Help>
-          Each row is an admitted expression from GP discovery (OOS gates, permutation test,
-          walk-forward). The live <strong>gp_ensemble</strong> entry uses the same list
-          (including shared-group neighbors), skips <strong>suppressed</strong> indicators,
-          and prefers <strong>live_fitness</strong> when present. Numbers here are discovery /
-          paper feedback — not a live candle vote.
+          Each row is an admitted expression from GP discovery (OOS gates, permutation,
+          walk-forward, MAP-Elites niches, pool-lift). The live <strong>gp_ensemble</strong> entry
+          spreads votes across niches, skips <strong>suppressed</strong> indicators, and prefers
+          <strong> live_fitness</strong> when present.
         </Help>
         <Help>
           <strong>What to do:</strong> many suppressed or weak-WR rows → expect fewer GP
@@ -375,6 +520,12 @@ export default function DiscoveredView({ apiBase, isActive = true }) {
           <span className="discovered-stat-label">shared</span>
         </div>
       </div>
+
+      <DiscoveryPulsePanel pulses={data.discovery_pulse || {}} botFilter={botFilter} />
+      <NicheMapPanel
+        nicheMap={data.niche_map || {}}
+        pairsFilter={Object.keys(filteredPairs)}
+      />
 
       {totalInd === 0 ? (
         <div className="discovered-empty" data-testid="discovered-empty-filter">

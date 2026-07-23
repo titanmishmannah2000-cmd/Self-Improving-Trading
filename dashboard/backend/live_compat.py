@@ -117,7 +117,9 @@ def _enrich_indicator(ind: dict, *, bot: str, pair: str) -> dict:
     """Normalize a discovered indicator for the dashboard tab.
 
     Matches fields the entry engine cares about (live_flag / live_fitness /
-    shared penalty) and adds display helpers (uses, bot, pair).
+    shared penalty) and adds display helpers (uses, bot, pair). Phase A fields
+    (engine_version, niche, pool_lift, island_id, admit_reason, max_dd, run_id)
+    are passed through when present.
     """
     if not isinstance(ind, dict):
         return {"name": "?", "expr": "", "_bot": bot, "_pair": pair}
@@ -142,6 +144,35 @@ def _enrich_indicator(ind: dict, *, bot: str, pair: str) -> dict:
         out["total_pnl"] = round(float(out.get("total_pnl") or 0), 4)
     except (TypeError, ValueError):
         out["total_pnl"] = 0.0
+    # Phase A dashboard contract — coerce lightly, keep absent as missing
+    if out.get("pool_lift") is not None:
+        try:
+            out["pool_lift"] = round(float(out["pool_lift"]), 4)
+        except (TypeError, ValueError):
+            out.pop("pool_lift", None)
+    if out.get("max_dd") is not None:
+        try:
+            out["max_dd"] = round(float(out["max_dd"]), 4)
+        except (TypeError, ValueError):
+            out.pop("max_dd", None)
+    if out.get("complexity") is not None:
+        try:
+            out["complexity"] = int(out["complexity"])
+        except (TypeError, ValueError):
+            pass
+    if out.get("island_id") is not None:
+        try:
+            out["island_id"] = int(out["island_id"])
+        except (TypeError, ValueError):
+            pass
+    if isinstance(out.get("niche"), dict):
+        out["niche"] = {
+            k: out["niche"].get(k)
+            for k in ("horizon", "horizon_bin", "complexity_bin", "behavior", "niche_key")
+            if k in out["niche"]
+        }
+    if out.get("niche_key") is None and isinstance(out.get("niche"), dict):
+        out["niche_key"] = out["niche"].get("niche_key")
     out["_bot"] = bot
     out["_pair"] = pair
     return out
@@ -205,7 +236,10 @@ def _degradation_for_pairs(pairs: dict[str, list]) -> dict:
 def _build_discovered(bot: str) -> dict:
     # Read from latest_state (SQLite) — the only cross-service channel. The bot
     # pushes discovered as {"EUR/USD":[...], ...}; reshape to the tab schema.
+    # Phase B special keys: __gp_pulse__, __gp_niche_map__.
     pairs: dict[str, list] = {}
+    pulse: dict = {}
+    niche_map: dict = {}
     try:
         from dashboard.backend.main import get_conn
         conn = get_conn()
@@ -216,18 +250,42 @@ def _build_discovered(bot: str) -> dict:
         if row and row["discovered_json"]:
             raw = json.loads(row["discovered_json"])
             if isinstance(raw, dict):
+                pulse_raw = raw.get("__gp_pulse__")
+                if isinstance(pulse_raw, dict):
+                    pulse = pulse_raw
+                niche_raw = raw.get("__gp_niche_map__")
+                if isinstance(niche_raw, dict):
+                    niche_map = niche_raw
                 for pair, inds in raw.items():
+                    if str(pair).startswith("__"):
+                        continue
                     if isinstance(inds, list):
                         pairs[pair] = [
                             _enrich_indicator(i, bot=bot, pair=pair) for i in inds
                         ]
     except Exception:
         pass
+    # Synthesize niche map from indicators when push lacked it.
+    if not niche_map:
+        for pair, inds in pairs.items():
+            niche_map[pair] = {
+                "filled": 0,
+                "total_cells": 0,
+                "coverage": 0.0,
+                "counts": {},
+            }
+            try:
+                from hermes_core.engines.genetic import niche_map_from_indicators
+                niche_map[pair] = niche_map_from_indicators(inds)
+            except Exception:
+                pass
     ensemble = {pair: _ensemble_for_pair(inds) for pair, inds in pairs.items()}
     return {
         "pairs": pairs,
         "ensemble": ensemble,
         "degradation": _degradation_for_pairs(pairs),
+        "discovery_pulse": pulse,
+        "niche_map": niche_map,
         "total_indicators": sum(len(v) for v in pairs.values()),
         "total_pairs": len(pairs),
         "bot": bot,
@@ -375,6 +433,8 @@ def register(app, ingest_token_getter, valid_bots, on_price_broadcast=None):
             "pairs": {},
             "ensemble": {},
             "degradation": {},
+            "discovery_pulse": {},
+            "niche_map": {},
             "bots": {},
             "total_indicators": 0,
             "total_pairs": 0,
@@ -387,6 +447,8 @@ def register(app, ingest_token_getter, valid_bots, on_price_broadcast=None):
                 "total_pairs": d["total_pairs"],
             }
             for p, inds in d["pairs"].items():
+                if str(p).startswith("__"):
+                    continue
                 result["pairs"].setdefault(p, [])
                 for ind in inds:
                     key = (bot, p, ind.get("name"), ind.get("expr"))
@@ -395,10 +457,13 @@ def register(app, ingest_token_getter, valid_bots, on_price_broadcast=None):
                     seen.add(key)
                     result["pairs"][p].append(ind)
             for p, e in d["ensemble"].items():
-                # Prefer the owning bot's ensemble; recompute if we merged lists.
                 result["ensemble"][p] = e
             result["degradation"].update(d["degradation"])
-        # Recompute ensemble after merge so multi-bot + suppress flags stay aligned.
+            # Merge Phase B pulse / niche maps (later bots overwrite same pair).
+            for p, pulse in (d.get("discovery_pulse") or {}).items():
+                result["discovery_pulse"][p] = pulse
+            for p, nm in (d.get("niche_map") or {}).items():
+                result["niche_map"][p] = nm
         for p, inds in result["pairs"].items():
             result["ensemble"][p] = _ensemble_for_pair(inds)
         result["degradation"] = _degradation_for_pairs(result["pairs"])

@@ -116,7 +116,11 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
     # anchor pair file. Use the shared-inclusive loader so every configured
     # pair is represented (matches what the entry engine actually trades on).
     from hermes_core.config import repo_root
-    from hermes_core.engines.genetic import load_discovered_indicators
+    from hermes_core.engines.genetic import (
+        load_discovered_indicators,
+        load_discovery_pulses,
+        niche_map_from_indicators,
+    )
     discovered_pairs: dict = {}
     for p in (cfg.get("pairs") or []):
         try:
@@ -132,6 +136,21 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
                 discovered_pairs[p] = tagged
         except Exception:
             continue
+    # Phase B: attach discovery-run pulse + niche map (special keys stripped
+    # by /api/discovered before treating entries as indicator lists).
+    try:
+        pulses = load_discovery_pulses(list(cfg.get("pairs") or []))
+        if pulses:
+            discovered_pairs["__gp_pulse__"] = pulses
+        niche_maps = {}
+        for p, inds in list(discovered_pairs.items()):
+            if p.startswith("__") or not isinstance(inds, list):
+                continue
+            niche_maps[p] = niche_map_from_indicators(inds)
+        if niche_maps:
+            discovered_pairs["__gp_niche_map__"] = niche_maps
+    except Exception:
+        pass
     discovered = discovered_pairs
     cortex: dict = {}
     # Cortex memory persists per-bot under HERMES_STATE_ROOT/{bot}/state/cortex/.

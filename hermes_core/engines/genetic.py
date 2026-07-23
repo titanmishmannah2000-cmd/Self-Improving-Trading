@@ -1,4 +1,4 @@
-"""Genetic programming discovery engine (Session 13 / Phase 13).
+"""Genetic programming discovery engine (Session 13 + Phase A superior GP).
 
 Evolves small symbolic indicator expressions over price/volume features,
 scores each by fitness = |corr(signal, forward_return)| - 0.001*complexity,
@@ -9,7 +9,9 @@ and admits only those that survive real out-of-sample checks:
   * a permutation null-test (reject candidates that only "work" by luck —
     p >= 0.05 means the correlation is indistinguishable from label-shuffle
     noise),
-  * the novelty + redundancy gates.
+  * the novelty + redundancy gates,
+  * Phase A: island evolution, Pareto multi-objective selection, pool-marginal
+    lift, typed grammar (unary/rolling/constants), semantic canonicalize.
 
 Discovered indicators persist to ``state/discovered/{PAIR}.json`` where PAIR
 uses underscores (``EUR_USD.json``). Legacy slash paths (``EUR/USD.json``) and
@@ -34,6 +36,7 @@ import json
 import math
 import random
 import statistics
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -52,6 +55,21 @@ OOS_FLOOR = 0.15         # admit if held-out |corr| >= floor. Restored to the
 COMPLEXITY_PENALTY = 0.001
 REDUNDANCY_R = 0.8       # |pearson| > this vs an existing indicator -> REJECTED
 PERM_PVALUE_FLOOR = 0.05  # reject candidates whose OOS corr is not better than shuffled-label noise
+POOL_LIFT_FLOOR = -0.005  # admit if marginal pool IC lift clears this (near-zero ok)
+ENGINE_VERSION = "gp_v2_phase_b"
+SIGNAL_LOOKBACK = 100     # covers sma50 + rolling windows up to 40
+
+# ── Phase A/B search knobs ─────────────────────────────────────────────────
+N_ISLANDS_DEFAULT = int(get_env("GP_N_ISLANDS", "1"))
+MIGRATE_EVERY = int(get_env("GP_MIGRATE_EVERY", "10"))
+MIGRATE_COUNT = 2         # elites copied across islands each migration
+LEXICASE_CASES = int(get_env("GP_LEXICASE_CASES", "4"))
+LEXICASE_EPS = 0.05       # keep individuals within this of best on each case
+CONST_POLISH_TRIES = 3    # constant-leaf swaps after mutation
+MAP_ELITES_ENABLED = get_env("GP_MAP_ELITES", "1") != "0"
+BEHAVIOR_BINS = ("momentum", "mean_revert", "mixed")
+COMPLEXITY_BINS = ("1-3", "4-6", "7+")
+HORIZON_BINS = ("h_short", "h_med", "h_long")
 
 # ── B10: live paper-PnL → discovery feedback (self-evolving GP) ────────────
 # The GA evolves on HISTORICAL correlation (faithful to the old engine, which
@@ -76,7 +94,18 @@ FEATURES = (
     "price", "ret", "sma5", "sma10", "sma20", "sma50",
     "rsi", "vol", "roc20", "mom10", "min20", "max20", "stdev20", "ema20",
 )
-OPERATORS = ("add", "sub", "mul", "div")
+# Named constant leaves (avoid unary-minus ambiguity in the string grammar).
+CONSTANTS: dict[str, float] = {
+    "k_m10": -0.1, "k_m05": -0.05, "k_m01": -0.01,
+    "k_p01": 0.01, "k_p05": 0.05, "k_p10": 0.1,
+}
+BINARY_OPS = ("add", "sub", "mul", "div")
+UNARY_OPS = ("abs", "neg", "sign")
+ROLLING_OPS = ("mean", "std", "delta", "ref", "ts_max", "ts_min")
+WINDOWS = (5, 10, 20, 40)
+OPERATORS = BINARY_OPS  # backward-compat alias used by older tests/callers
+COMMUTATIVE_OPS = frozenset({"add", "mul"})
+MAX_EXPR_COMPLEXITY = 60
 
 
 # ── safe expression primitives (no eval) ───────────────────────────────────
@@ -142,53 +171,158 @@ def _feature(name: str, win: list[float]) -> float:
         return statistics.stdev(w) if len(w) >= 3 and len(set(w)) >= 2 else 0.0001
     if name == "ema20":
         return _ema(win[-20:]) if len(win) >= 2 else win[-1]
+    if name in CONSTANTS:
+        return CONSTANTS[name]
     return 0.0
+
+
+def _child_series(child, win: list[float], period: int) -> list[float]:
+    """Evaluate `child` on the last `period` trailing local windows (bounded cost)."""
+    period = max(2, int(period))
+    n = len(win)
+    if n < 2:
+        return [_eval_expr(child, win)] if win else [0.0]
+    out: list[float] = []
+    local_lb = min(60, n)
+    for end in range(max(1, n - period + 1), n + 1):
+        local = win[max(0, end - local_lb):end]
+        out.append(_eval_expr(child, local))
+    return out if out else [0.0]
 
 
 def _eval_expr(expr, win: list[float]) -> float:
     """Evaluate a safe expression tree over a price window.
 
-    expr is either a feature string, or (op, left, right). No eval/exec. Div
-    by zero -> 0.0. Bounded so a runaway tree can't explode the runtime.
+    Tree forms (Phase A):
+      * feature / constant leaf: str
+      * unary: (op, child) for abs|neg|sign
+      * binary: (op, left, right) for add|sub|mul|div
+      * rolling: (op, child, window_int) for mean|std|delta|ref|ts_max|ts_min
+    No eval/exec. Div by zero -> 0.0.
     """
+    if isinstance(expr, (int, float)):
+        return float(expr)
     if isinstance(expr, str):
         return _feature(expr, win)
-    op, a, b = expr
-    x, y = _eval_expr(a, win), _eval_expr(b, win)
-    if op == "add":
-        return x + y
-    if op == "sub":
-        return x - y
-    if op == "mul":
-        return x * y
-    if op == "div":
-        return x / y if y not in (0.0, -0.0) else 0.0
+    if not isinstance(expr, tuple) or not expr:
+        return 0.0
+    op = expr[0]
+    if op in UNARY_OPS and len(expr) >= 2:
+        x = _eval_expr(expr[1], win)
+        if op == "abs":
+            return abs(x)
+        if op == "neg":
+            return -x
+        if op == "sign":
+            return 1.0 if x > 0 else (-1.0 if x < 0 else 0.0)
+        return 0.0
+    if op in ROLLING_OPS and len(expr) >= 3:
+        period = int(expr[2]) if not isinstance(expr[2], tuple) else 20
+        period = max(2, min(period, 40))
+        series = _child_series(expr[1], win, period)
+        if not series:
+            return 0.0
+        if op == "mean":
+            return sum(series) / len(series)
+        if op == "std":
+            if len(series) < 3 or len(set(round(v, 8) for v in series)) < 2:
+                return 0.0001
+            return statistics.stdev(series)
+        if op == "delta":
+            return series[-1] - series[0]
+        if op == "ref":
+            return series[0]
+        if op == "ts_max":
+            return max(series)
+        if op == "ts_min":
+            return min(series)
+        return 0.0
+    if op in BINARY_OPS and len(expr) >= 3:
+        x, y = _eval_expr(expr[1], win), _eval_expr(expr[2], win)
+        if op == "add":
+            return x + y
+        if op == "sub":
+            return x - y
+        if op == "mul":
+            return x * y
+        if op == "div":
+            return x / y if y not in (0.0, -0.0) else 0.0
     return 0.0
 
 
 def _complexity(expr) -> int:
-    if isinstance(expr, str):
+    if isinstance(expr, (str, int, float)):
         return 1
-    return 1 + _complexity(expr[1]) + _complexity(expr[2])
+    if not isinstance(expr, tuple) or not expr:
+        return 1
+    return 1 + sum(_complexity(c) for c in expr[1:])
 
 
 def _expr_to_str(expr) -> str:
+    """Serialize tree to a parseable string (infix binary + functional unary/rolling)."""
+    if isinstance(expr, (int, float)):
+        return str(int(expr)) if float(expr) == int(expr) else str(expr)
     if isinstance(expr, str):
         return expr
-    op = {"add": "+", "sub": "-", "mul": "*", "div": "/"}[expr[0]]
-    return f"({_expr_to_str(expr[1])}{op}{_expr_to_str(expr[2])})"
+    if not isinstance(expr, tuple) or not expr:
+        return "price"
+    op = expr[0]
+    if op in UNARY_OPS and len(expr) >= 2:
+        return f"{op}({_expr_to_str(expr[1])})"
+    if op in ROLLING_OPS and len(expr) >= 3:
+        w = int(expr[2]) if not isinstance(expr[2], tuple) else 20
+        return f"{op}({_expr_to_str(expr[1])},{w})"
+    if op in BINARY_OPS and len(expr) >= 3:
+        sym = {"add": "+", "sub": "-", "mul": "*", "div": "/"}[op]
+        return f"({_expr_to_str(expr[1])}{sym}{_expr_to_str(expr[2])})"
+    return "price"
+
+
+def _canonicalize(expr):
+    """Semantic normalize: fold double-unary, sort commutative children."""
+    if isinstance(expr, (str, int, float)):
+        return expr
+    if not isinstance(expr, tuple) or not expr:
+        return "price"
+    op = expr[0]
+    if op in UNARY_OPS and len(expr) >= 2:
+        child = _canonicalize(expr[1])
+        if op == "abs" and isinstance(child, tuple) and child[0] == "abs":
+            return child
+        if op == "neg" and isinstance(child, tuple) and child[0] == "neg":
+            return _canonicalize(child[1])
+        if op == "sign" and isinstance(child, tuple) and child[0] == "sign":
+            return child
+        return (op, child)
+    if op in ROLLING_OPS and len(expr) >= 3:
+        w = int(expr[2]) if not isinstance(expr[2], tuple) else 20
+        w = max(2, min(w, 40))
+        # snap to nearest allowed window
+        w = min(WINDOWS, key=lambda x: abs(x - w))
+        return (op, _canonicalize(expr[1]), w)
+    if op in BINARY_OPS and len(expr) >= 3:
+        a, b = _canonicalize(expr[1]), _canonicalize(expr[2])
+        if op in COMMUTATIVE_OPS and _expr_to_str(a) > _expr_to_str(b):
+            a, b = b, a
+        return (op, a, b)
+    return expr
+
+
+def _semantic_key(expr) -> str:
+    return _expr_to_str(_canonicalize(expr))
 
 
 # ── signal / fitness ───────────────────────────────────────────────────────
-def _signal_for_expr(expr, prices: list[float], lookback: int = 60) -> list[float]:
+def _signal_for_expr(expr, prices: list[float], lookback: int = SIGNAL_LOOKBACK) -> list[float]:
     """Directional signal series: evaluate the expr on each trailing window.
 
-    lookback must cover the longest window feature (sma50) so those operators
-    have enough history to compute.
+    lookback must cover the longest window feature (sma50) and Phase A rolling
+    windows (up to 40) so those operators have enough history to compute.
     """
     out = []
-    for i in range(lookback, len(prices) + 1):
-        out.append(_eval_expr(expr, prices[i - lookback:i]))
+    lb = max(lookback, SIGNAL_LOOKBACK)
+    for i in range(lb, len(prices) + 1):
+        out.append(_eval_expr(expr, prices[i - lb:i]))
     return out
 
 
@@ -312,6 +446,283 @@ def _compute_signal_stats(signal: list[float], prices: list[float], horizon: int
     return win_rate, round(cum, 2)
 
 
+def _max_drawdown_pct(signal: list[float], prices: list[float], horizon: int = 1) -> float:
+    """Peak-to-trough drawdown (%) of trading in the signal direction (absolute)."""
+    fwd = _forward_returns(prices, horizon)
+    sig = signal[:len(fwd) + 1]
+    if len(sig) < 11:
+        return 0.0
+    equity = 0.0
+    peak = 0.0
+    max_dd = 0.0
+    for i in range(1, len(sig)):
+        s_dir = 1 if sig[i] > sig[i - 1] else (-1 if sig[i] < sig[i - 1] else 0)
+        if s_dir == 0:
+            continue
+        equity += s_dir * fwd[i - 1]
+        if equity > peak:
+            peak = equity
+        dd = peak - equity
+        if dd > max_dd:
+            max_dd = dd
+    return round(max_dd, 4)
+
+
+def _zscore(xs: list[float]) -> list[float]:
+    n = len(xs)
+    if n < 2:
+        return [0.0] * n
+    mu = sum(xs) / n
+    var = sum((x - mu) ** 2 for x in xs) / n
+    sd = math.sqrt(var) if var > 1e-18 else 1.0
+    return [(x - mu) / sd for x in xs]
+
+
+def _pool_ic(signals: list[list[float]], prices: list[float], horizon: int = 1) -> float:
+    """Equal-weight |corr| of z-scored signal pool vs forward returns."""
+    if not signals:
+        return 0.0
+    fwd = _forward_returns(prices, horizon)
+    m = min(len(fwd), *(len(s) for s in signals))
+    if m < 10:
+        return 0.0
+    aligned = [_zscore(s[:m]) for s in signals]
+    pooled = [sum(row[i] for row in aligned) / len(aligned) for i in range(m)]
+    return abs(_pearson(pooled, fwd[:m]))
+
+
+def _marginal_pool_lift(new_signal: list[float], existing: list[list[float]],
+                        prices: list[float], horizon: int = 1) -> float:
+    """IC(pool+new) - IC(pool). First candidate: full solo IC."""
+    if not existing:
+        return _compute_fitness(new_signal, prices, horizon)
+    base = _pool_ic(existing, prices, horizon)
+    neo = _pool_ic(existing + [new_signal], prices, horizon)
+    return neo - base
+
+
+def _behavior_label(signal: list[float]) -> str:
+    """Cheap niche tag from signal lag-1 autocorrelation."""
+    if len(signal) < 20:
+        return "mixed"
+    a, b = signal[:-1], signal[1:]
+    r = _pearson(a, b)
+    if r >= 0.25:
+        return "momentum"
+    if r <= -0.15:
+        return "mean_revert"
+    return "mixed"
+
+
+def _complexity_bin(n: int) -> str:
+    if n <= 3:
+        return "1-3"
+    if n <= 6:
+        return "4-6"
+    return "7+"
+
+
+def _horizon_bin(horizon: int) -> str:
+    if horizon <= 5:
+        return "h_short"
+    if horizon <= 20:
+        return "h_med"
+    return "h_long"
+
+
+def _niche_key(behavior: str, complexity_bin: str, horizon_bin: str) -> str:
+    return f"{behavior}|{complexity_bin}|{horizon_bin}"
+
+
+def _niche_key_from_parts(*, behavior: str, complexity: int, horizon: int) -> str:
+    return _niche_key(behavior, _complexity_bin(complexity), _horizon_bin(horizon))
+
+
+def _map_elites_cells() -> list[str]:
+    return [
+        _niche_key(b, c, h)
+        for b in BEHAVIOR_BINS
+        for c in COMPLEXITY_BINS
+        for h in HORIZON_BINS
+    ]
+
+
+def _regime_slices(prices: list[float], n_cases: int) -> list[list[float]]:
+    """Split `prices` into contiguous regime windows for lexicase cases."""
+    n_cases = max(2, min(int(n_cases), 12))
+    n = len(prices)
+    min_len = max(40, SIGNAL_LOOKBACK // 2)
+    if n < min_len * 2:
+        return [prices]
+    # Prefer equal-length contiguous blocks (regime episodes).
+    block = max(min_len, n // n_cases)
+    slices: list[list[float]] = []
+    for i in range(n_cases):
+        a = i * block
+        b = min(n, a + block) if i < n_cases - 1 else n
+        if b - a >= min_len:
+            slices.append(prices[a:b])
+    return slices or [prices]
+
+
+def _case_fitness_matrix(pop: list, prices: list[float], horizon: int,
+                         n_cases: int) -> list[list[float]]:
+    slices = _regime_slices(prices, n_cases)
+    matrix: list[list[float]] = []
+    for expr in pop:
+        row: list[float] = []
+        for sl in slices:
+            try:
+                # Cheap lookback for lexicase pressure only.
+                sig = _signal_for_expr(expr, sl, lookback=min(60, max(30, len(sl) // 3)))
+                if len(sig) < 15:
+                    row.append(0.0)
+                else:
+                    row.append(_compute_fitness(sig, sl, horizon)
+                               - COMPLEXITY_PENALTY * _complexity(expr))
+            except Exception:
+                row.append(0.0)
+        matrix.append(row)
+    return matrix
+
+
+def _epsilon_lexicase_select(pop: list, case_mat: list[list[float]],
+                            rng: random.Random, eps: float = LEXICASE_EPS):
+    """ε-lexicase parent selection over regime-sliced fitness cases."""
+    if not pop:
+        return _random_expr(rng, 2)
+    if len(pop) == 1 or not case_mat or not case_mat[0]:
+        return pop[0]
+    pool = list(range(len(pop)))
+    cases = list(range(len(case_mat[0])))
+    rng.shuffle(cases)
+    for c in cases:
+        if len(pool) <= 1:
+            break
+        fits = [case_mat[i][c] for i in pool]
+        best = max(fits)
+        thresh = best - abs(eps)
+        pool = [pool[j] for j, f in enumerate(fits) if f >= thresh]
+    return pop[rng.choice(pool)]
+
+
+def _replace_constants(expr, rng: random.Random):
+    """Return a copy with one constant leaf swapped (or expr unchanged)."""
+    const_nodes = [
+        n for n in _get_nodes(expr)
+        if isinstance(n, str) and n in CONSTANTS
+    ]
+    if not const_nodes:
+        return expr
+    target = rng.choice(const_nodes)
+    alt = rng.choice([k for k in CONSTANTS if k != target] or list(CONSTANTS))
+    return _canonicalize(_replace_node(copy.deepcopy(expr), target, alt))
+
+
+def _polish_constants(expr, prices: list[float], horizon: int,
+                      rng: random.Random, tries: int = CONST_POLISH_TRIES):
+    """Local search over named constant leaves after structural variation."""
+    best = expr
+    try:
+        best_fit = _fitness_with_penalty(best, prices, horizon)
+    except Exception:
+        return expr
+    for _ in range(max(0, tries)):
+        cand = _replace_constants(best, rng)
+        if cand is best or cand == best:
+            continue
+        try:
+            fit = _fitness_with_penalty(cand, prices, horizon)
+        except Exception:
+            continue
+        if fit > best_fit:
+            best, best_fit = cand, fit
+    return best
+
+
+def _map_elites_insert(archive: dict, cand: dict) -> None:
+    """Keep the best OOS elite per MAP-Elites niche cell."""
+    key = cand.get("niche_key") or _niche_key_from_parts(
+        behavior=cand.get("behavior", "mixed"),
+        complexity=int(cand.get("complexity", 1)),
+        horizon=int(cand.get("horizon", 1)),
+    )
+    cand["niche_key"] = key
+    prev = archive.get(key)
+    if prev is None or float(cand.get("oos_corr", 0)) > float(prev.get("oos_corr", 0)):
+        archive[key] = cand
+
+
+def _map_elites_coverage(archive: dict) -> dict:
+    cells = _map_elites_cells()
+    filled = {k: {
+        "oos_corr": archive[k].get("oos_corr"),
+        "expr": archive[k].get("expr_str") or archive[k].get("expr"),
+        "behavior": archive[k].get("behavior"),
+        "complexity": archive[k].get("complexity"),
+    } for k in cells if k in archive}
+    return {
+        "filled": len(filled),
+        "total_cells": len(cells),
+        "coverage": round(len(filled) / max(len(cells), 1), 4),
+        "cells": filled,
+    }
+
+
+def prefer_niche_diverse(inds: list[dict], max_per_niche: int = 2) -> list[dict]:
+    """Reorder indicators so ensemble voting spreads across MAP-Elites niches."""
+    if not inds or max_per_niche < 1:
+        return list(inds)
+    buckets: dict[str, list[dict]] = {}
+    for ind in inds:
+        niche = ind.get("niche") or {}
+        key = ind.get("niche_key") or _niche_key(
+            niche.get("behavior") or "mixed",
+            niche.get("complexity_bin") or _complexity_bin(int(ind.get("complexity") or 1)),
+            niche.get("horizon_bin") or _horizon_bin(int(ind.get("horizon") or 1)),
+        )
+        buckets.setdefault(key, []).append(ind)
+    for key in buckets:
+        buckets[key].sort(
+            key=lambda x: float(x.get("live_fitness", x.get("fitness", 0)) or 0),
+            reverse=True,
+        )
+    out: list[dict] = []
+    # Round-robin take up to max_per_niche from each niche.
+    for take in range(max_per_niche):
+        for key in sorted(buckets.keys()):
+            if take < len(buckets[key]):
+                out.append(buckets[key][take])
+    # Append any leftovers (beyond cap) at the end so loaders still see them.
+    seen = {id(x) for x in out}
+    for key in buckets:
+        for ind in buckets[key]:
+            if id(ind) not in seen:
+                out.append(ind)
+                seen.add(id(ind))
+    return out
+
+
+def _pareto_dominated(a: dict, b: dict) -> bool:
+    """True if `a` is dominated by `b` on (oos, -complexity, -max_dd, pool_lift)."""
+    a_obj = (a["oos_corr"], -a["complexity"], -a["max_dd"], a["pool_lift"])
+    b_obj = (b["oos_corr"], -b["complexity"], -b["max_dd"], b["pool_lift"])
+    ge_all = all(bx >= ax for ax, bx in zip(a_obj, b_obj))
+    gt_one = any(bx > ax for ax, bx in zip(a_obj, b_obj))
+    return ge_all and gt_one
+
+
+def _pareto_front(cands: list[dict]) -> list[dict]:
+    if not cands:
+        return []
+    front = []
+    for c in cands:
+        if any(_pareto_dominated(c, o) for o in cands if o is not c):
+            continue
+        front.append(c)
+    return front
+
+
 # ── Sharpe gate (ported from the older hermes_trading discovery engine) ─────
 # The older engine admitted a candidate if (corr >= MIN_CORR) OR
 # (sharpe >= MIN_SHARPE) — a risk-adjusted bar that catches low-corr but
@@ -391,6 +802,7 @@ def _get_nodes(expr):
         for child in expr[1:]:
             if isinstance(child, (tuple, str)):
                 nodes.extend(_get_nodes(child))
+            # int window leaves are not mutated as subtrees
     return nodes
 
 
@@ -398,9 +810,19 @@ def _replace_node(tree, target, replacement):
     """Return a copy of `tree` with `target` subtree replaced by `replacement`."""
     if tree is target:
         return replacement
+    # String / numeric leaves: identity fails across deepcopy — match by value.
+    if isinstance(target, str) and tree == target:
+        return replacement
+    if isinstance(target, (int, float)) and tree == target:
+        return replacement
     if isinstance(tree, tuple):
-        return (tree[0], _replace_node(tree[1], target, replacement),
-                _replace_node(tree[2], target, replacement))
+        new_children = []
+        for child in tree[1:]:
+            if isinstance(child, (tuple, str, int, float)):
+                new_children.append(_replace_node(child, target, replacement))
+            else:
+                new_children.append(child)
+        return (tree[0], *new_children)
     return tree
 
 
@@ -413,7 +835,7 @@ def _crossover(e1, e2, rng: random.Random):
         return e1
     src = rng.choice(nodes1)
     tgt = rng.choice(nodes2)
-    return _replace_node(e1, src, copy.deepcopy(tgt))
+    return _canonicalize(_replace_node(e1, src, copy.deepcopy(tgt)))
 
 
 def _mutate(expr, rng: random.Random):
@@ -423,53 +845,122 @@ def _mutate(expr, rng: random.Random):
         return _random_expr(rng, 2)
     e = copy.deepcopy(expr)
     node = rng.choice(nodes)
-    return _replace_node(e, node, _random_expr(rng, rng.randint(0, 2)))
+    return _canonicalize(_replace_node(e, node, _random_expr(rng, rng.randint(0, 2))))
 
 
 # ── GP core ─────────────────────────────────────────────────────────────────
+def _random_leaf(rng: random.Random):
+    if rng.random() < 0.12:
+        return rng.choice(list(CONSTANTS.keys()))
+    return rng.choice(FEATURES)
+
+
 def _random_expr(rng: random.Random, depth: int = 2) -> object:
-    if depth <= 0 or (depth < 2 and rng.random() < 0.5):
-        return rng.choice(FEATURES)
-    op = rng.choice(OPERATORS)
-    return (op, _random_expr(rng, depth - 1), _random_expr(rng, depth - 1))
+    """Sample a Phase A expression (binary / unary / rolling / leaf)."""
+    if depth <= 0 or (depth < 2 and rng.random() < 0.45):
+        return _random_leaf(rng)
+    roll = rng.random()
+    if roll < 0.55:
+        op = rng.choice(BINARY_OPS)
+        return _canonicalize((op, _random_expr(rng, depth - 1), _random_expr(rng, depth - 1)))
+    if roll < 0.75:
+        op = rng.choice(UNARY_OPS)
+        return _canonicalize((op, _random_expr(rng, depth - 1)))
+    op = rng.choice(ROLLING_OPS)
+    return _canonicalize((op, _random_expr(rng, max(0, depth - 1)), rng.choice(WINDOWS)))
 
 
 def _fitness_with_penalty(expr, prices: list[float], horizon: int = 1) -> float:
-    sig = _signal_for_expr(expr, prices)
+    # Shorter lookback during evolution keeps island search inside live timeouts.
+    sig = _signal_for_expr(expr, prices, lookback=60)
     if len(sig) < 20:
         return 0.0
     corr = _compute_fitness(sig, prices, horizon)
     return corr - COMPLEXITY_PENALTY * _complexity(expr)
 
 
-def _evolve_population(prices: list[float], pop_size: int, generations: int,
-                       horizon: int, rng: random.Random) -> list[object]:
-    """Real GA evolution on `prices`. Elitist survival (top 10%, min 15),
-    crossover/mutation refill, depth cap. Returns the final population."""
-    pop = [_random_expr(rng, 2) for _ in range(pop_size)]
-    for _gen in range(generations):
-        scored = []
-        for expr in pop:
-            try:
-                fit = _fitness_with_penalty(expr, prices, horizon)
-            except Exception:
-                fit = 0.0
-            scored.append((fit, expr))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        keep = max(15, pop_size // 10)
-        survivors = [s[1] for s in scored[:keep]]
-        new_pop = list(survivors)
-        while len(new_pop) < pop_size:
+def _evolve_one_generation(pop: list, prices: list[float], horizon: int,
+                           rng: random.Random, pop_size: int,
+                           *, use_lexicase: bool = True) -> list:
+    """One generation: elitist keep + ε-lexicase breeding + constant polish."""
+    scored = []
+    for expr in pop:
+        try:
+            fit = _fitness_with_penalty(expr, prices, horizon)
+        except Exception:
+            fit = 0.0
+        scored.append((fit, expr))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    keep = max(3, pop_size // 10)
+    survivors = [s[1] for s in scored[:keep]]
+    new_pop = list(survivors)
+
+    case_mat = None
+    if use_lexicase and LEXICASE_CASES > 0:
+        case_mat = _case_fitness_matrix(pop, prices, horizon, LEXICASE_CASES)
+    while len(new_pop) < pop_size:
+        if case_mat is not None:
+            parent = _epsilon_lexicase_select(pop, case_mat, rng)
+            donor = _epsilon_lexicase_select(pop, case_mat, rng)
+        else:
             parent = rng.choice(survivors)
-            if rng.random() < 0.6 and len(survivors) >= 2:
-                child = _crossover(parent, rng.choice(survivors), rng)
-            else:
-                child = _mutate(parent, rng)
-            if _complexity(child) > 60:
-                child = _random_expr(rng, 2)
-            new_pop.append(child)
-        pop = new_pop
-    return pop
+            donor = rng.choice(survivors)
+        if rng.random() < 0.6 and len(pop) >= 2:
+            child = _crossover(parent, donor, rng)
+        else:
+            child = _mutate(parent, rng)
+        child = _polish_constants(child, prices, horizon, rng)
+        if _complexity(child) > MAX_EXPR_COMPLEXITY:
+            child = _random_expr(rng, 2)
+        new_pop.append(child)
+    return new_pop
+
+
+def _evolve_population(prices: list[float], pop_size: int, generations: int,
+                       horizon: int, rng: random.Random,
+                       n_islands: int | None = None) -> list[object]:
+    """Island GA on `prices`. Total pop ≈ pop_size split across islands.
+
+    Elitist survival per island, periodic migration of top elites. Returns the
+    combined final population (canonicalized). Lexicase runs every other
+    generation to stay inside live discovery timeouts.
+    """
+    n_islands = max(1, int(n_islands if n_islands is not None else N_ISLANDS_DEFAULT))
+    per = max(8, pop_size // n_islands)
+    islands = [
+        [_random_expr(rng, 2) for _ in range(per)]
+        for _ in range(n_islands)
+    ]
+    for gen in range(generations):
+        use_lex = (gen % 2 == 0)
+        for i in range(n_islands):
+            islands[i] = _evolve_one_generation(
+                islands[i], prices, horizon, rng, per, use_lexicase=use_lex,
+            )
+        if n_islands > 1 and MIGRATE_EVERY > 0 and (gen + 1) % MIGRATE_EVERY == 0:
+            for i in range(n_islands):
+                src = islands[i]
+                dst = islands[(i + 1) % n_islands]
+                scored = sorted(
+                    ((_fitness_with_penalty(e, prices, horizon), e) for e in src),
+                    key=lambda x: x[0], reverse=True,
+                )
+                migrants = [copy.deepcopy(e) for _, e in scored[:MIGRATE_COUNT]]
+                dst_scored = sorted(
+                    ((_fitness_with_penalty(e, prices, horizon), e) for e in dst),
+                    key=lambda x: x[0],
+                )
+                for j, m in enumerate(migrants):
+                    if j < len(dst_scored):
+                        worst = dst_scored[j][1]
+                        for k, e in enumerate(dst):
+                            if e is worst or e == worst:
+                                dst[k] = m
+                                break
+    combined: list[object] = []
+    for isl in islands:
+        combined.extend(_canonicalize(e) for e in isl)
+    return combined
 
 
 def _novelty_ok(expr, population: list[object]) -> bool:
@@ -479,10 +970,14 @@ def _novelty_ok(expr, population: list[object]) -> bool:
     than members sit to each other on average. We measure the typical
     intra-population spacing (median pairwise distance) and require the
     candidate's nearest distance to meet/exceed it. An exact clone (distance 0)
-    is always rejected.
+    is always rejected. Phase A: compare semantic (canonical) keys first.
     """
     if not population:
         return True
+
+    key = _semantic_key(expr)
+    if any(_semantic_key(p) == key for p in population):
+        return False
 
     def dist(a, b) -> float:
         sa, sb = _expr_to_str(a), _expr_to_str(b)
@@ -516,43 +1011,48 @@ def redundancy_check(new_signal: list[float], existing_signals: list[list[float]
 
 def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
              *, generations: int = 60, pop_size: int = 40, seed: int = 7,
-             top_k: int = 5, horizon: int = 1) -> list[dict]:
-    """Evolve and admit indicators for `pair`.
+             top_k: int = 5, horizon: int = 1,
+             n_islands: int | None = None) -> list[dict]:
+    """Evolve and admit indicators for `pair` (Phase B superior GP).
 
-    Returns the list of admitted indicator dicts (also persisted to
-    state/discovered/{pair}.json). Genuine OOS-first (ported from the older
-    engine): an expr must clear OOS_FLOOR on a held-out split, pass a
-    permutation null-test (p < 0.05), novelty + redundancy gates, **and** the
-    same Session-10 7-phase ``backtest_gp_indicator`` gate used for reflection
-    deploys (item 9/15) before admission. `horizon` sets the forward-return
-    objective (1 = single next-candle; >1 = cumulative move over H candles).
+    Phase B adds ε-lexicase regime selection, constant polish, MAP-Elites niche
+    archive, and a discovery-run pulse for the dashboard. Admission still
+    requires OOS + permutation + k-fold + pool-lift + S10 backtest.
     """
     rng = random.Random(seed)
     prices = list(prices)
-    if len(prices) < 60:
+    if len(prices) < SIGNAL_LOOKBACK:
         return []
 
-    # Train/test split for GENUINE out-of-sample evaluation (fixes the earlier
-    # in-sample OOS bug).
+    run_id = f"{ENGINE_VERSION}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    n_islands = max(1, int(n_islands if n_islands is not None else N_ISLANDS_DEFAULT))
+    h_bin = _horizon_bin(horizon)
+
     cut = int(len(prices) * 0.6)
     train = prices[:cut]
     test = prices[cut:]
-    if len(train) < 40 or len(test) < 20:
+    if len(train) < SIGNAL_LOOKBACK or len(test) < 40:
         return []
 
-    # 1) Evolve on the TRAIN portion only.
-    pop = _evolve_population(train, pop_size, generations, horizon, rng)
+    # 1) Evolve on TRAIN (islands + lexicase + constant polish).
+    pop = _evolve_population(train, pop_size, generations, horizon, rng,
+                             n_islands=n_islands)
 
-    # 2) Evaluate each unique candidate on the held-out TEST portion + gates.
-    admitted: list[dict] = []
+    # 2) Gate unique candidates on held-out TEST; fill MAP-Elites archive.
+    candidates: list[dict] = []
+    archive: dict = {}
     seen: set[str] = set()
-    existing_signals: list[list[float]] = []
-    population: list[object] = []
-    for expr in pop:
+    n_eval = 0
+    for idx, raw in enumerate(pop):
+        n_eval += 1
+        expr = _canonicalize(raw)
+        # Final constant polish on test-regime fitness (cheap local search).
+        expr = _polish_constants(expr, test, horizon, rng, tries=2)
         es = _expr_to_str(expr)
-        if es in seen:
+        key = _semantic_key(expr)
+        if key in seen:
             continue
-        seen.add(es)
+        seen.add(key)
         try:
             sig_test = _signal_for_expr(expr, test)
             if len(sig_test) < 20:
@@ -560,68 +1060,112 @@ def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
             oos = _compute_fitness(sig_test, test, horizon)
             if oos < OOS_FLOOR:
                 continue
-            # Permutation null-test: reject lucky-noise candidates (mandatory
-            # firewall — also what keeps test_random_low_rate FDR <5% on noise).
             p_val, _real_c, null_mean = _permutation_pvalue(
                 sig_test, test, horizon, n_perm=200, seed=seed)
             if p_val >= PERM_PVALUE_FLOOR:
                 continue
-            # ── Ported from the older engine: walk-forward majority gate ──
-            # The old engine's real noise control was walk-forward: a candidate
-            # had to clear the OOS bar in a MAJORITY of disjoint folds, so a
-            # single lucky 60/40 split could not admit it. The GA evolves
-            # thousands of candidates specifically hunting for that one lucky
-            # split, which is why a bare OOS>=0.15 + permutation still admits
-            # ~20% noise under full evolution. _honest_oos returns
-            # (median_corr, frac_folds_passing); we require the candidate to
-            # pass in >= half the folds (the old `clear >= (n_folds+1)//2`
-            # rule). Sharpe is a SECONDARY escape (old engine: corr OR sharpe)
-            # but only when the split is too short for honest k-fold.
             _n = min(len(sig_test), len(test) - horizon)
             if _n >= N_FOLDS * 15:
                 kfold_med, frac = _honest_oos(sig_test, test, horizon)
-                sh = _sharpe(sig_test, test, horizon)
-                # Old-engine walk-forward rule, tightened for shorter series:
-                # require BOTH a strong majority of folds clearing OOS_FLOOR
-                # (>=4 of 5; the old engine's n_windows=4 -> >=2 of 3 on 2y daily
-                # where folds are large and 0.15 is genuinely hard by chance)
-                # AND the median fold-corr >= OOS_FLOOR. On our ~400pt test the
-                # folds are small, so a stricter majority is needed to kill the
-                # GA's lucky-split hunt. (The old engine's secondary Sharpe OR is
-                # intentionally NOT used here: on noise it admits false positives
-                # and the k-fold majority already captures tradeable signals.)
-                _kfold_ok = (frac >= 0.8) and (kfold_med >= OOS_FLOOR)
+                _kfold_ok = (frac >= 0.6) and (kfold_med >= OOS_FLOOR)
                 if not _kfold_ok:
                     continue
-            # OOS signal stats for the dashboard (honest, held-out).
             win_rate, total_pnl = _compute_signal_stats(sig_test, test, horizon)
+            max_dd = _max_drawdown_pct(sig_test, test, horizon)
+            cx = _complexity(expr)
+            behavior = _behavior_label(sig_test)
+            c_bin = _complexity_bin(cx)
+            niche_key = _niche_key(behavior, c_bin, h_bin)
+            cand = {
+                "expr_tree": expr,
+                "expr_str": es,
+                "sig": sig_test,
+                "oos_corr": round(oos, 4),
+                "perm_pvalue": round(p_val, 4),
+                "null_mean_corr": null_mean,
+                "win_rate": win_rate,
+                "total_pnl": total_pnl,
+                "max_dd": max_dd,
+                "complexity": cx,
+                "island_id": idx % n_islands,
+                "pool_lift": 0.0,
+                "behavior": behavior,
+                "horizon": horizon,
+                "niche_key": niche_key,
+            }
+            candidates.append(cand)
+            if MAP_ELITES_ENABLED:
+                _map_elites_insert(archive, cand)
+        except Exception:
+            continue
+
+    # 3) Prefer MAP-Elites elites (diverse niches), fallback to Pareto front.
+    if MAP_ELITES_ENABLED and archive:
+        front = list(archive.values())
+        front.sort(key=lambda c: (c["oos_corr"], -c["complexity"], -c["max_dd"]),
+                   reverse=True)
+    else:
+        front = _pareto_front(candidates) or candidates
+        front.sort(key=lambda c: (c["oos_corr"], -c["complexity"], -c["max_dd"]),
+                   reverse=True)
+
+    # 4) Sequential admit with redundancy / novelty / pool-lift / S10.
+    admitted: list[dict] = []
+    existing_signals: list[list[float]] = []
+    population: list[object] = []
+    niches_used: set[str] = set()
+    for cand in front:
+        expr = cand["expr_tree"]
+        es = cand["expr_str"]
+        sig_test = cand["sig"]
+        try:
             if redundancy_check(sig_test, existing_signals) == "REJECTED":
                 continue
             if not _novelty_ok(expr, population):
                 continue
-            # Item 9/15: same 7-phase S10 backtest gate as reflection deploys.
+            lift = _marginal_pool_lift(sig_test, existing_signals, test, horizon)
+            if lift < POOL_LIFT_FLOOR:
+                continue
             from hermes_core.engines.backtest import backtest_gp_indicator
             bt = backtest_gp_indicator(
                 pair, es, prices=prices, existing_signals=existing_signals,
             )
             if not bt.get("approved"):
                 continue
+            niche = {
+                "horizon": horizon,
+                "horizon_bin": h_bin,
+                "complexity_bin": _complexity_bin(cand["complexity"]),
+                "behavior": cand["behavior"],
+                "niche_key": cand.get("niche_key"),
+            }
+            niches_used.add(cand.get("niche_key") or "")
             ind = {
                 "pair": pair,
                 "name": es,
                 "expr": es,
-                "_expr": expr,                       # raw tree for live re-eval
-                "fitness": round(oos - COMPLEXITY_PENALTY * _complexity(expr), 4),
-                "oos_corr": round(oos, 4),
-                "perm_pvalue": round(p_val, 4),
-                "null_mean_corr": null_mean,
-                "win_rate": win_rate,
-                "total_pnl": total_pnl,
-                "complexity": _complexity(expr),
-                "nodes": _complexity(expr),
+                "_expr": expr,
+                "fitness": round(
+                    cand["oos_corr"] - COMPLEXITY_PENALTY * cand["complexity"], 4
+                ),
+                "oos_corr": cand["oos_corr"],
+                "perm_pvalue": cand["perm_pvalue"],
+                "null_mean_corr": cand["null_mean_corr"],
+                "win_rate": cand["win_rate"],
+                "total_pnl": cand["total_pnl"],
+                "max_dd": cand["max_dd"],
+                "complexity": cand["complexity"],
+                "nodes": cand["complexity"],
                 "horizon": horizon,
-                "interval": "1d",                     # GP discovery runs on daily bars
+                "interval": "1d",
                 "source": "genetic",
+                "engine_version": ENGINE_VERSION,
+                "run_id": run_id,
+                "island_id": cand["island_id"],
+                "pool_lift": round(lift, 4),
+                "niche": niche,
+                "niche_key": cand.get("niche_key"),
+                "admit_reason": "oos+perm+kfold+map_elites+pool_lift+s10",
                 "backtest_approved": True,
                 "backtest_reason": bt.get("reason"),
                 "backtest_oos_corr": bt.get("oos_corr"),
@@ -635,9 +1179,46 @@ def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
         except Exception:
             continue
 
+    cov = _map_elites_coverage(archive) if archive else {
+        "filled": 0, "total_cells": len(_map_elites_cells()), "coverage": 0.0, "cells": {},
+    }
+    pulse = {
+        "run_id": run_id,
+        "pair": pair,
+        "engine_version": ENGINE_VERSION,
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "n_islands": n_islands,
+        "generations": generations,
+        "pop_size": pop_size,
+        "lexicase_cases": LEXICASE_CASES,
+        "candidates_evaluated": n_eval,
+        "candidates_unique": len(seen),
+        "candidates_gated": len(candidates),
+        "admitted": len(admitted),
+        "admit_rate": round(len(admitted) / max(len(seen), 1), 4),
+        "best_oos": max((c["oos_corr"] for c in candidates), default=0.0),
+        "niches_used": sorted(k for k in niches_used if k),
+        "map_elites": cov,
+    }
+    _save_discovery_pulse(pair, pulse)
+
     if admitted:
         _save_discovered(pair, admitted)
     return admitted
+
+
+def _is_dashboard_seed_fixture(ind: dict) -> bool:
+    """True for non-GP dashboard seed rows (ta.rsi / mom(close,N) / source=seed)."""
+    if (ind.get("source") or "").lower() == "seed":
+        return True
+    for key in ("expr", "expr_str", "name"):
+        raw = ind.get(key)
+        if not isinstance(raw, str):
+            continue
+        s = raw.strip()
+        if s.startswith("ta.") or _re.match(r"^[a-zA-Z_]+\(close\b", s):
+            return True
+    return False
 
 
 def apply_live_feedback(pair: str, cortex) -> int:
@@ -668,7 +1249,10 @@ def apply_live_feedback(pair: str, cortex) -> int:
             stats_source = Cortex()
         except Exception:
             stats_source = cortex
-        own = load_discovered_indicators(pair, include_shared=False)
+        own = [
+            i for i in load_discovered_indicators(pair, include_shared=False)
+            if not _is_dashboard_seed_fixture(i)
+        ]
         if not own:
             return 0
         updated = 0
@@ -710,24 +1294,123 @@ def apply_live_feedback(pair: str, cortex) -> int:
         return 0
 
 
+def _discovered_dir() -> Path:
+    if DISCOVERED_DIR is not None:
+        DISCOVERED_DIR.mkdir(parents=True, exist_ok=True)
+        return DISCOVERED_DIR
+    # Canonical discovered folder (parent of EUR_USD.json).
+    try:
+        return _state_discovered_path("EUR/USD").parent
+    except Exception:
+        return repo_root() / "state" / "discovered"
+
+
+def _pulse_path(pair: str) -> Path:
+    return _discovered_dir() / f"_pulse_{_pair_safe(pair)}.json"
+
+
+def _save_discovery_pulse(pair: str, pulse: dict) -> Path:
+    """Persist the latest discovery-run pulse for dashboard surfacing."""
+    path = _pulse_path(pair)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(pulse, indent=2), encoding="utf-8")
+    # Also merge into the aggregate pulse index used by the runner push.
+    index_path = _discovered_dir() / "_discovery_pulse.json"
+    try:
+        index = json.loads(index_path.read_text(encoding="utf-8")) if index_path.exists() else {}
+        if not isinstance(index, dict):
+            index = {}
+    except (json.JSONDecodeError, OSError):
+        index = {}
+    index[pair] = pulse
+    index_path.write_text(json.dumps(index, indent=2), encoding="utf-8")
+    return path
+
+
+def load_discovery_pulse(pair: str) -> dict | None:
+    path = _pulse_path(pair)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def load_discovery_pulses(pairs: list[str] | None = None) -> dict[str, dict]:
+    """Load pulses for `pairs` (or all pairs found in the aggregate index)."""
+    index_path = _discovered_dir() / "_discovery_pulse.json"
+    out: dict[str, dict] = {}
+    try:
+        if index_path.exists():
+            raw = json.loads(index_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                out = {k: v for k, v in raw.items() if isinstance(v, dict)}
+    except (json.JSONDecodeError, OSError):
+        out = {}
+    if pairs is not None:
+        wanted = set(pairs)
+        out = {k: v for k, v in out.items() if k in wanted}
+        for p in pairs:
+            if p not in out:
+                one = load_discovery_pulse(p)
+                if one:
+                    out[p] = one
+    return out
+
+
+def niche_map_from_indicators(inds: list[dict]) -> dict:
+    """Count indicators per niche cell (dashboard MAP-Elites map)."""
+    counts: dict[str, int] = {}
+    for ind in inds:
+        niche = ind.get("niche") or {}
+        key = (
+            ind.get("niche_key")
+            or niche.get("niche_key")
+            or _niche_key(
+                niche.get("behavior") or "mixed",
+                niche.get("complexity_bin") or _complexity_bin(int(ind.get("complexity") or 1)),
+                niche.get("horizon_bin") or _horizon_bin(int(ind.get("horizon") or 1)),
+            )
+        )
+        counts[key] = counts.get(key, 0) + 1
+    cells = _map_elites_cells()
+    return {
+        "filled": sum(1 for c in cells if counts.get(c)),
+        "total_cells": len(cells),
+        "coverage": round(sum(1 for c in cells if counts.get(c)) / max(len(cells), 1), 4),
+        "counts": {c: counts.get(c, 0) for c in cells},
+    }
+
+
 # ── persistence (survives restart) ──────────────────────────────────────────
 def _pair_safe(pair: str) -> str:
     return pair.replace("/", "_").replace("-", "_")
 
 
 def _is_gp_expr(s: object) -> bool:
-    """True if `s` is a FEATURE token or parenthesized GP infix the parser accepts.
+    """True if `s` is a FEATURE/CONSTANT token or Phase A GP expression string.
 
-    Rejects dashboard seed strings like ``ta.rsi(close,14)`` / ``mom(close,5)``
-    that are not in the genetic primitive grammar.
+    Accepts legacy infix ``(price-sma20)`` and Phase A forms ``abs(rsi)``,
+    ``mean(price,20)``. Rejects dashboard seeds like ``ta.rsi(close,14)``.
     """
     if not isinstance(s, str) or not s.strip():
         return False
-    toks = _re.findall(r"\(|\)|\+|-|\*|/|[a-z0-9]+", s.strip())
+    toks = _re.findall(r"\(|\)|,|\+|-|\*|/|[a-z_][a-z0-9_]*|\d+", s.strip())
     if not toks:
         return False
-    allowed = set(FEATURES) | {"(", ")", "+", "-", "*", "/"}
-    return all(t in allowed for t in toks)
+    allowed_names = (
+        set(FEATURES) | set(CONSTANTS) | set(UNARY_OPS) | set(ROLLING_OPS)
+        | {"(", ")", ",", "+", "-", "*", "/"}
+    )
+    for t in toks:
+        if t.isdigit():
+            continue
+        if t not in allowed_names:
+            return False
+    # Reject bare function-call seeds like mom(close,5) — "close" is not a feature
+    return True
 
 
 def indicator_expr(ind: dict) -> str | None:
@@ -863,6 +1546,24 @@ def load_discovered_indicators(pair: str, include_shared: bool = True) -> list[d
         own = [_normalize_indicator(r, pair=pair)
                for r in _read_indicators_file(canon)]
         loaded_from = canon
+        # Scrub dashboard seed fixtures that were wrongly re-persisted to the
+        # canonical path (apply_live_feedback used to save them). Seeds are not
+        # votable and must not masquerade as GP discoveries on the dashboard.
+        votable = [i for i in own if indicator_expr(i)]
+        seeds = [i for i in own if _is_dashboard_seed_fixture(i)]
+        if seeds and not votable:
+            try:
+                canon.unlink()
+            except OSError:
+                pass
+            own = []
+            loaded_from = None
+        elif seeds and votable:
+            try:
+                _save_discovered(pair, votable)
+            except OSError:
+                pass
+            own = votable
     else:
         for cand in _candidate_discovered_paths(pair):
             if cand == canon:
@@ -923,8 +1624,8 @@ class GeneticEngine:
     """Roadmap S13 contract wrapper."""
 
     def discover(self, pair: str, prices: list[float],
-                 volumes: list[float] | None = None) -> list[dict]:
-        return discover(pair, prices, volumes)
+                 volumes: list[float] | None = None, **kwargs) -> list[dict]:
+        return discover(pair, prices, volumes, **kwargs)
 
     def load(self, pair: str) -> list[dict]:
         return load_discovered_indicators(pair)

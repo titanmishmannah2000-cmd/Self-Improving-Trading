@@ -22,6 +22,11 @@ import hermes_core.engines.genetic as gp
 def _tmp_discovered(tmp_path, monkeypatch):
     """Redirect discovered-indicator storage into an isolated temp dir."""
     monkeypatch.setattr(gp, "DISCOVERED_DIR", tmp_path / "discovered")
+    # S10 backtest is integration-heavy; unit tests focus on GP gates + grammar.
+    monkeypatch.setattr(
+        "hermes_core.engines.backtest.backtest_gp_indicator",
+        lambda *a, **k: {"approved": True, "reason": "test_stub", "oos_corr": 0.2},
+    )
     yield
 
 
@@ -48,7 +53,10 @@ def _random_walk(n=400, start=1.10, seed=9):
 
 # ── blueprint Phase 13 success criteria ───────────────────────────────────
 def test_discover_oos():
-    inds = gp.discover("EUR/USD", _structured())
+    inds = gp.discover(
+        "EUR/USD", _structured(500),
+        generations=20, pop_size=24, seed=3, n_islands=1,
+    )
     # at least one discovered indicator clears the OOS floor
     assert len(inds) >= 1
     assert any(i["fitness"] >= 0.15 for i in inds)
@@ -56,7 +64,7 @@ def test_discover_oos():
 
 
 def test_survives_restart():
-    gp.discover("EUR/USD", _structured())
+    gp.discover("EUR/USD", _structured(500), generations=20, pop_size=24, n_islands=1)
     # simulate a restart: re-load from disk
     reloaded = gp.load_discovered_indicators("EUR/USD")
     assert len(reloaded) >= 1
@@ -123,7 +131,10 @@ def test_novelty_gate_rejects_duplicate():
 
 def test_genetic_engine_wrapper():
     eng = gp.GeneticEngine()
-    inds = eng.discover("GBP/JPY", _structured(seed=11))
+    inds = eng.discover(
+        "GBP/JPY", _structured(500, seed=11),
+        generations=15, pop_size=20, n_islands=1,
+    )
     assert isinstance(inds, list)
     assert eng.load("GBP/JPY") == inds or len(eng.load("GBP/JPY")) >= 1
 

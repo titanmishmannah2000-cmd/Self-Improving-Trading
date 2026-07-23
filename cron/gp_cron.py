@@ -32,7 +32,8 @@ def main() -> None:
             if len(prices) < 200:
                 print(f"[cron] gp_cron: {pair} skipped (<200 daily bars)", flush=True)
                 continue
-            inds = discover(pair, prices, horizon=60, generations=40, pop_size=40)
+            inds = discover(pair, prices, horizon=60, generations=50, pop_size=60,
+                            n_islands=3)
             print(f"[cron] gp_cron: {pair} -> {len(inds)} indicators", flush=True)
         except Exception as exc:  # noqa: BLE001 — cron must not crash the job
             print(f"[cron] gp_cron: {pair} error -> {exc}", flush=True, file=sys.stderr)
