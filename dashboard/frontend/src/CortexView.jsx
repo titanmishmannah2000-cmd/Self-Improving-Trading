@@ -277,6 +277,16 @@ export default function CortexView({ apiBase, isActive = true }) {
           </p>
         </div>
 
+        <div className="report-card" style={{ marginBottom: 16 }} data-testid="cortex-kelly-sizing">
+          <div className="report-card-header">Kelly sizing (Phase 5)</div>
+          <Help>
+            When <code>KELLY_SIZING=1</code>, open size is scaled by a cautious
+            quarter-Kelly fraction from cortex win-rate (Bayesian) and win/loss or
+            TP/SL odds. Live badge <strong>Kxx%</strong> and detail show p̂ + CI.
+            No history → no change. Never blocks. Rollback: <code>KELLY_SIZING=0</code>.
+          </Help>
+        </div>
+
         {hasPolicyBlock && (
           <div className="report-card cortex-policy" style={{ marginBottom: 16 }}>
             <div className="report-card-header">Active policy decisions</div>

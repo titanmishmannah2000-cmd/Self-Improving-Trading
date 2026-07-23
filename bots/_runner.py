@@ -209,6 +209,14 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
             "regime_mode": pos.get("regime_mode"),
             "fast_regime": pos.get("fast_regime"),
             "entry_regime": pos.get("entry_regime"),
+            # HIF Phase-5 Kelly sizing
+            "kelly_mult": pos.get("kelly_mult"),
+            "kelly_mode": pos.get("kelly_mode"),
+            "kelly_f": pos.get("kelly_f"),
+            "p_bayes": pos.get("p_bayes"),
+            "ci_low": pos.get("ci_low"),
+            "ci_high": pos.get("ci_high"),
+            "kelly_reasons": pos.get("kelly_reasons") or [],
         }
         for pair, pos in open_positions.items()
     ]

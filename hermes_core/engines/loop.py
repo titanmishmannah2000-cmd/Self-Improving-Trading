@@ -41,6 +41,7 @@ from hermes_core.engines.genetic import discover as gp_discover
 from hermes_core.engines.policy_engine import PolicyEngine, soft_weights_enabled
 from hermes_core.engines.expert_weights import apply_expert_weight, expert_weight
 from hermes_core.engines.regime_sizing import apply_regime_sizing, regime_sizing_enabled
+from hermes_core.engines.kelly_sizing import apply_kelly_sizing, kelly_sizing_enabled
 from hermes_core.engines.risk import (
     MAX_POSITION_SIZE,
     apply_probe_sizing,
@@ -753,6 +754,34 @@ def run_cycle(
                 adx=ind.get("adx"),
             )
             size = float(_regime["size"])
+            # HIF Phase-5 Bayesian fractional Kelly (never skips).
+            _kelly_on = False
+            try:
+                _kelly_on = kelly_sizing_enabled()
+            except Exception:  # noqa: BLE001
+                _kelly_on = False
+            _edge = {"wins": 0, "losses": 0, "avg_win": None, "avg_loss": None}
+            if _kelly_on:
+                try:
+                    _edge = cortex.edge_stats(pair, _etype) or _edge
+                except Exception:  # noqa: BLE001
+                    pass
+            _rr_b = None
+            try:
+                if sl > 0:
+                    _rr_b = float(tp) / float(sl)
+            except (TypeError, ValueError, ZeroDivisionError):
+                _rr_b = None
+            _kelly = apply_kelly_sizing(
+                size,
+                enabled=_kelly_on,
+                wins=int(_edge.get("wins") or 0),
+                losses=int(_edge.get("losses") or 0),
+                avg_win=_edge.get("avg_win"),
+                avg_loss=_edge.get("avg_loss"),
+                rr_b=_rr_b,
+            )
+            size = float(_kelly["size"])
             stop = _atr_stop_for(strategy, price, atr)
             open_positions[pair] = {
                 "id": f"{bot}:{pair}:{int(time.time())}",
@@ -785,6 +814,14 @@ def run_cycle(
                 "regime_mode": _regime.get("regime_mode"),
                 "fast_regime": _regime.get("fast_regime"),
                 "entry_regime": _regime.get("regime") or regimes.get(pair),
+                # HIF Phase-5 dashboard fields
+                "kelly_mult": _kelly.get("kelly_mult"),
+                "kelly_mode": _kelly.get("kelly_mode"),
+                "kelly_f": _kelly.get("kelly_f"),
+                "p_bayes": _kelly.get("p_bayes"),
+                "ci_low": _kelly.get("ci_low"),
+                "ci_high": _kelly.get("ci_high"),
+                "kelly_reasons": _kelly.get("reasons") or [],
             }
             # [CORTEX] record the entry (per-type memory; exile persists across cycles)
             with contextlib.suppress(Exception):

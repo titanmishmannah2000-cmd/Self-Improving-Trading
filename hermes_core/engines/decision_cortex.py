@@ -143,6 +143,42 @@ class Cortex:
             and e.get("outcome") is not None
         )
 
+    def edge_stats(self, pair: str, entry_type: str) -> dict:
+        """Wins/losses + avg win/loss PnL for Kelly (HIF Phase-5).
+
+        Missing pnl on an outcome is ignored for averages but still counts W/L.
+        """
+        outcomes = [
+            e for e in self._entries
+            if e.get("pair") == pair
+            and e.get("type") == entry_type
+            and e.get("outcome") is not None
+        ]
+        wins = sum(1 for e in outcomes if int(e.get("outcome") or 0) == 1)
+        losses = len(outcomes) - wins
+        win_pnls: list[float] = []
+        loss_pnls: list[float] = []
+        for e in outcomes:
+            if "pnl" not in e:
+                continue
+            try:
+                pnl = float(e["pnl"])
+            except (TypeError, ValueError):
+                continue
+            if int(e.get("outcome") or 0) == 1:
+                win_pnls.append(pnl)
+            else:
+                loss_pnls.append(abs(pnl))
+        avg_win = sum(win_pnls) / len(win_pnls) if win_pnls else None
+        avg_loss = sum(loss_pnls) / len(loss_pnls) if loss_pnls else None
+        return {
+            "wins": wins,
+            "losses": losses,
+            "n": len(outcomes),
+            "avg_win": avg_win,
+            "avg_loss": avg_loss,
+        }
+
     # ── best entry type (router) ────────────────────────────────────────────
     def best_entry_type(self, pair: str | None = None) -> str:
         """Return the entry type with the higher known win-rate, falling back to

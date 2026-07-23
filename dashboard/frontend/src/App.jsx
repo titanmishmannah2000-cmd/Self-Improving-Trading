@@ -165,6 +165,11 @@ const GLOSSARY = {
     plain: "When Regime Sizing is ON (REGIME_SIZING=1), position size is scaled by market mood: full in an uptrend, smaller in a downtrend, moderate in a range. Never blocks a trade — only changes how much risk is taken.",
     analogy: "Driving slower in fog — you still go, just not at highway speed.",
   },
+  kelly_mult: {
+    term: "Kelly size (Bayesian)",
+    plain: "When Kelly Sizing is ON (KELLY_SIZING=1), size is scaled by a cautious quarter-Kelly fraction from the cortex win-rate (with uncertainty) and typical win/loss or TP/SL odds. No history → no change. Never blocks a trade.",
+    analogy: "Betting more only when the scoreboard and the odds both look good — and still only a fraction of full Kelly.",
+  },
   sharpe: {
     term: "Sharpe Ratio",
     plain: "Risk-adjusted return. Above 1.0 is solid, above 2.0 is excellent. A strategy with less profit but far less risk can beat one with more profit and wild swings.",
@@ -589,6 +594,15 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
                 R{(Number(openTrade.regime_mult) * 100).toFixed(0)}%
               </span>
             )}
+            {openTrade?.kelly_mode === "soft" && openTrade?.kelly_mult != null && Number(openTrade.kelly_mult) < 0.999 && (
+              <span
+                className="pc-strategy pc-strategy-kelly"
+                data-testid="kelly-mult-badge"
+                title={`Kelly size ${(Number(openTrade.kelly_mult) * 100).toFixed(0)}% (p̂=${openTrade.p_bayes ?? "—"}${openTrade.ci_low != null ? `, CI ${openTrade.ci_low}–${openTrade.ci_high}` : ""})`}
+              >
+                K{(Number(openTrade.kelly_mult) * 100).toFixed(0)}%
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -1006,6 +1020,20 @@ function DetailPanel({ pair, botData, strategyParams, lastSkip }) {
                     : "—"}
                   {openTrade.regime_label ? ` · ${openTrade.regime_label}` : ""}
                   {openTrade.fast_regime ? ` · fast ${openTrade.fast_regime}` : ""}
+                </span>
+              </div>
+            )}
+            {!isWatcher && openTrade.kelly_mode === "soft" && (
+              <div className="dp-row" data-testid="detail-kelly-mult">
+                <span><GlossaryTerm id="kelly_mult">Kelly size</GlossaryTerm></span>
+                <span className={`mono ${Number(openTrade.kelly_mult) < 0.999 ? "dp-kelly" : "dp-full"}`}>
+                  {openTrade.kelly_mult != null
+                    ? `${(Number(openTrade.kelly_mult) * 100).toFixed(0)}%`
+                    : "—"}
+                  {openTrade.p_bayes != null ? ` · p̂ ${openTrade.p_bayes}` : ""}
+                  {openTrade.ci_low != null
+                    ? ` · CI ${openTrade.ci_low}–${openTrade.ci_high}`
+                    : ""}
                 </span>
               </div>
             )}

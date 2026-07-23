@@ -54,6 +54,11 @@ from hermes_core.engines.loop import (
     run_cycle,
     write_heartbeat,
 )
+from hermes_core.engines.kelly_sizing import (
+    apply_kelly_sizing,
+    kelly_size_mult,
+    kelly_sizing_enabled,
+)
 from hermes_core.engines.regime_sizing import (
     apply_regime_sizing,
     regime_size_mult,
@@ -125,6 +130,7 @@ __all__ = [
     "EXPERT_TYPES", "SOFT_SUPPRESS_MULT", "apply_expert_weight",
     "expert_weight", "pair_expert_weights",
     "apply_regime_sizing", "regime_size_mult", "regime_sizing_enabled",
+    "apply_kelly_sizing", "kelly_size_mult", "kelly_sizing_enabled",
     "skip_shadow_reflect_enabled", "maybe_skip_shadow_learn",
     "analyze_skip_shadow", "format_skip_shadow_context", "propose_skip_shadow_notes",
     "run_cycle", "write_heartbeat", "maybe_circuit_break",
