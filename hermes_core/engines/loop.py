@@ -510,9 +510,13 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
     heartbeat cycle. The heavy work runs in a thread with a hard timeout; if it
     stalls, the cycle proceeds and the next attempt retries. Fail-soft.
     """
+    from datetime import datetime, timezone
+
     from hermes_core.adapters.price import seed_history_interval_sync
     from hermes_core.engines.genetic import (
+        ENGINE_VERSION,
         _discovered_path,
+        _save_discovery_pulse,
         apply_live_feedback,
         load_discovered_indicators,
     )
@@ -534,6 +538,34 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
         own, interval=prof["interval"], horizon=prof["horizon"],
     )
 
+    def _status_pulse(**extra) -> None:
+        """Always leave a dashboard-visible invent pulse (even on skip/timeout)."""
+        try:
+            pulse = {
+                "pair": pair,
+                "_bot": bot,
+                "engine_version": ENGINE_VERSION,
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "interval": prof["interval"],
+                "horizon": prof["horizon"],
+                "generations": prof["generations"],
+                "pop_size": prof["pop_size"],
+                "n_islands": prof["n_islands"],
+                "candidates_unique": extra.get("candidates_unique"),
+                "candidates_gated": extra.get("candidates_gated"),
+                "admitted": int(extra.get("admitted") or 0),
+                "best_oos": extra.get("best_oos"),
+                "status": extra.get("status") or "ok",
+                "reason": extra.get("reason"),
+                "map_elites": extra.get("map_elites") or {
+                    "filled": 0, "total_cells": 27, "coverage": 0.0,
+                },
+                "lexicase_cases": extra.get("lexicase_cases"),
+            }
+            _save_discovery_pulse(pair, pulse)
+        except Exception:  # noqa: BLE001 — pulse must never break invent
+            pass
+
     def _work() -> None:
         import logging as _logging
         _log = _logging.getLogger("hermes.discovery")
@@ -547,7 +579,19 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
         # (Re)discover only when THIS pair has no votable own formulas yet
         # for the active invent regime.
         if discovered:
+            _status_pulse(
+                status="skipped_have_formulas",
+                reason="votable formulas already on this invent regime",
+                admitted=0,
+            )
             return
+        print(
+            f"[hermes][discovery] {bot}/{pair}: invent start "
+            f"{prof['interval']}/h={prof['horizon']} "
+            f"gens={prof['generations']} pop={prof['pop_size']} "
+            f"timeout={prof['timeout_s']}s",
+            flush=True,
+        )
         hist = seed_history_interval_sync(
             pair,
             interval=prof["interval"],
@@ -559,10 +603,19 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
             "[discovery] %s: fetched %d %s candles (h=%s) for GP",
             pair, len(series), prof["interval"], prof["horizon"],
         )
+        print(
+            f"[hermes][discovery] {bot}/{pair}: fetched {len(series)} "
+            f"{prof['interval']} candles",
+            flush=True,
+        )
         if len(series) < int(prof["min_bars"]):
             _log.warning(
                 "[discovery] %s: <%s %s candles, GP skipped",
                 pair, prof["min_bars"], prof["interval"],
+            )
+            _status_pulse(
+                status="skipped_short_history",
+                reason=f"<{prof['min_bars']} {prof['interval']} bars",
             )
             return
         inds = gp_discover(
@@ -575,20 +628,47 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
         )
         _log.info("[discovery] %s: admitted=%d -> %s",
                   pair, len(inds), _discovered_path(pair))
+        # discover() already writes a full pulse; tag bot for the dashboard.
+        try:
+            from hermes_core.engines.genetic import load_discovery_pulse
+            existing = load_discovery_pulse(pair) or {}
+            existing["_bot"] = bot
+            existing["pair"] = pair
+            existing["status"] = "ok"
+            existing["admitted"] = len(inds)
+            _save_discovery_pulse(pair, existing)
+        except Exception:  # noqa: BLE001
+            _status_pulse(status="ok", admitted=len(inds))
 
     # Bound the work so a slow network/price API can't stall the trade loop.
     # Discovery runs in its own background thread; crypto gets a longer cap so
     # invent can finish and appear on Discovered.
     try:
-        from concurrent.futures import ThreadPoolExecutor
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+        print(
+            f"[hermes][discovery] {bot}/{pair}: pass begin "
+            f"(have_votable={discovered})",
+            flush=True,
+        )
         with ThreadPoolExecutor(max_workers=1) as ex:
             ex.submit(_work).result(timeout=int(prof["timeout_s"]))
+    except FuturesTimeout:
+        msg = (
+            f"[discovery] {bot}/{pair}: error -> TimeoutError "
+            f"after {prof['timeout_s']}s"
+        )
+        print(msg, flush=True)
+        _status_pulse(
+            status="timeout",
+            reason=f"invent exceeded {prof['timeout_s']}s",
+        )
+        return
     except Exception as _exc:  # surface the real reason instead of silent drop
         import logging as _logging
-        msg = f"[discovery] {bot}/{pair}: error -> {_exc}"
+        msg = f"[discovery] {bot}/{pair}: error -> {type(_exc).__name__}: {_exc}"
         _logging.getLogger("hermes.discovery").warning(msg)
-        # Railway stdout often misses logger-only lines — print too.
         print(msg, flush=True)
+        _status_pulse(status="error", reason=str(_exc)[:200])
         return
     _DISCOVERY_LAST[key] = time.time()
     # Confirm invent regime in bot stdout (even when admitted=0).

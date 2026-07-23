@@ -216,7 +216,22 @@ function DiscoveryPulsePanel({ pulses, botFilter, pairBotMap }) {
     // Unknown owner: hide on a specific bot tab (avoid BTC on Forex).
     return false;
   });
-  if (!entries.length) return null;
+  // On a bot tab, always show the section so Gold isn't a blank hole when
+  // invent hasn't pushed a pulse yet.
+  if (!entries.length) {
+    if (botFilter === "all") return null;
+    return (
+      <div className="gp-pulse-panel" data-testid="discovery-pulse-empty">
+        <h3 className="discovered-section-title">Discovery run pulse</h3>
+        <Help>
+          No invent pulse for <strong>{botFilter}</strong> yet. The bot writes one
+          after each invent pass (or timeout). Check that invent is running for
+          this bot&apos;s pairs — seed/correlation rows on Discovered do not count
+          as a GP invent pulse.
+        </Help>
+      </div>
+    );
+  }
   return (
     <div className="gp-pulse-panel" data-testid="discovery-pulse">
       <h3 className="discovered-section-title">Discovery run pulse</h3>
@@ -235,6 +250,7 @@ function DiscoveryPulsePanel({ pulses, botFilter, pairBotMap }) {
               p?.interval && p?.horizon != null
                 ? `${p.interval}/h${p.horizon}`
                 : null;
+            const status = p?.status;
             return (
               <div className="gp-pulse-card" key={`${p?._bot || "x"}:${pair}`}>
                 <div className="gp-pulse-pair">
@@ -243,6 +259,12 @@ function DiscoveryPulsePanel({ pulses, botFilter, pairBotMap }) {
                     <span className="gp-pulse-regime" title="Invent candle TF / horizon">
                       {" "}
                       · {regime}
+                    </span>
+                  ) : null}
+                  {status && status !== "ok" ? (
+                    <span className="gp-pulse-regime" title="Invent status">
+                      {" "}
+                      · {status}
                     </span>
                   ) : null}
                 </div>

@@ -441,9 +441,10 @@ async def run_bot(bot_name: str) -> None:
     _disc_cortex = None
     try:
         from hermes_core.engines.decision_cortex import Cortex
-        _disc_cortex = Cortex()
+        _disc_cortex = Cortex(bot=bot)
     except Exception:
         _disc_cortex = None
+    print(f"[hermes] starting discovery loop for {bot} pairs={pairs}", flush=True)
     _disc = threading.Thread(target=_discovery_loop,
                              args=(bot, pairs, _stop, _disc_cortex, cfg),
                              daemon=True)

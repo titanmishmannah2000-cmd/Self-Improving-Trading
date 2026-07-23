@@ -12,14 +12,15 @@ goal:
   one_variable_only: true
   gemini_reflection: true
   gemini_min_trades: 5
-# GP invent: daily TF, medium forward horizon.
+# GP invent: daily TF, medium forward horizon. Slightly smaller search than
+# forex so the first invent pass finishes and writes a discovery pulse.
 invent:
   interval: 1d
   period: 2y
   horizon: 20
-  generations: 40
-  pop_size: 40
-  n_islands: 2
+  generations: 25
+  pop_size: 30
+  n_islands: 1
   timeout_s: 300
 global:
   dashboard_url: ${DASHBOARD_API_URL}
