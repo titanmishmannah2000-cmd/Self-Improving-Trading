@@ -63,7 +63,7 @@ BOT_INVENT_DEFAULTS: dict[str, dict[str, Any]] = {
         "generations": 20,
         "pop_size": 24,
         "n_islands": 1,
-        "timeout_s": 180,
+        "timeout_s": 300,
         "min_bars": 200,
     },
 }

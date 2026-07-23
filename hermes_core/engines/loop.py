@@ -585,11 +585,18 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
             ex.submit(_work).result(timeout=int(prof["timeout_s"]))
     except Exception as _exc:  # surface the real reason instead of silent drop
         import logging as _logging
-        _logging.getLogger("hermes.discovery").warning(
-            "[discovery] %s/%s: error -> %s", bot, pair, _exc)
+        msg = f"[discovery] {bot}/{pair}: error -> {_exc}"
+        _logging.getLogger("hermes.discovery").warning(msg)
+        # Railway stdout often misses logger-only lines — print too.
+        print(msg, flush=True)
         return
     _DISCOVERY_LAST[key] = time.time()
-
+    # Confirm invent regime in bot stdout (even when admitted=0).
+    print(
+        f"[hermes][discovery] {bot}/{pair}: invent={prof['interval']}/h={prof['horizon']} "
+        f"timeout={prof['timeout_s']}s done",
+        flush=True,
+    )
 
 def run_cycle(
     bot: str,

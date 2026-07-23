@@ -359,6 +359,17 @@ def _crisis_backtest(prices: list[float], strat_type: str, threshold: float,
                       f"crisis DD {res['max_dd']:.3f} > {CRISIS_DD_LIMIT}"}
 
 
+def _forward_returns_pct(prices: list[float], horizon: int = 1) -> list[float]:
+    """Cumulative % move from bar i to i+horizon (matches invent fitness)."""
+    h = max(1, int(horizon))
+    if len(prices) <= h:
+        return []
+    return [
+        ((prices[i + h] / prices[i]) - 1.0) * 100.0
+        for i in range(len(prices) - h)
+    ]
+
+
 def _permutation_pvalue(signal: list[float], prices: list[float],
                         horizon: int = 1, n_perm: int = 200, seed: int = 0):
     """Permutation null-test for a candidate's OOS correlation.
@@ -366,11 +377,14 @@ def _permutation_pvalue(signal: list[float], prices: list[float],
     Shuffles the forward-return order n_perm times (signal fixed), recomputes
     |corr(signal, shuffled)|, and returns (p_value, real_corr, null_mean).
     p = fraction of null corrs >= real. Low p => genuinely informative, not luck.
+
+    ``horizon`` must match the invent forward horizon (never invent-h≠S10-h).
     """
     if len(prices) < 20 or len(signal) < 20:
         return 1.0, 0.0, 0.0
-    forward = [((prices[i + 1] / prices[i]) - 1) * 100.0
-               for i in range(len(prices) - 1)]
+    forward = _forward_returns_pct(prices, horizon)
+    if len(forward) < 20:
+        return 1.0, 0.0, 0.0
     sig = signal[:len(forward)]
     if len(sig) < 20:
         return 1.0, 0.0, 0.0
@@ -405,12 +419,17 @@ def _permutation_pvalue(signal: list[float], prices: list[float],
     return round(p, 4), round(real_corr, 4), round(null_mean, 4)
 
 
-def phase0_corr(signal: list[float], prices: list[float]) -> float:
-    """OOS correlation of the candidate signal vs forward returns (Phase 0 gate)."""
+def phase0_corr(signal: list[float], prices: list[float],
+                horizon: int = 1) -> float:
+    """OOS correlation of the candidate signal vs forward returns (Phase 0 gate).
+
+    ``horizon`` is the invent forward horizon in candles (default 1 = next bar).
+    """
     if len(prices) < 20 or len(signal) < 20:
         return 0.0
-    forward = [((prices[i + 1] / prices[i]) - 1) * 100.0
-               for i in range(len(prices) - 1)]
+    forward = _forward_returns_pct(prices, horizon)
+    if len(forward) < 20:
+        return 0.0
     sig = signal[:len(forward)]
     n = len(sig)
     ms = sum(sig) / n
@@ -670,19 +689,42 @@ def _gp_tree_from_expr(expr) -> object:
 
 
 def _simulate_gp(prices: list[float], signal: list[float],
-                 stop_pct: float, target_pct: float) -> dict:
-    """Trade simulation for a GP continuous signal (long when above own mean)."""
+                 stop_pct: float, target_pct: float,
+                 horizon: int = 1) -> dict:
+    """Trade simulation for a GP continuous signal.
+
+    Holds for ``horizon`` candles (invent forward horizon). Direction follows
+    the *signed* corr(signal, forward) — invent fitness is |corr|, so the raw
+    signal polarity is arbitrary; trading always-long would reject inverse
+    predictors that are otherwise valid.
+    """
+    h = max(1, int(horizon))
     if len(prices) < 10 or len(signal) < 5:
         return {"pnl": 0.0, "wr": 0.0, "entries": 0, "max_dd": 0.0}
-    n = min(len(signal), len(prices) - 1)
+    n = min(len(signal), len(prices) - h)
     if n < 5:
         return {"pnl": 0.0, "wr": 0.0, "entries": 0, "max_dd": 0.0}
     sig = np.asarray(signal[:n], dtype=float)
-    p = np.asarray(prices[: n + 1], dtype=float)
+    p = np.asarray(prices[: n + h], dtype=float)
     mu = float(np.mean(sig))
+    move = (p[h: n + h] - p[:n]) / np.maximum(p[:n], 1e-12) * 100.0
+    # Signed corr vs invent-horizon forward returns → trade polarity.
+    fwd = np.asarray(_forward_returns_pct(list(p[: n + h]), h)[:n], dtype=float)
+    m = min(len(sig), len(fwd), len(move))
+    direction = 1.0
+    if m >= 10:
+        s = sig[:m]
+        f = fwd[:m]
+        ms = float(np.mean(s))
+        mf = float(np.mean(f))
+        num = float(np.sum((s - ms) * (f - mf)))
+        ds = float(np.sqrt(np.sum((s - ms) ** 2)))
+        df = float(np.sqrt(np.sum((f - mf) ** 2)))
+        if ds > 0 and df > 1e-3 and num < 0:
+            direction = -1.0
     mask = sig > mu
-    move = (p[1:] - p[:-1]) / np.maximum(p[:-1], 1e-12) * 100.0
-    trade_moves = np.clip(move[mask[: len(move)]], -stop_pct, target_pct)
+    raw = direction * move[mask[: len(move)]]
+    trade_moves = np.clip(raw, -stop_pct, target_pct)
     if trade_moves.size == 0:
         return {"pnl": 0.0, "wr": 0.0, "entries": 0, "max_dd": 0.0}
     cum = np.cumsum(trade_moves)
@@ -699,10 +741,11 @@ def _simulate_gp(prices: list[float], signal: list[float],
 
 
 def _crisis_backtest_gp(prices: list[float], signal: list[float],
-                        stop_pct: float, target_pct: float) -> dict:
+                        stop_pct: float, target_pct: float,
+                        horizon: int = 1) -> dict:
     if _classify_regime(prices) != "crisis":
         return {"approved": True, "reason": "not a crisis window"}
-    res = _simulate_gp(prices, signal, stop_pct, target_pct)
+    res = _simulate_gp(prices, signal, stop_pct, target_pct, horizon=horizon)
     approved = res["max_dd"] <= CRISIS_DD_LIMIT
     return {
         "approved": approved,
@@ -727,15 +770,30 @@ def backtest_gp_indicator(
     fetch_prices: Callable[[str], list[float]] = _default_fetch,
     bot: str = "forex",
     existing_signals: list[list[float]] | None = None,
+    horizon: int = 1,
+    interval: str | None = None,
 ) -> dict:
     """7-phase S10 gate for a GP formula — same hard gates as param changes.
 
     Baseline is flat (no trade). The GP signal must clear OOS corr, historical
     PnL floor, crisis DD, and permutation significance before
     ``backtest_approved`` is True for ensemble voting / promote.
+
+    ``horizon`` / ``interval`` must match invent (never invent on h=12 and
+    S10-gate on h=1). KB keys are regime-scoped so a daily rejection cannot
+    poison an hourly invent of the same expression string.
     """
     expr_key = expr if isinstance(expr, str) else repr(expr)
-    cached = _kb_hit(pair, "gp_expr", "", expr_key)
+    h = max(1, int(horizon))
+    iv = str(interval).strip() if interval else None
+    # Regime-scoped KB param; legacy unscoped ``gp_expr`` still readable for
+    # horizon=1 / no-interval callers, but new invent always writes scoped keys.
+    kb_param = f"gp_expr|{iv or '1d'}|h{h}" if (iv is not None or h != 1) else "gp_expr"
+    cached = _kb_hit(pair, kb_param, "", expr_key)
+    if cached is None and kb_param != "gp_expr":
+        # Do NOT fall back to legacy unscoped rejects — those were scored on a
+        # different invent horizon/TF and must not block the new regime.
+        cached = None
     if cached is not None and not cached.get("approved", False):
         return {
             "approved": False,
@@ -758,7 +816,7 @@ def backtest_gp_indicator(
             "approved": False, "reason": "insufficient price history",
             "phases": {}, "expr": expr_key,
         }
-        _kb_record(pair, "gp_expr", "", expr_key, False, verdict["reason"])
+        _kb_record(pair, kb_param, "", expr_key, False, verdict["reason"])
         return verdict
 
     try:
@@ -769,7 +827,7 @@ def backtest_gp_indicator(
             "approved": False, "reason": f"expr eval failed: {exc}",
             "phases": {}, "expr": expr_key,
         }
-        _kb_record(pair, "gp_expr", "", expr_key, False, verdict["reason"])
+        _kb_record(pair, kb_param, "", expr_key, False, verdict["reason"])
         return verdict
 
     if len(signal) < 20:
@@ -777,25 +835,25 @@ def backtest_gp_indicator(
             "approved": False, "reason": "GP signal too short",
             "phases": {}, "expr": expr_key,
         }
-        _kb_record(pair, "gp_expr", "", expr_key, False, verdict["reason"])
+        _kb_record(pair, kb_param, "", expr_key, False, verdict["reason"])
         return verdict
 
     # Align prices to signal length for corr/sim (signal starts after lookback).
     lookback = max(0, len(prices) - len(signal))
     aligned_prices = prices[lookback:] if lookback else prices
-    # phase0_corr / perm expect len(signal) ~= len(prices)-1; pad signal to match.
-    if len(signal) < len(aligned_prices) - 1:
-        pad = [0.0] * ((len(aligned_prices) - 1) - len(signal))
+    # phase0_corr / perm expect signal aligned to forward-return length.
+    if len(signal) < len(aligned_prices) - h:
+        pad = [0.0] * ((len(aligned_prices) - h) - len(signal))
         bar_signal = pad + list(signal)
-    elif len(signal) > len(aligned_prices) - 1:
-        bar_signal = list(signal[: len(aligned_prices) - 1])
+    elif len(signal) > len(aligned_prices) - h:
+        bar_signal = list(signal[: len(aligned_prices) - h])
     else:
         bar_signal = list(signal)
 
     phases: dict[str, object] = {}
     reasons: list[str] = []
 
-    # Phase 0 — OOS FIRST
+    # Phase 0 — OOS FIRST (same forward horizon as invent)
     oos_idx = int(len(aligned_prices) * (1 - OOS_FRACTION))
     oos_prices = aligned_prices[oos_idx:]
     try:
@@ -806,13 +864,17 @@ def backtest_gp_indicator(
     oos_corr = phase0_corr(
         oos_signal_raw if len(oos_signal_raw) >= 20 else bar_signal,
         oos_prices,
+        horizon=h,
     )
-    oos_res = _simulate_gp(oos_prices, oos_signal_raw, stop_pct, target_pct)
+    oos_res = _simulate_gp(
+        oos_prices, oos_signal_raw, stop_pct, target_pct, horizon=h,
+    )
     oos_delta = oos_res["pnl"] - 0.0
     oos_approved = oos_corr >= OOS_CORR_MIN and oos_delta > OOS_DELTA_OK
     phases["phase0_oos"] = {
         "corr": oos_corr, "delta": round(oos_delta, 4),
         "corr_ok": oos_corr >= OOS_CORR_MIN, "delta_ok": oos_delta > OOS_DELTA_OK,
+        "horizon": h, "interval": iv,
     }
     if not oos_approved:
         reasons.append(
@@ -820,24 +882,31 @@ def backtest_gp_indicator(
         )
 
     # Phase 1 — historical vs flat baseline
-    full_res = _simulate_gp(aligned_prices, signal, stop_pct, target_pct)
+    full_res = _simulate_gp(
+        aligned_prices, signal, stop_pct, target_pct, horizon=h,
+    )
     delta = full_res["pnl"] - 0.0
     hist_ok = delta > HIST_DELTA_OK
-    phases["phase1_hist"] = {"delta": round(delta, 4), "ok": hist_ok}
+    phases["phase1_hist"] = {"delta": round(delta, 4), "ok": hist_ok, "horizon": h}
     if not hist_ok:
         reasons.append(f"HIST FAIL: delta={delta} (>-0.1)")
 
     # Phase 1.5 — crisis
-    crisis = _crisis_backtest_gp(aligned_prices, signal, stop_pct, target_pct)
+    crisis = _crisis_backtest_gp(
+        aligned_prices, signal, stop_pct, target_pct, horizon=h,
+    )
     phases["phase1_5_crisis"] = crisis
     if not crisis.get("approved", True) and delta < CRISIS_DELTA_OK:
         reasons.append(f"CRISIS FAIL: {crisis['reason']}")
 
-    # Phase 2 — permutation
-    p_val, real_corr, null_mean = _permutation_pvalue(bar_signal, aligned_prices)
+    # Phase 2 — permutation (same horizon as invent)
+    p_val, real_corr, null_mean = _permutation_pvalue(
+        bar_signal, aligned_prices, horizon=h,
+    )
     perm_ok = p_val < 0.05
     phases["phase2_perm"] = {
         "p": p_val, "real_corr": real_corr, "null_mean": null_mean, "ok": perm_ok,
+        "horizon": h,
     }
     if not perm_ok:
         reasons.append(f"PERM FAIL: p={p_val} (>= 0.05)")
@@ -879,14 +948,15 @@ def backtest_gp_indicator(
 
     verdict = {
         "approved": approved,
-        "param": "gp_expr", "old": "", "new": expr_key,
+        "param": kb_param, "old": "", "new": expr_key,
         "expr": expr_key,
         "pnl": full_res["pnl"], "wr": full_res["wr"],
         "entries": full_res["entries"], "alpha": alpha, "regime": regime,
         "oos_corr": oos_corr, "oos_delta": round(oos_delta, 4),
         "p_value": p_val, "reason": " | ".join(reasons),
         "phases": phases, "kb_hit": False,
+        "horizon": h, "interval": iv,
     }
-    _kb_record(pair, "gp_expr", "", expr_key, approved, verdict["reason"])
+    _kb_record(pair, kb_param, "", expr_key, approved, verdict["reason"])
     return verdict
 

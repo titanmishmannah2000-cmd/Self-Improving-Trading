@@ -1135,6 +1135,7 @@ def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
             from hermes_core.engines.backtest import backtest_gp_indicator
             bt = backtest_gp_indicator(
                 pair, es, prices=prices, existing_signals=existing_signals,
+                horizon=horizon, interval=interval,
             )
             if not bt.get("approved"):
                 continue
