@@ -307,4 +307,34 @@ describe("Phase 17 dashboard frontend", () => {
     const badge = await screen.findByTestId("expert-weight-badge");
     expect(badge).toHaveTextContent(/W25%/i);
   });
+
+  it("test_regime_mult_badge", async () => {
+    const overview = mockOverview();
+    overview.bots.forex.recent_open_trades = [
+      {
+        id: "forex:EUR/USD:3",
+        pair: "EUR/USD",
+        entry_type: "mean_reversion",
+        entry_price: 1.1,
+        size: 0.16,
+        regime_mode: "soft",
+        regime_mult: 0.4,
+        regime_label: "trend_down",
+        fast_regime: "down",
+        entry_regime: "trend",
+        entry_ts: "2026-01-01T00:00:00Z",
+        held_cycles: 1,
+        unrealised_pct: 0.0,
+      },
+    ];
+    overview.bots.forex.open_count = 1;
+    overview.totals.open_trades = 1;
+    installFetchMock(overview);
+
+    render(<App />);
+    await screen.findAllByTestId("pair-card");
+    fireEvent.click(screen.getByRole("button", { name: "Watcher" }));
+    const badge = await screen.findByTestId("regime-mult-badge");
+    expect(badge).toHaveTextContent(/R40%/i);
+  });
 });

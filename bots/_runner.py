@@ -203,6 +203,12 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
             "expert_mode": pos.get("expert_mode"),
             "suppressed_soft": pos.get("suppressed_soft"),
             "expert_reasons": pos.get("expert_reasons") or [],
+            # HIF Phase-3 regime sizing
+            "regime_mult": pos.get("regime_mult"),
+            "regime_label": pos.get("regime_label"),
+            "regime_mode": pos.get("regime_mode"),
+            "fast_regime": pos.get("fast_regime"),
+            "entry_regime": pos.get("entry_regime"),
         }
         for pair, pos in open_positions.items()
     ]

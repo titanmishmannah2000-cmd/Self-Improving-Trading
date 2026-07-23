@@ -248,6 +248,20 @@ export default function CortexView({ apiBase, isActive = true }) {
           )}
         </div>
 
+        <div className="report-card" style={{ marginBottom: 16 }} data-testid="cortex-regime-sizing">
+          <div className="report-card-header">Regime sizing (Phase 3)</div>
+          <Help>
+            When <code>REGIME_SIZING=1</code>, open size is scaled by market mood from
+            indicators: uptrend ≈ 100%, range ≈ 85%, downtrend ≈ 40% (soft ADX blend).
+            Watch Live badges like <strong>R40%</strong> on open trades. Never blocks
+            entries — rollback with <code>REGIME_SIZING=0</code>.
+          </Help>
+          <p className="detail-muted">
+            Per-open details (mult + label) appear on Live pair cards and the detail
+            panel after the next bot ingest.
+          </p>
+        </div>
+
         {hasPolicyBlock && (
           <div className="report-card cortex-policy" style={{ marginBottom: 16 }}>
             <div className="report-card-header">Active policy decisions</div>

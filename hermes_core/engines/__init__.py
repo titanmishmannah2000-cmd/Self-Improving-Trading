@@ -54,6 +54,11 @@ from hermes_core.engines.loop import (
     run_cycle,
     write_heartbeat,
 )
+from hermes_core.engines.regime_sizing import (
+    apply_regime_sizing,
+    regime_size_mult,
+    regime_sizing_enabled,
+)
 from hermes_core.engines.policy_engine import Policy, PolicyEngine, soft_weights_enabled
 from hermes_core.engines.expert_weights import (
     EXPERT_TYPES,
@@ -112,6 +117,7 @@ __all__ = [
     "Cortex", "Policy", "PolicyEngine", "soft_weights_enabled",
     "EXPERT_TYPES", "SOFT_SUPPRESS_MULT", "apply_expert_weight",
     "expert_weight", "pair_expert_weights",
+    "apply_regime_sizing", "regime_size_mult", "regime_sizing_enabled",
     "run_cycle", "write_heartbeat", "maybe_circuit_break",
     "MAX_CONSECUTIVE_FAILURES", "CIRCUIT_SLEEP_S",
 ]

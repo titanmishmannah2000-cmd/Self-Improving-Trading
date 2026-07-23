@@ -40,6 +40,7 @@ from hermes_core.engines.exit import evaluate_exit
 from hermes_core.engines.genetic import discover as gp_discover
 from hermes_core.engines.policy_engine import PolicyEngine, soft_weights_enabled
 from hermes_core.engines.expert_weights import apply_expert_weight, expert_weight
+from hermes_core.engines.regime_sizing import apply_regime_sizing, regime_sizing_enabled
 from hermes_core.engines.risk import (
     MAX_POSITION_SIZE,
     apply_probe_sizing,
@@ -738,6 +739,20 @@ def run_cycle(
             )
             _weighted = apply_expert_weight(size, _winfo)
             size = float(_weighted["size"])
+            # HIF Phase-3 soft regime size mult (never skips).
+            _reg_on = False
+            try:
+                _reg_on = regime_sizing_enabled()
+            except Exception:  # noqa: BLE001
+                _reg_on = False
+            _regime = apply_regime_sizing(
+                size,
+                enabled=_reg_on,
+                regime=ind.get("regime") or regimes.get(pair),
+                fast_regime=ind.get("fast_regime"),
+                adx=ind.get("adx"),
+            )
+            size = float(_regime["size"])
             stop = _atr_stop_for(strategy, price, atr)
             open_positions[pair] = {
                 "id": f"{bot}:{pair}:{int(time.time())}",
@@ -764,6 +779,12 @@ def run_cycle(
                 "expert_mode": _weighted.get("expert_mode"),
                 "suppressed_soft": _weighted.get("suppressed_soft"),
                 "expert_reasons": _weighted.get("expert_reasons") or [],
+                # HIF Phase-3 dashboard fields
+                "regime_mult": _regime.get("regime_mult"),
+                "regime_label": _regime.get("regime_label"),
+                "regime_mode": _regime.get("regime_mode"),
+                "fast_regime": _regime.get("fast_regime"),
+                "entry_regime": _regime.get("regime") or regimes.get(pair),
             }
             # [CORTEX] record the entry (per-type memory; exile persists across cycles)
             with contextlib.suppress(Exception):

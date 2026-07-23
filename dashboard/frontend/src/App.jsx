@@ -160,6 +160,11 @@ const GLOSSARY = {
     plain: "When Soft Weights is ON (SOFT_WEIGHTS=1), a weak entry style (e.g. GP when Mean Reversion is clearly better) still opens but at a smaller size instead of being blocked. Thin evidence keeps a small explore size so the bot keeps learning.",
     analogy: "Turning the volume down on a noisy channel instead of muting it forever.",
   },
+  regime_mult: {
+    term: "Regime size multiplier",
+    plain: "When Regime Sizing is ON (REGIME_SIZING=1), position size is scaled by market mood: full in an uptrend, smaller in a downtrend, moderate in a range. Never blocks a trade — only changes how much risk is taken.",
+    analogy: "Driving slower in fog — you still go, just not at highway speed.",
+  },
   sharpe: {
     term: "Sharpe Ratio",
     plain: "Risk-adjusted return. Above 1.0 is solid, above 2.0 is excellent. A strategy with less profit but far less risk can beat one with more profit and wild swings.",
@@ -575,6 +580,15 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
                 W{(Number(openTrade.expert_weight) * 100).toFixed(0)}%
               </span>
             )}
+            {openTrade?.regime_mode === "soft" && openTrade?.regime_mult != null && Number(openTrade.regime_mult) < 0.999 && (
+              <span
+                className="pc-strategy pc-strategy-regime"
+                data-testid="regime-mult-badge"
+                title={`Regime size ${(Number(openTrade.regime_mult) * 100).toFixed(0)}% (${openTrade.regime_label || openTrade.entry_regime || "regime"})`}
+              >
+                R{(Number(openTrade.regime_mult) * 100).toFixed(0)}%
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -980,6 +994,18 @@ function DetailPanel({ pair, botData, strategyParams, lastSkip }) {
                   {Array.isArray(openTrade.expert_reasons) && openTrade.expert_reasons.length
                     ? ` · ${openTrade.expert_reasons.join(", ")}`
                     : ""}
+                </span>
+              </div>
+            )}
+            {!isWatcher && openTrade.regime_mode === "soft" && (
+              <div className="dp-row" data-testid="detail-regime-mult">
+                <span><GlossaryTerm id="regime_mult">Regime size</GlossaryTerm></span>
+                <span className={`mono ${Number(openTrade.regime_mult) < 0.999 ? "dp-regime" : "dp-full"}`}>
+                  {openTrade.regime_mult != null
+                    ? `${(Number(openTrade.regime_mult) * 100).toFixed(0)}%`
+                    : "—"}
+                  {openTrade.regime_label ? ` · ${openTrade.regime_label}` : ""}
+                  {openTrade.fast_regime ? ` · fast ${openTrade.fast_regime}` : ""}
                 </span>
               </div>
             )}
