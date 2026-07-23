@@ -64,6 +64,8 @@ from hermes_core.engines.entry_ranking import (
     rank_candidates,
     score_candidate,
 )
+from hermes_core.engines.exit_intel import apply_exit_intel, exit_intel_enabled
+from hermes_core.engines.book_risk import apply_book_risk, book_risk_enabled
 from hermes_core.engines.regime_sizing import (
     apply_regime_sizing,
     regime_size_mult,
@@ -80,8 +82,11 @@ from hermes_core.engines.expert_weights import (
 from hermes_core.engines.skip_shadow_learn import (
     analyze_skip_shadow,
     format_skip_shadow_context,
+    maybe_promote_skip_shadow,
     maybe_skip_shadow_learn,
+    promote_skip_shadow_proposal,
     propose_skip_shadow_notes,
+    skip_shadow_promote_enabled,
     skip_shadow_reflect_enabled,
 )
 from hermes_core.engines.reflect import (
@@ -137,7 +142,11 @@ __all__ = [
     "apply_regime_sizing", "regime_size_mult", "regime_sizing_enabled",
     "apply_kelly_sizing", "kelly_size_mult", "kelly_sizing_enabled",
     "entry_ranking_enabled", "score_candidate", "rank_candidates",
+    "apply_exit_intel", "exit_intel_enabled",
+    "apply_book_risk", "book_risk_enabled",
     "skip_shadow_reflect_enabled", "maybe_skip_shadow_learn",
+    "skip_shadow_promote_enabled", "maybe_promote_skip_shadow",
+    "promote_skip_shadow_proposal",
     "analyze_skip_shadow", "format_skip_shadow_context", "propose_skip_shadow_notes",
     "run_cycle", "write_heartbeat", "maybe_circuit_break",
     "MAX_CONSECUTIVE_FAILURES", "CIRCUIT_SLEEP_S",

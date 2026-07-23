@@ -178,6 +178,42 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
             pos["breakeven_set"] = True
         pos["current_stop"] = ex.new_stop
         return
+    # HIF EXIT_INTEL: true half-partial — close fraction, keep remainder at BE.
+    if (
+        ex.reason == "partial_close"
+        and pos.get("honor_current_stop")
+        and ex.partial_close_fraction
+        and not pos.get("partial_done")
+    ):
+        try:
+            frac = max(0.05, min(0.95, float(ex.partial_close_fraction)))
+        except (TypeError, ValueError):
+            frac = 0.5
+        full_size = float(pos.get("size") or 0.0)
+        closed_size = full_size * frac
+        remain = full_size - closed_size
+        entry_type = pos.get("entry_type", "mean_reversion")
+        pnl = pos["unrealised_pct"]
+        _log_trade(bot, {
+            "id": (pos.get("id") or f"{bot}:{pair}:{int(time.time())}") + ":partial",
+            "bot": bot, "pair": pair, "cycle": cycle,
+            "reason": ex.reason, "exit_reason": ex.reason,
+            "entry_type": entry_type,
+            "strategy_version": pos.get("strategy_version") or entry_type,
+            "entry_price": pos["entry_price"], "exit_price": price,
+            "entry_ts": pos.get("entry_ts"), "exit_ts": _now_iso(),
+            "pnl_pct": pnl, "size": closed_size,
+            "hold_cycles": pos.get("held_cycles", 0),
+            "partial": True,
+        })
+        with contextlib.suppress(Exception):
+            cortex.record_outcome(pair, entry_type, pnl)
+        pos["size"] = remain
+        pos["partial_done"] = True
+        pos["breakeven_set"] = True
+        if ex.new_stop is not None:
+            pos["current_stop"] = ex.new_stop
+        return
     # --- REAL close: log the trade with the keys the dashboard reads.
     entry_type = pos.get("entry_type", "mean_reversion")
     pnl = pos["unrealised_pct"]
@@ -865,6 +901,36 @@ def run_cycle(
                 rr_b=_rr_b,
             )
             size = float(_kelly["size"])
+            # HIF book-level risk (after Kelly, before hard cap).
+            from hermes_core.engines.book_risk import apply_book_risk, book_risk_enabled
+            _book_on = False
+            try:
+                _book_on = book_risk_enabled()
+            except Exception:  # noqa: BLE001
+                _book_on = False
+            _book = apply_book_risk(
+                size,
+                enabled=_book_on,
+                open_positions=open_positions,
+                pair=pair,
+                entry_type=_etype,
+                cortex=cortex,
+            )
+            size = float(_book["size"])
+            # HIF exit intelligence — stamp knobs only (no size / fill change).
+            from hermes_core.engines.exit_intel import apply_exit_intel, exit_intel_enabled
+            _xi_on = False
+            try:
+                _xi_on = exit_intel_enabled()
+            except Exception:  # noqa: BLE001
+                _xi_on = False
+            _xi = apply_exit_intel(
+                enabled=_xi_on,
+                pair=pair,
+                entry_type=_etype,
+                strategy=strategy,
+                cortex=cortex,
+            )
             stop = _atr_stop_for(strategy, price, atr)
             open_positions[pair] = {
                 "id": f"{bot}:{pair}:{int(time.time())}",
@@ -873,7 +939,7 @@ def run_cycle(
                 "stop_loss_pct": sl, "profit_target_pct": tp,
                 "time_exit_cycles": int(strategy.get("time_exit_cycles", 288)),
                 "held_cycles": 0, "breakeven_set": False, "partial_done": False,
-                "partial_enabled": bool(strategy.get("partial_enabled", False)),
+                "partial_enabled": bool(_xi.get("partial_enabled")),
                 "current_stop": stop, "atr": atr,
                 "entry_type": _etype,
                 "strategy_version": str(strategy.get("version", "00")),
@@ -910,6 +976,21 @@ def run_cycle(
                 "rank_score": _rank_meta.get("rank_score"),
                 "rank_reason": _rank_meta.get("rank_reason"),
                 "rank_candidates": _rank_meta.get("rank_candidates") or [],
+                # HIF book risk
+                "book_mode": _book.get("book_mode"),
+                "book_mult": _book.get("book_mult"),
+                "book_tilt": _book.get("book_tilt"),
+                "book_used": _book.get("book_used"),
+                "book_cap": _book.get("book_cap"),
+                "book_remaining": _book.get("book_remaining"),
+                "book_reasons": _book.get("book_reasons") or [],
+                # HIF exit intelligence
+                "exit_intel_mode": _xi.get("exit_intel_mode"),
+                "honor_current_stop": bool(_xi.get("honor_current_stop")),
+                "be_trigger_frac": _xi.get("be_trigger_frac"),
+                "trailing_atr_mult": _xi.get("trailing_atr_mult"),
+                "exit_intel_n": _xi.get("exit_intel_n"),
+                "exit_intel_reasons": _xi.get("exit_intel_reasons") or [],
             }
             # [CORTEX] record the entry (per-type memory; exile persists across cycles)
             with contextlib.suppress(Exception):
@@ -933,7 +1014,10 @@ def run_cycle(
 
     # HIF Phase-4: skip + GP-shadow observational learning (shadow notes only).
     try:
-        from hermes_core.engines.skip_shadow_learn import maybe_skip_shadow_learn
+        from hermes_core.engines.skip_shadow_learn import (
+            maybe_promote_skip_shadow,
+            maybe_skip_shadow_learn,
+        )
         _strats: dict = {}
         for p in pairs:
             with contextlib.suppress(Exception):
@@ -941,8 +1025,13 @@ def run_cycle(
         summary["skip_shadow"] = maybe_skip_shadow_learn(
             bot, list(pairs), strategies=_strats,
         )
+        # HIF: gated promote of deployable skip_shadow_proposed (never blind).
+        summary["skip_shadow_promote"] = maybe_promote_skip_shadow(
+            bot, strategies=_strats,
+        )
     except Exception:  # noqa: BLE001
         summary["skip_shadow"] = {"enabled": False}
+        summary["skip_shadow_promote"] = {"enabled": False}
 
     # --- heartbeat every cycle without exception --------------------------
     status = "ok" if consecutive_failures == 0 else "degraded"

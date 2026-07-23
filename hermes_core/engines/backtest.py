@@ -517,10 +517,25 @@ def backtest_with_history(
         strategy = load_strategy_for_pair(pair, bot)
     strat_type = strategy.get("strategy_type", "mean_reversion")
     threshold = _entry_rsi_threshold(strategy)
-    target_pct = float(strategy.get("profit_target_pct", 3.0))
-    old_stop = float(old_val) if param == "stop_loss_pct" else float(
-        strategy.get("stop_loss_pct", 1.5))
-    new_stop = float(new_val) if param == "stop_loss_pct" else old_stop
+    # Resolve old/new stop and target so any single validated param actually
+    # differs in simulation (stop_loss_pct OR profit_target_pct).
+    base_stop = float(strategy.get("stop_loss_pct", 1.5))
+    base_target = float(strategy.get("profit_target_pct", 3.0))
+    if param == "stop_loss_pct":
+        old_stop = float(old_val)
+        new_stop = float(new_val)
+        old_target = base_target
+        new_target = base_target
+    elif param == "profit_target_pct":
+        old_stop = base_stop
+        new_stop = base_stop
+        old_target = float(old_val)
+        new_target = float(new_val)
+    else:
+        old_stop = base_stop
+        new_stop = base_stop
+        old_target = base_target
+        new_target = base_target
 
     if prices is None:
         prices = fetch_prices(pair)
@@ -561,10 +576,10 @@ def backtest_with_history(
         ensemble_consensus=oos_ens,
     )
     oos_old = _simulate(
-        oos_prices, strat_type, threshold, old_stop, target_pct, **oos_kw,
+        oos_prices, strat_type, threshold, old_stop, old_target, **oos_kw,
     )
     oos_new = _simulate(
-        oos_prices, strat_type, threshold, new_stop, target_pct, **oos_kw,
+        oos_prices, strat_type, threshold, new_stop, new_target, **oos_kw,
     )
     oos_delta = oos_new["pnl"] - oos_old["pnl"]
     oos_approved = oos_corr >= OOS_CORR_MIN and oos_delta > OOS_DELTA_OK
@@ -576,8 +591,8 @@ def backtest_with_history(
         reasons.append(f"OOS FAIL: corr={oos_corr} (>= {OOS_CORR_MIN}) delta={oos_delta} (>-0.2)")
 
     # Phase 1 — historical delta (full window, old vs new)
-    old_res = _simulate(prices, strat_type, threshold, old_stop, target_pct, **sim_kw)
-    new_res = _simulate(prices, strat_type, threshold, new_stop, target_pct, **sim_kw)
+    old_res = _simulate(prices, strat_type, threshold, old_stop, old_target, **sim_kw)
+    new_res = _simulate(prices, strat_type, threshold, new_stop, new_target, **sim_kw)
     delta = new_res["pnl"] - old_res["pnl"]
     hist_ok = delta > HIST_DELTA_OK
     phases["phase1_hist"] = {"delta": round(delta, 4), "ok": hist_ok}
@@ -586,7 +601,7 @@ def backtest_with_history(
 
     # Phase 1.5 — crisis stress
     crisis = _crisis_backtest(
-        prices, strat_type, threshold, new_stop, target_pct, **sim_kw,
+        prices, strat_type, threshold, new_stop, new_target, **sim_kw,
     )
     phases["phase1_5_crisis"] = crisis
     if not crisis.get("approved", True) and delta < CRISIS_DELTA_OK:

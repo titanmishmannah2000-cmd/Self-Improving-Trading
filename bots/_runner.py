@@ -222,6 +222,22 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
             "rank_score": pos.get("rank_score"),
             "rank_reason": pos.get("rank_reason"),
             "rank_candidates": pos.get("rank_candidates") or [],
+            # HIF book risk
+            "book_mode": pos.get("book_mode"),
+            "book_mult": pos.get("book_mult"),
+            "book_tilt": pos.get("book_tilt"),
+            "book_used": pos.get("book_used"),
+            "book_cap": pos.get("book_cap"),
+            "book_remaining": pos.get("book_remaining"),
+            "book_reasons": pos.get("book_reasons") or [],
+            # HIF exit intelligence
+            "exit_intel_mode": pos.get("exit_intel_mode"),
+            "honor_current_stop": pos.get("honor_current_stop"),
+            "be_trigger_frac": pos.get("be_trigger_frac"),
+            "trailing_atr_mult": pos.get("trailing_atr_mult"),
+            "exit_intel_n": pos.get("exit_intel_n"),
+            "exit_intel_reasons": pos.get("exit_intel_reasons") or [],
+            "partial_enabled": pos.get("partial_enabled"),
         }
         for pair, pos in open_positions.items()
     ]

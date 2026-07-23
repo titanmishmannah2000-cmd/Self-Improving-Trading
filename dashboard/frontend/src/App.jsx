@@ -175,6 +175,16 @@ const GLOSSARY = {
     plain: "When Entry Ranking is ON (ENTRY_RANKING=1) and more than one style could fire (e.g. Mean Reversion and GP Brain), Hermes scores each by expected edge and opens the better one. Ranking never blocks — if only one candidate exists, it still opens.",
     analogy: "Two doors are unlocked — you still walk through one, just prefer the one with the better map.",
   },
+  exit_intel: {
+    term: "Exit intelligence",
+    plain: "When Exit Intel is ON (EXIT_INTEL=1), trail / breakeven / partial knobs are tuned from cortex history for that pair. Same entry fills — better harvested PnL. Thin history → stock exits.",
+    analogy: "Same entry ticket, smarter seat for when to take profit or tighten the stop.",
+  },
+  book_mult: {
+    term: "Book risk",
+    plain: "When Book Risk is ON (BOOK_RISK=1), total open size is soft-capped and new size tilts toward pairs with better cortex edge. Never blocks a trade — only shrinks or reallocates risk.",
+    analogy: "Don't put the whole bankroll on every table at once — lean toward the better-looking seats.",
+  },
   sharpe: {
     term: "Sharpe Ratio",
     plain: "Risk-adjusted return. Above 1.0 is solid, above 2.0 is excellent. A strategy with less profit but far less risk can beat one with more profit and wild swings.",
@@ -615,6 +625,24 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
                 title={openTrade.rank_reason || `Ranked entry score ${Number(openTrade.rank_score).toFixed(2)}`}
               >
                 Rank {Number(openTrade.rank_score).toFixed(2)}
+              </span>
+            )}
+            {openTrade?.book_mode === "soft" && openTrade?.book_mult != null && Number(openTrade.book_mult) < 0.999 && (
+              <span
+                className="pc-strategy pc-strategy-book"
+                data-testid="book-mult-badge"
+                title={`Book size ${(Number(openTrade.book_mult) * 100).toFixed(0)}% (used ${openTrade.book_used ?? "—"} / cap ${openTrade.book_cap ?? "—"})`}
+              >
+                B{(Number(openTrade.book_mult) * 100).toFixed(0)}%
+              </span>
+            )}
+            {openTrade?.exit_intel_mode === "soft" && (
+              <span
+                className="pc-strategy pc-strategy-exit"
+                data-testid="exit-intel-badge"
+                title={`Exit intel: BE@${openTrade.be_trigger_frac ?? 0.5} TP · trail ${openTrade.trailing_atr_mult ?? "off"} · partial ${openTrade.partial_enabled ? "on" : "off"}`}
+              >
+                Exit
               </span>
             )}
           </div>
@@ -1061,6 +1089,35 @@ function DetailPanel({ pair, botData, strategyParams, lastSkip }) {
                   {openTrade.rank_reason ? ` · ${openTrade.rank_reason}` : ""}
                   {Array.isArray(openTrade.rank_candidates) && openTrade.rank_candidates.length > 1
                     ? ` · ${openTrade.rank_candidates.length} candidates`
+                    : ""}
+                </span>
+              </div>
+            )}
+            {!isWatcher && openTrade.book_mode === "soft" && (
+              <div className="dp-row" data-testid="detail-book-mult">
+                <span><GlossaryTerm id="book_mult">Book risk</GlossaryTerm></span>
+                <span className={`mono ${Number(openTrade.book_mult) < 0.999 ? "dp-book" : "dp-full"}`}>
+                  {openTrade.book_mult != null
+                    ? `${(Number(openTrade.book_mult) * 100).toFixed(0)}%`
+                    : "—"}
+                  {openTrade.book_used != null
+                    ? ` · used ${openTrade.book_used}/${openTrade.book_cap ?? "—"}`
+                    : ""}
+                  {openTrade.book_tilt != null ? ` · tilt ${openTrade.book_tilt}` : ""}
+                </span>
+              </div>
+            )}
+            {!isWatcher && openTrade.exit_intel_mode === "soft" && (
+              <div className="dp-row" data-testid="detail-exit-intel">
+                <span><GlossaryTerm id="exit_intel">Exit intel</GlossaryTerm></span>
+                <span className="mono dp-exit">
+                  BE@{openTrade.be_trigger_frac ?? 0.5}
+                  {openTrade.trailing_atr_mult != null
+                    ? ` · trail×${openTrade.trailing_atr_mult}`
+                    : " · trail off"}
+                  {openTrade.partial_enabled ? " · partial" : ""}
+                  {Array.isArray(openTrade.exit_intel_reasons) && openTrade.exit_intel_reasons.length
+                    ? ` · ${openTrade.exit_intel_reasons.join(", ")}`
                     : ""}
                 </span>
               </div>

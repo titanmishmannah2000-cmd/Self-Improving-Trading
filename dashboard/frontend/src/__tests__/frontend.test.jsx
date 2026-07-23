@@ -400,4 +400,62 @@ describe("Phase 17 dashboard frontend", () => {
     const badge = await screen.findByTestId("rank-score-badge");
     expect(badge).toHaveTextContent(/Rank 0\.72/i);
   });
+
+  it("test_book_mult_badge", async () => {
+    const overview = mockOverview();
+    overview.bots.forex.recent_open_trades = [
+      {
+        id: "forex:EUR/USD:6",
+        pair: "EUR/USD",
+        entry_type: "mean_reversion",
+        entry_price: 1.1,
+        size: 0.15,
+        book_mode: "soft",
+        book_mult: 0.5,
+        book_used: 0.5,
+        book_cap: 1.0,
+        entry_ts: "2026-01-01T00:00:00Z",
+        held_cycles: 1,
+        unrealised_pct: 0.0,
+      },
+    ];
+    overview.bots.forex.open_count = 1;
+    overview.totals.open_trades = 1;
+    installFetchMock(overview);
+
+    render(<App />);
+    await screen.findAllByTestId("pair-card");
+    fireEvent.click(screen.getByRole("button", { name: "Watcher" }));
+    const badge = await screen.findByTestId("book-mult-badge");
+    expect(badge).toHaveTextContent(/B50%/i);
+  });
+
+  it("test_exit_intel_badge", async () => {
+    const overview = mockOverview();
+    overview.bots.forex.recent_open_trades = [
+      {
+        id: "forex:EUR/USD:7",
+        pair: "EUR/USD",
+        entry_type: "mean_reversion",
+        entry_price: 1.1,
+        size: 0.2,
+        exit_intel_mode: "soft",
+        be_trigger_frac: 0.65,
+        trailing_atr_mult: 1.8,
+        partial_enabled: true,
+        entry_ts: "2026-01-01T00:00:00Z",
+        held_cycles: 1,
+        unrealised_pct: 0.0,
+      },
+    ];
+    overview.bots.forex.open_count = 1;
+    overview.totals.open_trades = 1;
+    installFetchMock(overview);
+
+    render(<App />);
+    await screen.findAllByTestId("pair-card");
+    fireEvent.click(screen.getByRole("button", { name: "Watcher" }));
+    const badge = await screen.findByTestId("exit-intel-badge");
+    expect(badge).toHaveTextContent(/Exit/i);
+  });
 });

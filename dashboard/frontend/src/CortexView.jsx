@@ -298,6 +298,36 @@ export default function CortexView({ apiBase, isActive = true }) {
           </Help>
         </div>
 
+        <div className="report-card" style={{ marginBottom: 16 }} data-testid="cortex-exit-intel">
+          <div className="report-card-header">Exit intelligence</div>
+          <Help>
+            When <code>EXIT_INTEL=1</code>, trail / breakeven / partial knobs are
+            stamped from cortex per pair (same entry fills). Live badge{" "}
+            <strong>Exit</strong>. Thin history → stock exits. Rollback:{" "}
+            <code>EXIT_INTEL=0</code>.
+          </Help>
+        </div>
+
+        <div className="report-card" style={{ marginBottom: 16 }} data-testid="cortex-skip-promote">
+          <div className="report-card-header">Skip-shadow promote (gated)</div>
+          <Help>
+            When <code>SKIP_SHADOW_PROMOTE=1</code>, deployable skip proposals
+            (e.g. RR TP fix) are auto-backtested. Never blind — must pass the
+            gate; <code>REFLECT_AUTO_DEPLOY</code> controls YAML write. Phase 4
+            logging stays separate (<code>SKIP_SHADOW_REFLECT</code>). Rollback:{" "}
+            <code>SKIP_SHADOW_PROMOTE=0</code>.
+          </Help>
+        </div>
+
+        <div className="report-card" style={{ marginBottom: 16 }} data-testid="cortex-book-risk">
+          <div className="report-card-header">Book risk</div>
+          <Help>
+            When <code>BOOK_RISK=1</code>, total open size is soft-capped and new
+            size tilts toward better posterior edge. Live badge{" "}
+            <strong>Bxx%</strong>. Never blocks. Rollback: <code>BOOK_RISK=0</code>.
+          </Help>
+        </div>
+
         {hasPolicyBlock && (
           <div className="report-card cortex-policy" style={{ marginBottom: 16 }}>
             <div className="report-card-header">Active policy decisions</div>

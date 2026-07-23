@@ -76,26 +76,40 @@ def evaluate_exit(
     partial_done = trade.get("partial_done", False)
     breakeven_set = trade.get("breakeven_set", False)
 
-    # 1) hard stop-loss
+    # 1) Armed current_stop hit (EXIT_INTEL) — before %-SL so BE/trail protect
+    if trade.get("honor_current_stop") and trade.get("current_stop") is not None:
+        try:
+            if current_price <= float(trade["current_stop"]):
+                return Exit("stop_loss", current_price)
+        except (TypeError, ValueError):
+            pass
+
+    # 2) hard stop-loss
     if sl is not None and current_price <= entry * (1 - sl / 100.0):
         return Exit("stop_loss", current_price)
 
-    # 2) target / partial-close (both triggered at the FULL target)
+    # 3) target / partial-close (both triggered at the FULL target)
     if tp is not None and current_price >= entry * (1 + tp / 100.0):
         if partial_enabled and not partial_done:
             # [GUARD L27] 50% off at full target, remainder trailed at breakeven
             return Exit("partial_close", current_price, new_stop=entry, partial_close_fraction=0.5)
         return Exit("profit_target", current_price)
 
-    # 3) time-based exit
+    # 4) time-based exit
     if te is not None and held >= te:
         return Exit("time_exit", current_price)
 
-    # 4) [GUARD L26] breakeven — move stop to entry once past half target
-    if tp is not None and not breakeven_set and unreal >= tp * 0.5:
+    # 5) [GUARD L26] breakeven — move stop to entry past be_trigger_frac * TP
+    be_frac = 0.5
+    try:
+        if trade.get("be_trigger_frac") is not None:
+            be_frac = max(0.15, min(0.9, float(trade["be_trigger_frac"])))
+    except (TypeError, ValueError):
+        be_frac = 0.5
+    if tp is not None and not breakeven_set and unreal >= tp * be_frac:
         return Exit("breakeven", current_price, new_stop=entry)
 
-    # 5) ATR-based trailing stop (raises the stop only)
+    # 6) ATR-based trailing stop (raises the stop only)
     mult = trade.get("trailing_atr_mult")
     if mult is not None and unreal > 0 and prices:
         atr = compute_atr(prices)

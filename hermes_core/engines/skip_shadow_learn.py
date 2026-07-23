@@ -33,6 +33,11 @@ def skip_shadow_reflect_enabled() -> bool:
     return get_env("SKIP_SHADOW_REFLECT", "0") == "1"
 
 
+def skip_shadow_promote_enabled() -> bool:
+    return get_env("SKIP_SHADOW_PROMOTE", "0") == "1"
+
+
+PROMOTE_LATCH_NAME = ".skip_shadow_promote_latches.json"
 def _read_jsonl(path: Path, limit: int) -> list[dict]:
     if not path.exists() or limit <= 0:
         return []
@@ -295,4 +300,219 @@ def maybe_skip_shadow_learn(
             continue
 
     _save_latches(bot, latches)
+    return summary
+
+
+def _promote_latch_path(bot: str) -> Path:
+    return bot_state_dir(bot) / PROMOTE_LATCH_NAME
+
+
+def _load_promote_latches(bot: str) -> dict:
+    path = _promote_latch_path(bot)
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_promote_latches(bot: str, data: dict) -> None:
+    path = _promote_latch_path(bot)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _proposal_key(rec: dict) -> str:
+    return (
+        f"{rec.get('pair')}|{rec.get('variable')}|{rec.get('old')}|"
+        f"{rec.get('new')}|{rec.get('ts')}"
+    )
+
+
+def _load_recent_proposed(bot: str, *, limit: int = 80) -> list[dict]:
+    path = bot_state_dir(bot) / "hypotheses.jsonl"
+    rows = _read_jsonl(path, limit)
+    out = []
+    for r in rows:
+        if r.get("status") != "skip_shadow_proposed":
+            continue
+        if r.get("variable") in (None, "observation"):
+            continue
+        if r.get("old") is None or r.get("new") is None:
+            continue
+        out.append(r)
+    return out
+
+
+def promote_skip_shadow_proposal(
+    rec: dict,
+    *,
+    bot: str | None = None,
+    strategy: dict | None = None,
+    prices: list[float] | None = None,
+    auto_deploy: bool | None = None,
+    backtest_fn=None,
+) -> dict:
+    """Backtest one skip_shadow_proposed record; optionally deploy YAML.
+
+    Never blind: always runs backtest first. ``auto_deploy`` defaults to
+    REFLECT_AUTO_DEPLOY (same lever as trade reflection).
+    """
+    from hermes_core.engines.backtest import backtest_with_history
+    from hermes_core.engines.reflect import apply_strategy_change, _log_hypothesis
+    from hermes_core.config import load_strategy_for_pair
+
+    bot = bot or rec.get("bot") or current_bot()
+    pair = rec.get("pair")
+    variable = rec.get("variable")
+    old_val = rec.get("old")
+    new_val = rec.get("new")
+    if not pair or not variable or old_val is None or new_val is None:
+        return {"status": "skip", "reason": "incomplete_proposal", "deployed": False}
+
+    if auto_deploy is None:
+        auto_deploy = get_env("REFLECT_AUTO_DEPLOY", "1") != "0"
+
+    if strategy is None:
+        try:
+            strategy = load_strategy_for_pair(pair, bot)
+        except Exception:  # noqa: BLE001
+            strategy = {}
+
+    bt = backtest_fn or backtest_with_history
+    try:
+        verdict = bt(
+            pair, variable, old_val, new_val,
+            strategy=strategy, prices=prices, bot=bot,
+        )
+    except Exception as exc:  # noqa: BLE001 — fail closed (no deploy)
+        _log_hypothesis({
+            "pair": pair, "bot": bot, "variable": variable,
+            "old": old_val, "new": new_val,
+            "status": "backtest_rejected",
+            "source": "skip_shadow_promote",
+            "backtest": {"approved": False, "reason": f"error:{exc}"},
+            "ts": time.time(),
+            "deployable": False,
+        })
+        return {"status": "backtest_reject", "deployed": False, "error": str(exc)}
+
+    approved = bool(verdict.get("approved"))
+    _log_hypothesis({
+        "pair": pair, "bot": bot, "variable": variable,
+        "old": old_val, "new": new_val,
+        "status": "backtest_approved" if approved else "backtest_rejected",
+        "source": "skip_shadow_promote",
+        "backtest": {
+            "approved": approved,
+            "reason": verdict.get("reason"),
+            "version_bumped": (verdict.get("phases") or {}).get(
+                "phase6_deploy", {},
+            ).get("version_bumped"),
+        },
+        "ts": time.time(),
+        "deployable": False,
+    })
+    if not approved:
+        return {
+            "status": "backtest_reject",
+            "pair": pair,
+            "deployed": False,
+            "verdict": verdict,
+        }
+
+    bumped = (verdict.get("phases") or {}).get("phase6_deploy", {}).get(
+        "version_bumped",
+    )
+    if not auto_deploy:
+        _log_hypothesis({
+            "pair": pair, "bot": bot, "variable": variable,
+            "old": old_val, "new": new_val,
+            "status": "approved_pending_deploy",
+            "source": "skip_shadow_promote",
+            "version": bumped,
+            "ts": time.time(),
+            "deployable": True,
+        })
+        return {
+            "status": "approved_pending_deploy",
+            "pair": pair,
+            "deployed": False,
+            "verdict": verdict,
+            "version": bumped,
+        }
+
+    written = apply_strategy_change(
+        pair, variable, new_val,
+        bot=bot, version=bumped, strategy=strategy,
+    )
+    _log_hypothesis({
+        "pair": pair, "bot": bot, "variable": variable,
+        "old": old_val, "new": new_val,
+        "status": "deployed",
+        "source": "skip_shadow_promote",
+        "version": written.get("version"),
+        "ts": time.time(),
+        "deployable": True,
+    })
+    return {
+        "status": "deployed",
+        "pair": pair,
+        "deployed": True,
+        "verdict": verdict,
+        "version": written.get("version"),
+    }
+
+
+def maybe_promote_skip_shadow(
+    bot: str | None = None,
+    *,
+    strategies: dict | None = None,
+    max_per_cycle: int = 2,
+) -> dict:
+    """Scan recent skip_shadow_proposed; gate each once via backtest.
+
+    Flag off → no-op. Observational notes ignored. Fail-soft.
+    """
+    bot = bot or current_bot()
+    summary: dict = {
+        "enabled": skip_shadow_promote_enabled(),
+        "attempted": [],
+        "results": [],
+    }
+    if not skip_shadow_promote_enabled():
+        return summary
+
+    latches = _load_promote_latches(bot)
+    strategies = strategies or {}
+    tried = 0
+    for rec in reversed(_load_recent_proposed(bot)):
+        if tried >= max_per_cycle:
+            break
+        key = _proposal_key(rec)
+        if latches.get(key):
+            continue
+        pair = rec.get("pair")
+        try:
+            result = promote_skip_shadow_proposal(
+                rec,
+                bot=bot,
+                strategy=strategies.get(pair) if pair else None,
+            )
+            summary["attempted"].append({"pair": pair, "variable": rec.get("variable")})
+            summary["results"].append(result)
+            latches[key] = {
+                "status": result.get("status"),
+                "ts": time.time(),
+            }
+            tried += 1
+        except Exception:  # noqa: BLE001
+            latches[key] = {"status": "error", "ts": time.time()}
+            continue
+
+    _save_promote_latches(bot, latches)
     return summary
