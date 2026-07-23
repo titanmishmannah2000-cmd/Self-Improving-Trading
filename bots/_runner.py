@@ -217,6 +217,11 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
             "ci_low": pos.get("ci_low"),
             "ci_high": pos.get("ci_high"),
             "kelly_reasons": pos.get("kelly_reasons") or [],
+            # HIF Layer B entry ranking
+            "ranking_mode": pos.get("ranking_mode"),
+            "rank_score": pos.get("rank_score"),
+            "rank_reason": pos.get("rank_reason"),
+            "rank_candidates": pos.get("rank_candidates") or [],
         }
         for pair, pos in open_positions.items()
     ]

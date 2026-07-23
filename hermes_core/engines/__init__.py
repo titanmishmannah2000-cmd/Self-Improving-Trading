@@ -59,6 +59,11 @@ from hermes_core.engines.kelly_sizing import (
     kelly_size_mult,
     kelly_sizing_enabled,
 )
+from hermes_core.engines.entry_ranking import (
+    entry_ranking_enabled,
+    rank_candidates,
+    score_candidate,
+)
 from hermes_core.engines.regime_sizing import (
     apply_regime_sizing,
     regime_size_mult,
@@ -131,6 +136,7 @@ __all__ = [
     "expert_weight", "pair_expert_weights",
     "apply_regime_sizing", "regime_size_mult", "regime_sizing_enabled",
     "apply_kelly_sizing", "kelly_size_mult", "kelly_sizing_enabled",
+    "entry_ranking_enabled", "score_candidate", "rank_candidates",
     "skip_shadow_reflect_enabled", "maybe_skip_shadow_learn",
     "analyze_skip_shadow", "format_skip_shadow_context", "propose_skip_shadow_notes",
     "run_cycle", "write_heartbeat", "maybe_circuit_break",

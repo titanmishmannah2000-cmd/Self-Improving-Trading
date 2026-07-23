@@ -287,6 +287,17 @@ export default function CortexView({ apiBase, isActive = true }) {
           </Help>
         </div>
 
+        <div className="report-card" style={{ marginBottom: 16 }} data-testid="cortex-entry-ranking">
+          <div className="report-card-header">Entry ranking (Layer B)</div>
+          <Help>
+            When <code>ENTRY_RANKING=1</code>, if traditional and GP both could
+            fire, Hermes scores expected edge and opens the better candidate.
+            Live badge <strong>Rank x.xx</strong> and detail show why. Never
+            hard-blocks — one candidate still opens. Rollback:{" "}
+            <code>ENTRY_RANKING=0</code>.
+          </Help>
+        </div>
+
         {hasPolicyBlock && (
           <div className="report-card cortex-policy" style={{ marginBottom: 16 }}>
             <div className="report-card-header">Active policy decisions</div>

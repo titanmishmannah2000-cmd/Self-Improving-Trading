@@ -170,6 +170,11 @@ const GLOSSARY = {
     plain: "When Kelly Sizing is ON (KELLY_SIZING=1), size is scaled by a cautious quarter-Kelly fraction from the cortex win-rate (with uncertainty) and typical win/loss or TP/SL odds. No history → no change. Never blocks a trade.",
     analogy: "Betting more only when the scoreboard and the odds both look good — and still only a fraction of full Kelly.",
   },
+  rank_score: {
+    term: "Entry ranking (Layer B)",
+    plain: "When Entry Ranking is ON (ENTRY_RANKING=1) and more than one style could fire (e.g. Mean Reversion and GP Brain), Hermes scores each by expected edge and opens the better one. Ranking never blocks — if only one candidate exists, it still opens.",
+    analogy: "Two doors are unlocked — you still walk through one, just prefer the one with the better map.",
+  },
   sharpe: {
     term: "Sharpe Ratio",
     plain: "Risk-adjusted return. Above 1.0 is solid, above 2.0 is excellent. A strategy with less profit but far less risk can beat one with more profit and wild swings.",
@@ -603,6 +608,15 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
                 K{(Number(openTrade.kelly_mult) * 100).toFixed(0)}%
               </span>
             )}
+            {openTrade?.ranking_mode === "soft" && openTrade?.rank_score != null && (
+              <span
+                className="pc-strategy pc-strategy-rank"
+                data-testid="rank-score-badge"
+                title={openTrade.rank_reason || `Ranked entry score ${Number(openTrade.rank_score).toFixed(2)}`}
+              >
+                Rank {Number(openTrade.rank_score).toFixed(2)}
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -1033,6 +1047,20 @@ function DetailPanel({ pair, botData, strategyParams, lastSkip }) {
                   {openTrade.p_bayes != null ? ` · p̂ ${openTrade.p_bayes}` : ""}
                   {openTrade.ci_low != null
                     ? ` · CI ${openTrade.ci_low}–${openTrade.ci_high}`
+                    : ""}
+                </span>
+              </div>
+            )}
+            {!isWatcher && openTrade.ranking_mode === "soft" && (
+              <div className="dp-row" data-testid="detail-rank-score">
+                <span><GlossaryTerm id="rank_score">Entry rank</GlossaryTerm></span>
+                <span className="mono dp-rank">
+                  {openTrade.rank_score != null
+                    ? Number(openTrade.rank_score).toFixed(2)
+                    : "—"}
+                  {openTrade.rank_reason ? ` · ${openTrade.rank_reason}` : ""}
+                  {Array.isArray(openTrade.rank_candidates) && openTrade.rank_candidates.length > 1
+                    ? ` · ${openTrade.rank_candidates.length} candidates`
                     : ""}
                 </span>
               </div>

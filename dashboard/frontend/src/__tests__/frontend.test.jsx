@@ -368,4 +368,36 @@ describe("Phase 17 dashboard frontend", () => {
     const badge = await screen.findByTestId("kelly-mult-badge");
     expect(badge).toHaveTextContent(/K35%/i);
   });
+
+  it("test_rank_score_badge", async () => {
+    const overview = mockOverview();
+    overview.bots.forex.recent_open_trades = [
+      {
+        id: "forex:EUR/USD:5",
+        pair: "EUR/USD",
+        entry_type: "gp_ensemble",
+        entry_price: 1.1,
+        size: 0.2,
+        ranking_mode: "soft",
+        rank_score: 0.72,
+        rank_reason: "best_score=0.72 > mean_reversion=0.61",
+        rank_candidates: [
+          { entry_type: "gp_ensemble", score: 0.72 },
+          { entry_type: "mean_reversion", score: 0.61 },
+        ],
+        entry_ts: "2026-01-01T00:00:00Z",
+        held_cycles: 1,
+        unrealised_pct: 0.0,
+      },
+    ];
+    overview.bots.forex.open_count = 1;
+    overview.totals.open_trades = 1;
+    installFetchMock(overview);
+
+    render(<App />);
+    await screen.findAllByTestId("pair-card");
+    fireEvent.click(screen.getByRole("button", { name: "Watcher" }));
+    const badge = await screen.findByTestId("rank-score-badge");
+    expect(badge).toHaveTextContent(/Rank 0\.72/i);
+  });
 });

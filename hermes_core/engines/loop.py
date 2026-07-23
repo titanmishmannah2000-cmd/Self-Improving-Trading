@@ -652,36 +652,119 @@ def run_cycle(
         # --- entry evaluation ---------------------------------------------
         pos = open_positions.get(pair)
         if pos is None:
-            sig = evaluate_entry(
+            from hermes_core.engines.entry_ranking import (
+                entry_ranking_enabled,
+                rank_candidates,
+                score_candidate,
+            )
+            from hermes_core.engines.kelly_sizing import bayesian_p
+
+            _rank_on = False
+            try:
+                _rank_on = entry_ranking_enabled()
+            except Exception:  # noqa: BLE001
+                _rank_on = False
+
+            trad_sig = evaluate_entry(
                 pair, prices, strategy, context, ensemble,
                 oversold_pairs, vol_above, reentry, cycle, session_token,
             )
-            # GP-promotion: if traditional gives no signal AND GP_PROMOTE=1,
-            # let the GP brain issue a (paper) entry through the SAME guard/size
-            # path as traditional entries. Traditional entries always win; GP is
-            # a tie-breaking fallback so there is never a double open. Pairs in
-            # GP_EXCLUDE_PAIRS (default the two with negative paper expectancy)
-            # are never promoted -- measured, one-lever-at-a-time.
-            if sig is None and get_env("GP_PROMOTE") == "1":
-                _excl = {p.strip().upper() for p in
-                         get_env("GP_EXCLUDE_PAIRS", "GBP/JPY,BTC/USD").split(",") if p.strip()}
-                if pair not in _excl:
-                    try:
-                        from hermes_core.engines import gp_intelligence as gpi
-                        _sup, _reason = gpi.should_suppress(pair)
-                        if _sup:
-                            _log_skip(bot, pair, cycle, f"gp_intel_suppress:{_reason}")
-                            summary["skips"] += 1
-                            continue
-                        # Promote path: fresh daily-regime vote (exile-filtered).
-                        # Do not reuse the live-series shadow vote — discovery
-                        # was on daily bars.
-                        sig = _gp_vote(
+            gp_sig = None
+            _excl = {p.strip().upper() for p in
+                     get_env("GP_EXCLUDE_PAIRS", "GBP/JPY,BTC/USD").split(",") if p.strip()}
+            _want_gp = get_env("GP_PROMOTE") == "1" and pair not in _excl
+            # Legacy: GP only if traditional quiet. Ranking: also score GP when
+            # traditional fires so the better edge can win.
+            if _want_gp and (trad_sig is None or _rank_on):
+                try:
+                    from hermes_core.engines import gp_intelligence as gpi
+                    _sup, _reason = gpi.should_suppress(pair)
+                    if _sup and trad_sig is None and not _rank_on:
+                        _log_skip(bot, pair, cycle, f"gp_intel_suppress:{_reason}")
+                        summary["skips"] += 1
+                        continue
+                    if not _sup:
+                        gp_sig = _gp_vote(
                             pair, prices, strategy, cortex=cortex,
                             promote=True, use_daily=True,
                         )
-                    except Exception:  # noqa: BLE001 — GP must never break the cycle
-                        sig = None
+                except Exception:  # noqa: BLE001 — GP must never break the cycle
+                    gp_sig = None
+
+            sig = None
+            _rank_meta: dict = {
+                "ranking_mode": "disabled",
+                "rank_score": None,
+                "rank_reason": None,
+                "rank_candidates": [],
+            }
+            if _rank_on:
+                cands: list[dict] = []
+                for _s in (trad_sig, gp_sig):
+                    if _s is None:
+                        continue
+                    _et = (
+                        _s.meta.get("entry_type")
+                        or getattr(_s, "type", None)
+                        or "mean_reversion"
+                    )
+                    _wr = None
+                    _pb = None
+                    _ew = 1.0
+                    try:
+                        _st = cortex.edge_stats(pair, _et)
+                        _wr = (
+                            (_st["wins"] / _st["n"])
+                            if _st and _st.get("n")
+                            else cortex.entry_type_wr(_et, pair=pair)
+                        )
+                        if _st and _st.get("n"):
+                            _pb = bayesian_p(
+                                int(_st.get("wins") or 0),
+                                int(_st.get("losses") or 0),
+                            )
+                    except Exception:  # noqa: BLE001
+                        pass
+                    try:
+                        _soft_tmp = soft_weights_enabled()
+                        _sup_tmp = bool(
+                            policy is not None and policy.is_suppressed(pair, _et)
+                        )
+                        _ew = float(expert_weight(
+                            enabled=_soft_tmp,
+                            suppressed=_sup_tmp,
+                            evidence_n=cortex.evidence_n(pair, _et),
+                            wr=_wr,
+                        ).get("weight") or 1.0)
+                    except Exception:  # noqa: BLE001
+                        _ew = 1.0
+                    _sc = score_candidate(
+                        entry_type=_et,
+                        quality=getattr(_s, "quality", None),
+                        wr=_wr,
+                        p_bayes=_pb,
+                        expert_weight=_ew,
+                        gp_strength=_s.meta.get("gp_strength"),
+                    )
+                    cands.append({
+                        "sig": _s,
+                        "entry_type": _et,
+                        "score": _sc["score"],
+                        "components": _sc["components"],
+                    })
+                _picked = rank_candidates(cands)
+                _win = _picked.get("winner")
+                if _win is not None:
+                    sig = _win["sig"]
+                    _rank_meta = {
+                        "ranking_mode": "soft",
+                        "rank_score": _win.get("score"),
+                        "rank_reason": _picked.get("reason"),
+                        "rank_candidates": _picked.get("ranked") or [],
+                    }
+            else:
+                sig = trad_sig if trad_sig is not None else gp_sig
+
             if sig is None:
                 _log_skip(bot, pair, cycle, "no_signal")
                 summary["skips"] += 1
@@ -822,6 +905,11 @@ def run_cycle(
                 "ci_low": _kelly.get("ci_low"),
                 "ci_high": _kelly.get("ci_high"),
                 "kelly_reasons": _kelly.get("reasons") or [],
+                # HIF Layer B entry ranking
+                "ranking_mode": _rank_meta.get("ranking_mode"),
+                "rank_score": _rank_meta.get("rank_score"),
+                "rank_reason": _rank_meta.get("rank_reason"),
+                "rank_candidates": _rank_meta.get("rank_candidates") or [],
             }
             # [CORTEX] record the entry (per-type memory; exile persists across cycles)
             with contextlib.suppress(Exception):
