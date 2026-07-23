@@ -109,6 +109,7 @@ class Cortex:
         mae_pct: float | None = None,
         giveback_pct: float | None = None,
         giveback_frac: float | None = None,
+        mfe_capture: float | None = None,
     ) -> None:
         row = {
             "pair": pair,
@@ -124,6 +125,16 @@ class Cortex:
             row["giveback_pct"] = float(giveback_pct)
         if giveback_frac is not None:
             row["giveback_frac"] = float(giveback_frac)
+        if mfe_capture is not None:
+            row["mfe_capture"] = float(mfe_capture)
+        elif (
+            mfe_pct is not None
+            and float(mfe_pct) > 1e-9
+        ):
+            try:
+                row["mfe_capture"] = round(float(pnl) / float(mfe_pct), 4)
+            except (TypeError, ValueError, ZeroDivisionError):
+                pass
         self._entries.append(row)
         self._flush()
 
@@ -202,7 +213,12 @@ class Cortex:
         }
 
     def excursion_stats(self, pair: str, entry_type: str) -> dict:
-        """Average MFE/MAE/giveback for closed outcomes that recorded excursions."""
+        """Average MFE/MAE/giveback/capture for closed outcomes with excursions.
+
+        Prefer this over exit-PnL WR when many closes are time_exit — capture and
+        giveback measure whether the entry had real edge, not whether price
+        drifted for N hours.
+        """
         rows = [
             e for e in self._entries
             if e.get("pair") == pair
@@ -210,20 +226,23 @@ class Cortex:
             and e.get("outcome") is not None
             and e.get("mfe_pct") is not None
         ]
+        empty = {
+            "n": 0,
+            "avg_mfe": None,
+            "avg_mae": None,
+            "avg_giveback": None,
+            "avg_giveback_frac": None,
+            "avg_mfe_capture": None,
+        }
         if not rows:
-            return {
-                "n": 0,
-                "avg_mfe": None,
-                "avg_mae": None,
-                "avg_giveback": None,
-                "avg_giveback_frac": None,
-            }
-        mfes, maes, gbs, gfs = [], [], [], []
+            return empty
+        mfes, maes, gbs, gfs, caps = [], [], [], [], []
         for e in rows:
             try:
-                mfes.append(float(e["mfe_pct"]))
+                mfe = float(e["mfe_pct"])
+                mfes.append(mfe)
             except (TypeError, ValueError, KeyError):
-                pass
+                mfe = None
             try:
                 if e.get("mae_pct") is not None:
                     maes.append(float(e["mae_pct"]))
@@ -239,6 +258,14 @@ class Cortex:
                     gfs.append(float(e["giveback_frac"]))
             except (TypeError, ValueError):
                 pass
+            # Capture = pnl / mfe (stored or derived).
+            try:
+                if e.get("mfe_capture") is not None:
+                    caps.append(float(e["mfe_capture"]))
+                elif mfe is not None and mfe > 1e-9 and e.get("pnl") is not None:
+                    caps.append(float(e["pnl"]) / mfe)
+            except (TypeError, ValueError):
+                pass
         return {
             "n": len(rows),
             "avg_mfe": round(sum(mfes) / len(mfes), 4) if mfes else None,
@@ -246,6 +273,96 @@ class Cortex:
             "avg_giveback": round(sum(gbs) / len(gbs), 4) if gbs else None,
             "avg_giveback_frac": (
                 round(sum(gfs) / len(gfs), 4) if gfs else None
+            ),
+            "avg_mfe_capture": (
+                round(sum(caps) / len(caps), 4) if caps else None
+            ),
+        }
+
+    def excursion_scoreboard(self) -> dict:
+        """Fleet-level excursion scoreboard (edge quality, not time-exit PnL)."""
+        rows = [
+            e for e in self._entries
+            if e.get("outcome") is not None and e.get("mfe_pct") is not None
+        ]
+        if not rows:
+            return {
+                "n": 0,
+                "avg_mfe": None,
+                "avg_mae": None,
+                "avg_giveback_frac": None,
+                "avg_mfe_capture": None,
+                "by_entry_type": {},
+                "by_pair": {},
+            }
+        # Aggregate via existing per-key helper.
+        by_type: dict[str, dict] = {}
+        by_pair: dict[str, dict] = {}
+        seen_types: set[str] = set()
+        seen_pairs: set[str] = set()
+        for e in rows:
+            t, p = e.get("type"), e.get("pair")
+            if t:
+                seen_types.add(t)
+            if p:
+                seen_pairs.add(p)
+        for t in seen_types:
+            # Use any pair that has this type — recompute from rows for type-wide.
+            type_rows = [e for e in rows if e.get("type") == t]
+            by_type[t] = self._excursion_from_rows(type_rows)
+        for p in seen_pairs:
+            pair_rows = [e for e in rows if e.get("pair") == p]
+            by_pair[p] = self._excursion_from_rows(pair_rows)
+        fleet = self._excursion_from_rows(rows)
+        return {
+            **fleet,
+            "by_entry_type": by_type,
+            "by_pair": by_pair,
+        }
+
+    @staticmethod
+    def _excursion_from_rows(rows: list[dict]) -> dict:
+        if not rows:
+            return {
+                "n": 0,
+                "avg_mfe": None,
+                "avg_mae": None,
+                "avg_giveback_frac": None,
+                "avg_mfe_capture": None,
+            }
+        mfes, maes, gfs, caps = [], [], [], []
+        for e in rows:
+            try:
+                mfe = float(e["mfe_pct"])
+                mfes.append(mfe)
+            except (TypeError, ValueError, KeyError):
+                mfe = None
+            try:
+                if e.get("mae_pct") is not None:
+                    maes.append(float(e["mae_pct"]))
+            except (TypeError, ValueError):
+                pass
+            try:
+                if e.get("giveback_frac") is not None:
+                    gfs.append(float(e["giveback_frac"]))
+            except (TypeError, ValueError):
+                pass
+            try:
+                if e.get("mfe_capture") is not None:
+                    caps.append(float(e["mfe_capture"]))
+                elif mfe is not None and mfe > 1e-9 and e.get("pnl") is not None:
+                    caps.append(float(e["pnl"]) / mfe)
+            except (TypeError, ValueError):
+                pass
+        return {
+            "n": len(rows),
+            "avg_mfe": round(sum(mfes) / len(mfes), 4) if mfes else None,
+            "avg_mae": round(sum(maes) / len(maes), 4) if maes else None,
+            "avg_giveback_frac": (
+                round(sum(gfs) / len(gfs), 4) if gfs else None
+            ),
+            "avg_mfe_capture": (
+                round(sum(caps) / len(caps), 4) if caps else None
             ),
         }
 
@@ -403,6 +520,8 @@ class Cortex:
             "by_entry_type": by_type,
             "by_pair": by_pair,
             "type_wr": {t: self.entry_type_wr(t) for t in VALID_ENTRY_TYPES},
+            # Excursion scoreboard — prefer over exit-PnL WR while time_exit dominates.
+            "excursion": self.excursion_scoreboard(),
             "probe_evidence": {
                 "threshold": PROBE_EVIDENCE_MIN,
                 "by_key": probe_by_key,
@@ -414,6 +533,10 @@ class Cortex:
                 "probe": (
                     f"HIF Phase-1: when PROBE_SIZING=1 and closed evidence "
                     f"< {PROBE_EVIDENCE_MIN} for (pair, entry_type) → 25% probe size"
+                ),
+                "excursion": (
+                    "Edge quality: avg MFE / giveback_frac / mfe_capture "
+                    "(pnl÷peak MFE). Prefer over time_exit PnL WR."
                 ),
             },
         }

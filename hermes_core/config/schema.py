@@ -49,6 +49,9 @@ STRATEGY_PARAM_RANGES: dict[str, tuple[float, float]] = {
     "trailing_stop_pct": (0.0, 5.0),
     "position_size_r": (0.05, 1.0),
     "time_exit_cycles": (60, 2880),
+    "trailing_atr_mult": (0.5, 5.0),
+    "mfe_giveback_min_pct": (0.1, 5.0),
+    "mfe_giveback_frac": (0.1, 1.0),
     "entry.threshold": (5, 95),
     "entry.min_oversold_pairs": (1, 10),
 }

@@ -1,11 +1,13 @@
-"""HIF — MFE/MAE peak tracking (excursion memory for exit intel).
+"""HIF — MFE/MAE peak tracking (excursion memory for exit intel + giveback exit).
 
-When ``MFE_TRACKING=1``, open positions update peak favourable (MFE) and
-adverse (MAE) unrealised % each cycle. On close, those values (plus giveback)
-are logged and stored in cortex so exit intel can tighten BE/trail when the
-book tends to give back peak profit.
+Peak favourable (MFE) and adverse (MAE) unrealised % are updated each cycle on
+open positions (needed for the ``mfe_giveback`` hard exit). When
+``MFE_TRACKING=1``, those values (plus giveback) are also logged on close into
+cortex so exit intel can tighten BE/trail when the book tends to give back peak
+profit.
 
-Flag off → no peak updates / no excursion fields on closes (legacy).
+``MFE_TRACKING=0`` → peaks still update for live exits; cortex/trade-log
+excursion fields stay omitted (legacy logging).
 Fail-open: bad numbers never break the cycle.
 """
 
@@ -15,7 +17,9 @@ from hermes_core.env import get_env
 
 
 def mfe_tracking_enabled() -> bool:
-    return get_env("MFE_TRACKING", "0") == "1"
+    # Default ON so closes feed the excursion scoreboard; set MFE_TRACKING=0 to
+    # omit cortex/trade-log excursion fields (legacy). Peaks always update live.
+    return get_env("MFE_TRACKING", "1") == "1"
 
 
 def update_position_excursions(pos: dict, unrealised_pct: float) -> dict:
@@ -71,9 +75,13 @@ def excursion_from_position(pos: dict, final_pnl: float | None = None) -> dict:
             pnl = 0.0
     giveback = max(0.0, mfe - float(pnl)) if mfe > 0 else 0.0
     giveback_frac = (giveback / mfe) if mfe > 1e-9 else None
+    # Capture: how much of peak favourable excursion was kept at exit.
+    # None when there was no meaningful MFE (avoid divide-by-zero noise).
+    capture = (float(pnl) / mfe) if mfe > 1e-9 else None
     return {
         "mfe_pct": round(mfe, 4),
         "mae_pct": round(mae, 4),
         "giveback_pct": round(giveback, 4),
         "giveback_frac": round(giveback_frac, 4) if giveback_frac is not None else None,
+        "mfe_capture": round(capture, 4) if capture is not None else None,
     }

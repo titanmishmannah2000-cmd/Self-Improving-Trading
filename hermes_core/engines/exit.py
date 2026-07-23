@@ -6,15 +6,16 @@ trade's parameters, the current price, and a price history (for ATR trailing),
 it returns either an ``Exit`` describing the action or ``None``.
 
 Exactly ONE exit reason is ever returned per evaluation — never zero-or-many
-(roadmap S5 DO-NOT). The five blueprint Phase-5 reasons:
+(roadmap S5 DO-NOT). The Phase-5 reasons:
 
   stop_loss      price <= entry*(1 - sl/100)
   profit_target  price >= entry*(1 + tp/100)  [hard close, no partial feature]
   partial_close  price >= entry*(1 + tp/100)  [partial feature ON -> 50% off at
                   FULL target, stop moved to breakeven for the remainder]  [GUARD L27]
-  time_exit      held_cycles >= time_exit_cycles
-  breakeven      unrealised >= tp*0.5  -> move stop to entry               [GUARD L26]
+  mfe_giveback   peak MFE >= min and giveback_frac >= thresh (lock winners)
+  breakeven      unrealised >= tp*be_trigger_frac  -> move stop to entry [GUARD L26]
   trailing       ATR-based trailing stop tightening (raises the stop only)
+  time_exit      held_cycles >= time_exit_cycles (last resort — after protectors)
 
 Also exposes the [GUARD L24] circuit-breaker predicate.
 """
@@ -26,6 +27,11 @@ from dataclasses import dataclass
 from hermes_core.indicators import compute_atr
 
 CIRCUIT_MAX_CONSECUTIVE_FAILURES = 5  # [GUARD L24]
+
+# Defaults when strategy / position omit knobs (≈2.5h at 60s cycles).
+DEFAULT_TIME_EXIT_CYCLES = 150
+DEFAULT_MFE_GIVEBACK_MIN_PCT = 0.4   # need real peak before locking
+DEFAULT_MFE_GIVEBACK_FRAC = 0.5      # exit after giving back ≥50% of MFE
 
 
 @dataclass
@@ -53,6 +59,25 @@ def should_circuit_break(
     return consecutive_failures >= max_consecutive
 
 
+def _mfe_giveback_hit(trade: dict, unreal: float) -> bool:
+    """True when peak MFE is meaningful and enough of it has been given back.
+
+    Opt-out: ``mfe_giveback_enabled: false`` on the position/strategy stamp.
+    """
+    if trade.get("mfe_giveback_enabled", True) is False:
+        return False
+    try:
+        peak = float(trade.get("peak_mfe_pct") or 0.0)
+        min_mfe = float(trade.get("mfe_giveback_min_pct", DEFAULT_MFE_GIVEBACK_MIN_PCT))
+        thresh = float(trade.get("mfe_giveback_frac", DEFAULT_MFE_GIVEBACK_FRAC))
+    except (TypeError, ValueError):
+        return False
+    if peak < min_mfe or peak <= 1e-9 or thresh <= 0:
+        return False
+    giveback = max(0.0, peak - float(unreal))
+    return (giveback / peak) >= thresh
+
+
 def evaluate_exit(
     trade: dict, current_price: float, prices: list[float] | None = None
 ) -> Exit | None:
@@ -61,7 +86,7 @@ def evaluate_exit(
     ``trade`` keys: entry_price (req), stop_loss_pct, profit_target_pct,
     time_exit_cycles, held_cycles, unrealised_pct (opt), breakeven_set (bool),
     partial_done (bool), partial_enabled (bool), trailing_atr_mult (opt),
-    current_stop (opt).
+    current_stop (opt), peak_mfe_pct (opt), mfe_giveback_* (opt).
     """
     if not trade or "entry_price" not in trade:
         return None
@@ -76,7 +101,7 @@ def evaluate_exit(
     partial_done = trade.get("partial_done", False)
     breakeven_set = trade.get("breakeven_set", False)
 
-    # 1) Armed current_stop hit (EXIT_INTEL) — before %-SL so BE/trail protect
+    # 1) Armed current_stop hit (EXIT_INTEL / trail / BE) — before %-SL
     if trade.get("honor_current_stop") and trade.get("current_stop") is not None:
         try:
             if current_price <= float(trade["current_stop"]):
@@ -95,11 +120,12 @@ def evaluate_exit(
             return Exit("partial_close", current_price, new_stop=entry, partial_close_fraction=0.5)
         return Exit("profit_target", current_price)
 
-    # 4) time-based exit
-    if te is not None and held >= te:
-        return Exit("time_exit", current_price)
+    # 4) MFE giveback — lock winners before the clock donates them back
+    if _mfe_giveback_hit(trade, unreal):
+        return Exit("mfe_giveback", current_price)
 
     # 5) [GUARD L26] breakeven — move stop to entry past be_trigger_frac * TP
+    #    (before time_exit so protectors can arm during the hold window)
     be_frac = 0.5
     try:
         if trade.get("be_trigger_frac") is not None:
@@ -109,7 +135,7 @@ def evaluate_exit(
     if tp is not None and not breakeven_set and unreal >= tp * be_frac:
         return Exit("breakeven", current_price, new_stop=entry)
 
-    # 6) ATR-based trailing stop (raises the stop only)
+    # 6) ATR-based trailing stop (raises the stop only) — before time_exit
     mult = trade.get("trailing_atr_mult")
     if mult is not None and unreal > 0 and prices:
         atr = compute_atr(prices)
@@ -118,5 +144,9 @@ def evaluate_exit(
             cur = trade.get("current_stop")
             if cur is None or trail_stop > cur:
                 return Exit("trailing", current_price, new_stop=trail_stop)
+
+    # 7) time-based exit — last resort after TP / giveback / BE / trail
+    if te is not None and held >= te:
+        return Exit("time_exit", current_price)
 
     return None

@@ -10,7 +10,10 @@ entry:
 stop_loss_pct: 1.5
 profit_target_pct: 3.0
 trailing_stop_pct: 0.0
-time_exit_cycles: 288
+time_exit_cycles: 150
+mfe_giveback_min_pct: 0.4
+mfe_giveback_frac: 0.5
+trailing_atr_mult: 1.5
 position_size_r: 0.4
 atr_multiplier: 2.0
 atr_floor_pct: 0.3

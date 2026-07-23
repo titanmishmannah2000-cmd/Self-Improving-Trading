@@ -1032,6 +1032,27 @@ def _summarize(rows, label: str) -> dict:
         if (r["pnl_pct"] or 0) > 0:
             by_pair[p]["wins"] += 1
 
+    # Excursion scoreboard (MFE/giveback/capture) — prefer over time_exit PnL WR.
+    mfes, gfs, caps = [], [], []
+    for r in closed:
+        raw = {}
+        try:
+            raw = json.loads(r["raw_json"]) if r["raw_json"] else {}
+        except (TypeError, ValueError, KeyError):
+            raw = {}
+        try:
+            if raw.get("mfe_pct") is not None:
+                mfe = float(raw["mfe_pct"])
+                mfes.append(mfe)
+                if raw.get("mfe_capture") is not None:
+                    caps.append(float(raw["mfe_capture"]))
+                elif mfe > 1e-9 and r["pnl_pct"] is not None:
+                    caps.append(float(r["pnl_pct"]) / mfe)
+            if raw.get("giveback_frac") is not None:
+                gfs.append(float(raw["giveback_frac"]))
+        except (TypeError, ValueError):
+            continue
+
     return {
         "label": label,
         "closed_trades": len(closed),
@@ -1043,6 +1064,13 @@ def _summarize(rows, label: str) -> dict:
         "low_confidence": len(closed) < 10,
         "avg_win_pct": round(sum(wins) / len(wins), 3) if wins else 0,
         "avg_loss_pct": round(sum(losses) / len(losses), 3) if losses else 0,
+        "excursion": {
+            "n": len(mfes),
+            "avg_mfe_pct": round(sum(mfes) / len(mfes), 4) if mfes else None,
+            "avg_giveback_frac": round(sum(gfs) / len(gfs), 4) if gfs else None,
+            "avg_mfe_capture": round(sum(caps) / len(caps), 4) if caps else None,
+            "note": "Prefer MFE/capture over exit PnL WR while time_exit dominates",
+        },
         "by_pair": {
             p: {
                 "trades": d["trades"],

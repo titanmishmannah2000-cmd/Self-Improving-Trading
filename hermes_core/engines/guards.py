@@ -6,7 +6,10 @@ Pure helpers shared by the live loop and tests. No I/O.
 from __future__ import annotations
 
 FLAT_BARS_MIN = 5
-BB_BW_MIN = 0.001
+# FX live-tick BB bandwidth often lands ~0.0004–0.0006; the old 0.001 floor
+# blocked essentially all EUR/GBP/JPY mean-reversion. 0.0003 still rejects
+# degenerate flat bands (bw≈0) while allowing that live FX range.
+BB_BW_MIN = 0.0003
 
 
 def flat_price_guard(indicators: dict, prices: list[float]) -> tuple[bool, str]:

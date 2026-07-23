@@ -55,6 +55,94 @@ def test_time_exit():
     assert ex is not None and ex.reason == "time_exit"
 
 
+def test_mfe_giveback_locks_winner():
+    """Peak 0.8% then give back ≥50% → hard exit (not time_exit)."""
+    t = trade(
+        1.1000,
+        peak_mfe_pct=0.8,
+        unrealised_pct=0.3,  # giveback 0.5 → frac 0.625
+        mfe_giveback_min_pct=0.4,
+        mfe_giveback_frac=0.5,
+        time_exit_cycles=288,
+        held=10,
+        tp=3.0,
+        sl=1.5,
+    )
+    # price consistent with ~0.3% unrealised
+    ex = evaluate_exit(t, 1.1033, None)
+    assert ex is not None and ex.reason == "mfe_giveback"
+
+
+def test_mfe_giveback_below_min_mfe_holds():
+    t = trade(
+        1.1000,
+        peak_mfe_pct=0.3,  # below default min 0.4
+        unrealised_pct=0.05,
+        mfe_giveback_min_pct=0.4,
+        mfe_giveback_frac=0.5,
+        time_exit_cycles=288,
+        held=10,
+        tp=3.0,
+        sl=1.5,
+    )
+    ex = evaluate_exit(t, 1.10055, None)
+    assert ex is None
+
+
+def test_mfe_giveback_disabled():
+    t = trade(
+        1.1000,
+        peak_mfe_pct=1.0,
+        unrealised_pct=0.2,
+        mfe_giveback_enabled=False,
+        time_exit_cycles=288,
+        held=10,
+        tp=3.0,
+        sl=1.5,
+    )
+    ex = evaluate_exit(t, 1.1022, None)
+    assert ex is None
+
+
+def test_trail_fires_before_time_exit():
+    """Held at time limit but trail can still arm on earlier cycles;
+    at the deadline, giveback/TP still beat time_exit; with no giveback,
+    time_exit remains last resort. Trail must win while held < te.
+    """
+    prices = [1.0 + 0.003 * ((i % 2) * 2 - 1) for i in range(50)]
+    t = trade(
+        1.0,
+        held=100,
+        time_exit_cycles=150,
+        tp=3.0,
+        sl=1.5,
+        unrealised_pct=1.0,
+        trailing_atr_mult=2.0,
+        current_stop=0.5,
+        peak_mfe_pct=1.0,
+        mfe_giveback_enabled=False,  # isolate trail vs giveback
+    )
+    ex = evaluate_exit(t, 1.01, prices)
+    assert ex is not None and ex.reason == "trailing"
+
+
+def test_time_exit_is_last_resort():
+    """At the clock with no TP/giveback/trail action → time_exit."""
+    t = trade(
+        1.1000,
+        held=150,
+        time_exit_cycles=150,
+        tp=3.0,
+        sl=1.5,
+        unrealised_pct=0.1,
+        peak_mfe_pct=0.15,  # below min → no giveback
+        mfe_giveback_min_pct=0.4,
+        trailing_atr_mult=None,
+    )
+    ex = evaluate_exit(t, 1.1011, None)
+    assert ex is not None and ex.reason == "time_exit"
+
+
 def test_breakeven():
     t = trade(1.1000, unrealised_pct=1.5, profit_target_pct=3.0, sl_moved=False)
     ex = evaluate_exit(t, 1.1165, None)
@@ -120,6 +208,7 @@ def test_exactly_one_reason(entry, price, sl, tp, te, held, partial, pr):
         "time_exit_cycles": te, "held_cycles": held,
         "partial_enabled": partial, "partial_done": False, "breakeven_set": False,
         "unrealised_pct": (price - entry) / entry * 100.0 if entry else 0.0,
+        "mfe_giveback_enabled": False,  # isolate classic reasons in property test
     }
     try:
         result = evaluate_exit(t, price, [pr] * 5)
@@ -129,7 +218,7 @@ def test_exactly_one_reason(entry, price, sl, tp, te, held, partial, pr):
     if result is not None:
         assert result.reason in {
             "stop_loss", "profit_target", "partial_close",
-            "time_exit", "breakeven", "trailing",
+            "time_exit", "breakeven", "trailing", "mfe_giveback",
         }
         # exactly one action: no reason can also imply another simultaneously
         assert (result.reason == "partial_close") == (result.partial_close_fraction == 0.5)

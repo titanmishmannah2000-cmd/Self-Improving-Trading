@@ -28,6 +28,13 @@ import httpx
 
 from hermes_core.adapters.price import fetch_sync as _yf_fetch
 from hermes_core.adapters.price import seed_history_sync as _yf_seed_history
+from hermes_core.adapters.tick_history import (
+    TICK_HISTORY_MAX,
+    TICK_MOVE_MIN_PCT,
+    TICK_SAMPLE_MIN_S,
+    append_bucketed_tick,
+    series_is_flat,
+)
 from hermes_core.adapters.ws_price import STALE_S_MAX, PriceStream
 
 # [L01] stale window for a cached consensus candle (seconds).
@@ -39,11 +46,7 @@ SOURCE_TIMEOUT = 3.0  # per-source httpx timeout (seconds)
 # below that floor we use Frankfurter daily and/or the live rolling tick buffer
 # instead of a single last-good tick.
 HISTORY_MIN_BARS = 50
-TICK_HISTORY_MAX = 300
-# Only sample a new live tick into the rolling buffer when price moves or enough
-# wall time has passed (avoids stuffing 300 identical quotes → BB bandwidth 0).
-TICK_MOVE_MIN_PCT = 1e-5   # 0.001%
-TICK_SAMPLE_MIN_S = 45.0
+# TICK_* constants imported from tick_history (shared with crypto WS).
 
 # crypto pairs served by a live websocket stream (Coinbase public WS, free RT)
 _CRYPTO_PAIRS = {"BTC/USD", "ETH/USD"}
@@ -628,26 +631,12 @@ class PriceAggregator:
     def _record_tick_unlocked(self, pair: str, candle: dict) -> None:
         """Append ``candle`` to the rolling live buffer (caller holds ``_lock``)."""
         hist = self._tick_history.setdefault(pair, [])
-        price = float(candle.get("price") or 0)
-        ts = float(candle.get("ts") or time.time())
-        if price <= 0:
-            return
-        if hist:
-            prev = hist[-1]
-            prev_price = float(prev.get("price") or 0)
-            prev_ts = float(prev.get("ts") or 0)
-            moved = (
-                prev_price > 0
-                and abs(price - prev_price) / prev_price >= TICK_MOVE_MIN_PCT
-            )
-            aged = (ts - prev_ts) >= TICK_SAMPLE_MIN_S
-            if not moved and not aged:
-                # Refresh the tip timestamp/price without growing identical bars.
-                hist[-1] = dict(candle)
-                return
-        hist.append(dict(candle))
-        if len(hist) > TICK_HISTORY_MAX:
-            del hist[: len(hist) - TICK_HISTORY_MAX]
+        append_bucketed_tick(
+            hist, candle,
+            move_min_pct=TICK_MOVE_MIN_PCT,
+            sample_min_s=TICK_SAMPLE_MIN_S,
+            max_len=TICK_HISTORY_MAX,
+        )
 
     def _consensus(self, prices: list[float]) -> float:
         """Median; if spread > consensus_pct, keep median but flag via caller."""
@@ -721,17 +710,22 @@ class PriceAggregator:
         """
         if pair in _CRYPTO_PAIRS:
             ws = self._crypto.seed_history_fn(pair, max_candles) or []
-            if len(ws) >= HISTORY_MIN_BARS:
+            # Reject duplicate-filled WS buffers (pre-bucket legacy / tip spam).
+            ws_ok = len(ws) >= HISTORY_MIN_BARS and not series_is_flat(ws)
+            if ws_ok:
                 return ws
             try:
                 external = _external_history(pair, max_candles=max_candles) or []
             except Exception:  # noqa: BLE001
                 external = []
-            if len(external) >= HISTORY_MIN_BARS:
+            if len(external) >= HISTORY_MIN_BARS and not series_is_flat(external):
                 return external[-max_candles:]
-            if len(ws) >= 2:
+            if len(ws) >= 2 and not series_is_flat(ws):
                 return ws
-            if len(external) >= 2:
+            if len(external) >= 2 and not series_is_flat(external):
+                return external[-max_candles:]
+            # Prefer varied external over a flat WS wall of identical closes.
+            if external and (not ws or series_is_flat(ws)):
                 return external[-max_candles:]
             return ws or external
 

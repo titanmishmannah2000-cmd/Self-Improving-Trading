@@ -42,6 +42,11 @@ from hermes_core.engines.policy_engine import PolicyEngine, soft_weights_enabled
 from hermes_core.engines.expert_weights import apply_expert_weight, expert_weight
 from hermes_core.engines.regime_sizing import apply_regime_sizing, regime_sizing_enabled
 from hermes_core.engines.kelly_sizing import apply_kelly_sizing, kelly_sizing_enabled
+from hermes_core.engines.mom_range_guard import (
+    apply_mom_range_guard,
+    gp_agree_bullish,
+    mom_range_guard_enabled,
+)
 from hermes_core.engines.risk import (
     MAX_POSITION_SIZE,
     apply_probe_sizing,
@@ -82,6 +87,31 @@ def _session_token_for(hour: int) -> str:
     if 13 <= hour < 21:
         return "NY"
     return "OTHER"
+
+
+
+def _precount_oversold(bot: str, pairs: list, fetch_fn, history_fn) -> int:
+    """Count how many bot pairs are RSI-oversold this cycle (both-metal confluence).
+
+    Runs before the pair loop so XAU sees XAG (and vice versa). Fail-soft → 0.
+    """
+    rows = 0
+    for pair in pairs or []:
+        try:
+            strategy = load_strategy_for_pair(pair, bot)
+            if history_fn is not None:
+                hist = history_fn(pair)
+            else:
+                hist = fetch_fn(pair + ":history")
+            prices = [c["price"] for c in (hist or [])]
+            if len(prices) < 5:
+                continue
+            ind = compute_all(prices)
+            if float(ind.get("rsi", 50)) <= float(_entry_rsi_threshold(strategy)):
+                rows += 1
+        except Exception:  # noqa: BLE001 — confluence must never break the cycle
+            continue
+    return rows
 
 
 def _atr_stop_for(strategy: dict, entry: float, atr: float) -> float:
@@ -196,12 +226,8 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
         pnl = pos["unrealised_pct"]
         _exc = {}
         with contextlib.suppress(Exception):
-            from hermes_core.engines.excursion import (
-                excursion_from_position,
-                mfe_tracking_enabled,
-            )
-            if mfe_tracking_enabled():
-                _exc = excursion_from_position(pos, pnl)
+            from hermes_core.engines.excursion import excursion_from_position
+            _exc = excursion_from_position(pos, pnl)
         _log_trade(bot, {
             "id": (pos.get("id") or f"{bot}:{pair}:{int(time.time())}") + ":partial",
             "bot": bot, "pair": pair, "cycle": cycle,
@@ -213,7 +239,7 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
             "pnl_pct": pnl, "size": closed_size,
             "hold_cycles": pos.get("held_cycles", 0),
             "partial": True,
-            **{k: _exc[k] for k in ("mfe_pct", "mae_pct", "giveback_pct", "giveback_frac")
+            **{k: _exc[k] for k in ("mfe_pct", "mae_pct", "giveback_pct", "giveback_frac", "mfe_capture")
                if k in _exc},
         })
         with contextlib.suppress(Exception):
@@ -223,6 +249,7 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
                 mae_pct=_exc.get("mae_pct"),
                 giveback_pct=_exc.get("giveback_pct"),
                 giveback_frac=_exc.get("giveback_frac"),
+                mfe_capture=_exc.get("mfe_capture"),
             )
         pos["size"] = remain
         pos["partial_done"] = True
@@ -235,12 +262,8 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
     pnl = pos["unrealised_pct"]
     _exc = {}
     with contextlib.suppress(Exception):
-        from hermes_core.engines.excursion import (
-            excursion_from_position,
-            mfe_tracking_enabled,
-        )
-        if mfe_tracking_enabled():
-            _exc = excursion_from_position(pos, pnl)
+        from hermes_core.engines.excursion import excursion_from_position
+        _exc = excursion_from_position(pos, pnl)
     _log_trade(bot, {
         "id": pos.get("id") or f"{bot}:{pair}:{int(time.time())}",
         "bot": bot, "pair": pair, "cycle": cycle,
@@ -252,7 +275,7 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
         "entry_ts": pos.get("entry_ts"), "exit_ts": _now_iso(),
         "pnl_pct": pnl, "size": pos["size"],
         "hold_cycles": pos.get("held_cycles", 0),
-        **{k: _exc[k] for k in ("mfe_pct", "mae_pct", "giveback_pct", "giveback_frac")
+        **{k: _exc[k] for k in ("mfe_pct", "mae_pct", "giveback_pct", "giveback_frac", "mfe_capture")
            if k in _exc},
     })
     reentry[pair] = {"last_exit_cycle": cycle}
@@ -276,6 +299,7 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
             mae_pct=_exc.get("mae_pct"),
             giveback_pct=_exc.get("giveback_pct"),
             giveback_frac=_exc.get("giveback_frac"),
+            mfe_capture=_exc.get("mfe_capture"),
         )
         if is_gp:
             _credited = pos.get("gp_indicators") or []
@@ -493,7 +517,8 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
         if len(series) < 200:
             _log.warning("[discovery] %s: <200 daily candles, GP skipped", pair)
             return
-        inds = gp_discover(pair, series, horizon=60, generations=40, pop_size=40)
+        inds = gp_discover(pair, series, horizon=60, generations=40, pop_size=40,
+                           n_islands=2)
         _log.info("[discovery] %s: admitted=%d -> %s",
                   pair, len(inds), _discovered_path(pair))
 
@@ -565,6 +590,9 @@ def run_cycle(
             backend=get_env("PRICE_BACKEND", "aggregate"),
             pairs=list(pairs),
         )
+    oversold_total = 0
+    with contextlib.suppress(Exception):
+        oversold_total = _precount_oversold(bot, list(pairs), fetch_fn, history_fn)
     hour = int((now_fn() // 3600) % 24)  # wall-clock hour (deterministic in test)
     session_token = _session_token_for(hour)
     last_price = 0.0
@@ -733,9 +761,11 @@ def run_cycle(
             except Exception:  # noqa: BLE001
                 _rank_on = False
 
+            # Prefer pre-scanned multi-pair count so XAU sees XAG the same cycle.
+            _os_count = max(int(oversold_pairs), int(oversold_total))
             trad_sig = evaluate_entry(
                 pair, prices, strategy, context, ensemble,
-                oversold_pairs, vol_above, reentry, cycle, session_token,
+                _os_count, vol_above, reentry, cycle, session_token,
             )
             gp_sig = None
             _excl = {p.strip().upper() for p in
@@ -877,6 +907,43 @@ def run_cycle(
                 size, enabled=_probe_enabled, evidence_n=_evidence_n,
             )
             size = float(_probe["size"])
+            # HIF: momentum range/confluence guard (Jul 23 gold — chop lesson).
+            _mg = {
+                "mom_guard_mode": "disabled",
+                "mom_guard_action": "disabled",
+                "mom_guard_confirmed": False,
+                "mom_guard_reasons": [],
+                "oversold_count": int(oversold_total),
+                "gp_agree": False,
+            }
+            try:
+                _mg_on = mom_range_guard_enabled(bot=bot)
+                _gp_str = None
+                if gp_shadow_sig is not None:
+                    with contextlib.suppress(Exception):
+                        _gp_str = gp_shadow_sig.meta.get("gp_strength")
+                if gp_sig is not None and _gp_str is None:
+                    with contextlib.suppress(Exception):
+                        _gp_str = gp_sig.meta.get("gp_strength")
+                _gp_ok = gp_agree_bullish(ensemble, gp_strength=_gp_str)
+                _mg = apply_mom_range_guard(
+                    size,
+                    enabled=_mg_on,
+                    entry_type=_etype,
+                    regime=ind.get("regime") or regimes.get(pair),
+                    oversold_count=max(int(oversold_pairs), int(oversold_total)),
+                    gp_agree=_gp_ok,
+                )
+                if _mg.get("mom_guard_action") == "bench":
+                    _log_skip(
+                        bot, pair, cycle,
+                        "mom_range_bench:" + ",".join(_mg.get("mom_guard_reasons") or []),
+                    )
+                    summary["skips"] += 1
+                    continue
+                size = float(_mg["size"])
+            except Exception:  # noqa: BLE001 — fail-open
+                pass
             # HIF Phase-2 soft expert weight (after probe, before cap).
             _wr = None
             try:
@@ -963,13 +1030,42 @@ def run_cycle(
                 strategy=strategy,
                 cortex=cortex,
             )
+            # Trail + honor ATR/BE stops so protectors can fire before time_exit
+            # (EXIT_INTEL may override trail; YAML / default 1.5 otherwise).
+            from hermes_core.engines.exit import (
+                DEFAULT_MFE_GIVEBACK_FRAC,
+                DEFAULT_MFE_GIVEBACK_MIN_PCT,
+                DEFAULT_TIME_EXIT_CYCLES,
+            )
+            _trail = _xi.get("trailing_atr_mult")
+            if _trail is None:
+                try:
+                    _trail = float(strategy.get("trailing_atr_mult", 1.5))
+                except (TypeError, ValueError):
+                    _trail = 1.5
+            _honor = bool(_xi.get("honor_current_stop")) or _trail is not None
+            try:
+                _gb_min = float(strategy.get(
+                    "mfe_giveback_min_pct", DEFAULT_MFE_GIVEBACK_MIN_PCT,
+                ))
+            except (TypeError, ValueError):
+                _gb_min = DEFAULT_MFE_GIVEBACK_MIN_PCT
+            try:
+                _gb_frac = float(strategy.get(
+                    "mfe_giveback_frac", DEFAULT_MFE_GIVEBACK_FRAC,
+                ))
+            except (TypeError, ValueError):
+                _gb_frac = DEFAULT_MFE_GIVEBACK_FRAC
+            _gb_on = strategy.get("mfe_giveback_enabled", True) is not False
             stop = _atr_stop_for(strategy, price, atr)
             open_positions[pair] = {
                 "id": f"{bot}:{pair}:{int(time.time())}",
                 "entry_ts": _now_iso(),
                 "entry_price": price, "size": min(size, MAX_POSITION_SIZE),
                 "stop_loss_pct": sl, "profit_target_pct": tp,
-                "time_exit_cycles": int(strategy.get("time_exit_cycles", 288)),
+                "time_exit_cycles": int(strategy.get(
+                    "time_exit_cycles", DEFAULT_TIME_EXIT_CYCLES,
+                )),
                 "held_cycles": 0, "breakeven_set": False, "partial_done": False,
                 "partial_enabled": bool(_xi.get("partial_enabled")),
                 "current_stop": stop, "atr": atr,
@@ -1016,15 +1112,27 @@ def run_cycle(
                 "book_cap": _book.get("book_cap"),
                 "book_remaining": _book.get("book_remaining"),
                 "book_reasons": _book.get("book_reasons") or [],
-                # HIF exit intelligence
+                # HIF exit intelligence + baseline trail (trail before time_exit)
                 "exit_intel_mode": _xi.get("exit_intel_mode"),
-                "honor_current_stop": bool(_xi.get("honor_current_stop")),
+                "honor_current_stop": _honor,
                 "be_trigger_frac": _xi.get("be_trigger_frac"),
-                "trailing_atr_mult": _xi.get("trailing_atr_mult"),
+                "trailing_atr_mult": _trail,
                 "exit_intel_n": _xi.get("exit_intel_n"),
                 "exit_intel_reasons": _xi.get("exit_intel_reasons") or [],
                 "avg_giveback_frac": _xi.get("avg_giveback_frac"),
-                # MFE/MAE peak tracking (updated each cycle when MFE_TRACKING=1)
+                # MFE giveback hard exit (locks winners before time_exit)
+                "mfe_giveback_enabled": _gb_on,
+                "mfe_giveback_min_pct": _gb_min,
+                "mfe_giveback_frac": _gb_frac,
+                # HIF momentum range / confluence guard
+                "mom_guard_mode": _mg.get("mom_guard_mode"),
+                "mom_guard_action": _mg.get("mom_guard_action"),
+                "mom_guard_confirmed": _mg.get("mom_guard_confirmed"),
+                "mom_guard_reasons": _mg.get("mom_guard_reasons") or [],
+                "mom_oversold_count": _mg.get("oversold_count"),
+                "mom_gp_agree": _mg.get("gp_agree"),
+                # MFE/MAE peak tracking (always updated — needed for giveback exit;
+                # MFE_TRACKING still gates cortex / trade-log fields)
                 "peak_mfe_pct": 0.0,
                 "trough_mae_pct": 0.0,
                 "mfe_tracking": False,
@@ -1037,13 +1145,36 @@ def run_cycle(
             # --- exit evaluation (S5) --------------------------------------
             pos["held_cycles"] = pos.get("held_cycles", 0) + 1
             pos["unrealised_pct"] = (price - pos["entry_price"]) / pos["entry_price"] * 100.0
+            # Soft-migrate positions opened before giveback/trail defaults so
+            # live opens immediately stop donating MFE to time_exit.
+            with contextlib.suppress(Exception):
+                from hermes_core.engines.exit import (
+                    DEFAULT_MFE_GIVEBACK_FRAC,
+                    DEFAULT_MFE_GIVEBACK_MIN_PCT,
+                )
+                if "mfe_giveback_min_pct" not in pos:
+                    pos["mfe_giveback_min_pct"] = DEFAULT_MFE_GIVEBACK_MIN_PCT
+                if "mfe_giveback_frac" not in pos:
+                    pos["mfe_giveback_frac"] = DEFAULT_MFE_GIVEBACK_FRAC
+                if "mfe_giveback_enabled" not in pos:
+                    pos["mfe_giveback_enabled"] = True
+                if pos.get("trailing_atr_mult") is None:
+                    pos["trailing_atr_mult"] = 1.5
+                if not pos.get("honor_current_stop"):
+                    pos["honor_current_stop"] = True
+                # Tighten legacy 288-cycle clocks in-flight (≤150).
+                te = pos.get("time_exit_cycles")
+                if te is not None and int(te) > 150:
+                    pos["time_exit_cycles"] = 150
+            # Always update peak MFE/MAE so mfe_giveback can fire; mfe_tracking
+            # flag is informational for dashboard (closes always log excursions).
             with contextlib.suppress(Exception):
                 from hermes_core.engines.excursion import (
                     mfe_tracking_enabled,
                     update_position_excursions,
                 )
+                update_position_excursions(pos, pos["unrealised_pct"])
                 if mfe_tracking_enabled():
-                    update_position_excursions(pos, pos["unrealised_pct"])
                     pos["mfe_tracking"] = True
             ex = evaluate_exit(pos, price, prices)
             if ex is not None:

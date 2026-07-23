@@ -1,13 +1,12 @@
-pair: AUD/USD
-version: "00"
-strategy_type: rsi_momentum
+pair: EUR/USD
+version: '00'
+strategy_type: mean_reversion
 entry:
   indicator: rsi
   direction: long
-  threshold: 55
-  min_oversold_pairs: 1   # Phase-1 L18: was hard-coded 2
+  mr_entry_rsi: 30
   bb_std_dev: 2.0
-  session_filter: asian_only
+  session_filter: london_only
 stop_loss_pct: 1.5
 profit_target_pct: 3.0
 trailing_stop_pct: 0.0
@@ -20,8 +19,8 @@ atr_multiplier: 2.0
 atr_floor_pct: 0.3
 use_atr_floor: true
 adx_threshold: 20
-vol_threshold_pct: 0.01
+vol_threshold_pct: 1.0
 vol_max_pct: 5.0
-vol_min_pct: 0.005
+vol_min_pct: 0.2
 minimum_entry_quality: 6
 allow_bear_entries: false

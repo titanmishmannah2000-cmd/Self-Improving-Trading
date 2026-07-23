@@ -29,6 +29,11 @@ from collections.abc import Callable
 import websockets
 from websockets.asyncio.client import ClientConnection
 
+from hermes_core.adapters.tick_history import (
+    TICK_HISTORY_MAX,
+    append_bucketed_tick,
+)
+
 # seconds a cached candle may be old before it is considered stale (L01)
 STALE_S_MAX = 60.0
 # backoff between reconnect attempts after a socket drop [GUARD L63]
@@ -153,9 +158,10 @@ class PriceStream:
                     async with self._lock:
                         self._cache[candle["pair"]] = candle
                         hist = self._history.setdefault(candle["pair"], [])
-                        hist.append(candle)
-                        if len(hist) > 300:
-                            hist.pop(0)
+                        # Same move/time bucketing as FX live ticks — raw Coinbase
+                        # ticker spam otherwise fills 300 identical closes and the
+                        # loop skips forever on flat_price:unchanged.
+                        append_bucketed_tick(hist, candle, max_len=TICK_HISTORY_MAX)
                     if self.on_tick is not None:
                         with contextlib.suppress(Exception):  # [GUARD L63]
                             self.on_tick(candle["pair"], float(candle["price"]))

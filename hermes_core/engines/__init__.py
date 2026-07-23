@@ -76,6 +76,11 @@ from hermes_core.engines.regime_sizing import (
     regime_size_mult,
     regime_sizing_enabled,
 )
+from hermes_core.engines.mom_range_guard import (
+    apply_mom_range_guard,
+    gp_agree_bullish,
+    mom_range_guard_enabled,
+)
 from hermes_core.engines.policy_engine import Policy, PolicyEngine, soft_weights_enabled
 from hermes_core.engines.expert_weights import (
     EXPERT_TYPES,
@@ -145,6 +150,7 @@ __all__ = [
     "EXPERT_TYPES", "SOFT_SUPPRESS_MULT", "apply_expert_weight",
     "expert_weight", "pair_expert_weights",
     "apply_regime_sizing", "regime_size_mult", "regime_sizing_enabled",
+    "apply_mom_range_guard", "gp_agree_bullish", "mom_range_guard_enabled",
     "apply_kelly_sizing", "kelly_size_mult", "kelly_sizing_enabled",
     "entry_ranking_enabled", "score_candidate", "rank_candidates",
     "apply_exit_intel", "exit_intel_enabled",

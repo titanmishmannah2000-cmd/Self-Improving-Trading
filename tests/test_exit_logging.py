@@ -17,7 +17,7 @@ class _CortexStub:
         self.outcomes = []
         self.ind_credit = []
 
-    def record_outcome(self, pair, entry_type, pnl):
+    def record_outcome(self, pair, entry_type, pnl, **_kw):
         self.outcomes.append((pair, entry_type, pnl))
 
     def record_indicator_outcome(self, ind_id, pnl, entry_type=None):
@@ -35,7 +35,7 @@ def _make_pos(entry_type="gp_ensemble"):
         "size": 0.1,
         "stop_loss_pct": 1.5,
         "profit_target_pct": 3.0,
-        "time_exit_cycles": 288,
+        "time_exit_cycles": 150,
         "held_cycles": 0,
         "breakeven_set": False,
         "partial_done": False,
@@ -43,6 +43,7 @@ def _make_pos(entry_type="gp_ensemble"):
         "current_stop": 0.985,
         "atr": 0.01,
         "entry_type": entry_type,
+        "mfe_giveback_enabled": False,  # isolate classic exit reasons by default
     }
 
 
@@ -53,6 +54,14 @@ def _cases(reason):
         return 0.98, {}, None
     if reason == "profit_target":
         return 1.04, {}, None
+    if reason == "mfe_giveback":
+        return 1.003, {
+            "mfe_giveback_enabled": True,
+            "peak_mfe_pct": 0.8,
+            "unrealised_pct": 0.3,
+            "mfe_giveback_min_pct": 0.4,
+            "mfe_giveback_frac": 0.5,
+        }, None
     if reason == "breakeven":
         return 1.02, {}, None
     if reason == "trailing":
@@ -108,7 +117,7 @@ def test_stop_adjustments_do_not_close(reason):
     assert res["pos"]["current_stop"] is not None
 
 
-@pytest.mark.parametrize("reason", ["stop_loss", "profit_target"])
+@pytest.mark.parametrize("reason", ["stop_loss", "profit_target", "mfe_giveback"])
 def test_real_close_is_logged_with_correct_keys(reason):
     res = _run(reason)
     assert res["pos_deleted"] is True, "real close must delete the position"

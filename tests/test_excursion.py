@@ -1,4 +1,4 @@
-"""HIF MFE/MAE peak tracking + exit-intel giveback overlay."""
+"""HIF MFE/MAE peak tracking + exit-intel giveback overlay + scoreboard."""
 
 from __future__ import annotations
 
@@ -14,8 +14,13 @@ from hermes_core.engines.excursion import (
 from hermes_core.engines.exit_intel import apply_exit_intel
 
 
-def test_flag_default_off(monkeypatch):
+def test_flag_default_on(monkeypatch):
     monkeypatch.delenv("MFE_TRACKING", raising=False)
+    assert mfe_tracking_enabled() is True
+
+
+def test_flag_explicit_off(monkeypatch):
+    monkeypatch.setenv("MFE_TRACKING", "0")
     assert mfe_tracking_enabled() is False
 
 
@@ -37,6 +42,15 @@ def test_giveback_snapshot():
     assert snap["mfe_pct"] == pytest.approx(2.0)
     assert snap["giveback_pct"] == pytest.approx(1.2)
     assert snap["giveback_frac"] == pytest.approx(0.6)
+    assert snap["mfe_capture"] == pytest.approx(0.4)  # 0.8/2.0
+
+
+def test_time_exit_underwater_after_mfe_shows_poor_capture():
+    """Gold-style leak: MFE 0.8% then time_exit at -0.1% → capture negative."""
+    pos = {"peak_mfe_pct": 0.8, "trough_mae_pct": -0.2}
+    snap = excursion_from_position(pos, -0.1)
+    assert snap["giveback_frac"] == pytest.approx(1.125)  # (0.8-(-0.1))/0.8? wait giveback=max(0,mfe-pnl)=0.9, frac=0.9/0.8=1.125
+    assert snap["mfe_capture"] == pytest.approx(-0.1 / 0.8)
 
 
 def test_cortex_excursion_stats(tmp_path, monkeypatch):
@@ -57,6 +71,11 @@ def test_cortex_excursion_stats(tmp_path, monkeypatch):
     st = c.excursion_stats("EUR/USD", "mean_reversion")
     assert st["n"] == 2
     assert st["avg_giveback_frac"] == pytest.approx((0.75 + 0.33) / 2, rel=1e-3)
+    assert st["avg_mfe_capture"] is not None
+    board = c.summary()["excursion"]
+    assert board["n"] == 2
+    assert board["avg_mfe_capture"] is not None
+    assert "mean_reversion" in board["by_entry_type"]
 
 
 def test_exit_intel_high_giveback_tightens():
@@ -70,6 +89,7 @@ def test_exit_intel_high_giveback_tightens():
         return {
             "n": 5, "avg_mfe": 2.0, "avg_mae": -0.5,
             "avg_giveback": 1.0, "avg_giveback_frac": 0.55,
+            "avg_mfe_capture": 0.3,
         }
 
     cortex = SimpleNamespace(edge_stats=edge, excursion_stats=exc)

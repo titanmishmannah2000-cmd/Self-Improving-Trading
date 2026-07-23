@@ -107,8 +107,29 @@ async def test_stream_fills_cache_and_fetch_fn_returns_latest(frames, monkeypatc
     g = stream.fetch_fn("ETH/USD")
     assert g is not None
     assert g["price"] == 1.30
-    # history buffered
+    # history buffered (moved prices → distinct bucketed bars)
     assert len(stream.seed_history_fn("BTC/USD")) >= 2
+    await stream.aclose()
+
+
+async def test_stream_buckets_identical_ticks(monkeypatch):
+    """Identical Coinbase spam must not fill history with duplicate closes."""
+    frames = [
+        '{"type": "ticker", "product_id": "BTC-USD", "price": "65000.00"}',
+        '{"type": "ticker", "product_id": "BTC-USD", "price": "65000.00"}',
+        '{"type": "ticker", "product_id": "BTC-USD", "price": "65000.00"}',
+        '{"type": "ticker", "product_id": "BTC-USD", "price": "65000.00"}',
+        '{"type": "ticker", "product_id": "BTC-USD", "price": "65000.00"}',
+    ]
+    monkeypatch.setattr(
+        "hermes_core.adapters.ws_price.websockets.connect", _fake_connect(frames),
+    )
+    stream = PriceStream(["BTC/USD"], url="wss://fake.test")
+    await stream.connect()
+    await asyncio.sleep(0.1)
+    hist = stream.seed_history_fn("BTC/USD")
+    assert len(hist) == 1
+    assert hist[0]["price"] == 65000.0
     await stream.aclose()
 
 
