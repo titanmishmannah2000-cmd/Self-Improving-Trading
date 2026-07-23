@@ -66,7 +66,8 @@ log trades, and push full state to the dashboard.
 - `_work()` thread: per-cycle loop.
 - `run_cycle(pair, prices, strategy, ..., history_fn, ...)`: the core.
   - Calls `evaluate_entry(...)` (traditional signal).
-  - If `sig is None` AND `GP_PROMOTE=="1"` AND `pair not in GP_EXCLUDE_PAIRS`
+  - If `sig is None` AND `GP_PROMOTE=="1"` AND promote gate allows the pair
+    (not banned in `gp_promote_gate.json`; `GP_EXCLUDE_PAIRS` seeds initial bans)
     → calls `gp_ensemble_signal(pair, prices, strategy, daily_prices=gp_daily_prices(pair), promote=True)`.
   - Traditional entries always win; GP is a tie-break fallback → never a double open.
   - RR guard `check_rr_guard(sl, tp)` requires R:R ≥ 1.0 before committing.
@@ -75,6 +76,8 @@ log trades, and push full state to the dashboard.
   - `_log_trade(...)` records closed trades, also carrying `entry_type`.
   - `_log_gp_shadow(...)` (separate, always-on) logs the GP "would-be" signal
     every 300s per pair to `gp_shadow.jsonl` — observation only, never an order.
+    Also feeds forward shadow PnL into the promote gate so banned pairs still
+    accumulate expectancy while invent/shadow keep running.
 - `_maybe_discover(bot, pair, prices)`: throttled GP discovery, at most once per
   `DISCOVERY_INTERVAL_S` (default 3600) per (bot,pair), persisted to
   `state/discovered/{pair}.json`. Runs in a bounded background thread so it
@@ -84,8 +87,8 @@ log trades, and push full state to the dashboard.
 `_log_trade`, `_log_skip`.
 
 **Interacts with:** `entry.py` (gp_ensemble_signal, gp_daily_prices),
-`genetic.py` (load_discovered_indicators), `cortex`, `adapters.aggregate`
-(history_fn), dashboard `/api/ingest/{bot}`.
+`genetic.py` (load_discovered_indicators), `gp_promote_gate`, `cortex`,
+`adapters.aggregate` (history_fn), dashboard `/api/ingest/{bot}`.
 
 **Key constants (loop.py):**
 | Constant | Value | Meaning |
@@ -94,7 +97,8 @@ log trades, and push full state to the dashboard.
 | `GP_SHADOW_LOG_INTERVAL_S` | 300 | min seconds between GP shadow log records per (bot,pair) |
 | `MAX_POSITION_SIZE` | (imported) | hard cap on position size |
 | `GP_PROMOTE` env | `"1"` to enable | promotes GP brain to real (paper) entries |
-| `GP_EXCLUDE_PAIRS` env | `"GBP/JPY,BTC/USD"` default | pairs never GP-promoted (negative daily paper expectancy) |
+| `GP_EXCLUDE_PAIRS` env | `"GBP/JPY,BTC/USD"` default | seeds initial promote-gate bans (auto ban/unban thereafter) |
+| `gp_promote_gate` | `state/gp_promote_gate.json` | per-pair ban from paper/shadow expectancy (hysteresis + cooldown) |
 
 ---
 

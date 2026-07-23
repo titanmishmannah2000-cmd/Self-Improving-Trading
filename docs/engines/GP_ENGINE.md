@@ -159,9 +159,7 @@ in run_cycle(), after traditional evaluate_entry():
 
   sig = evaluate_entry(...)                  # traditional (mean_reversion/rsi_momentum)
   if sig is None and get_env("GP_PROMOTE") == "1":
-      _excl = {p.strip().upper() for p in
-               get_env("GP_EXCLUDE_PAIRS", "GBP/JPY,BTC/USD").split(",") if p.strip()}
-      if pair not in _excl:
+      if gp_promote_gate.is_promote_allowed(bot, pair):   # expectancy gate
           _gp_sig = gp_ensemble_signal(pair, prices, strategy,
                                        daily_prices=gp_daily_prices(pair),
                                        promote=True)
@@ -176,15 +174,29 @@ in run_cycle(), after traditional evaluate_entry():
   cortex.record_entry(pair, entry_type)
 ```
 
+**GP promote gate** (`hermes_core/engines/gp_promote_gate.py`):
+- Persists `{bot}/state/gp_promote_gate.json` with per-pair `banned`, rolling
+  paper/shadow PnL samples, expectancy, cooldown timestamp.
+- `GP_EXCLUDE_PAIRS` **seeds** initial bans only (cold start); thereafter the
+  gate bans when mean expectancy ≤ `GP_PROMOTE_GATE_BAN` and unbans when
+  ≥ `GP_PROMOTE_GATE_UNBAN` (hysteresis), after ≥ `GP_PROMOTE_GATE_MIN_SAMPLES`
+  and outside `GP_PROMOTE_GATE_COOLDOWN_S`.
+- Invent + `_log_gp_shadow` keep running while banned; shadow forward-PnL and
+  closed GP paper trades feed `record_pnl` / `observe_shadow`.
+
 **Environment switches (Railway, per service):**
 | Var | Default | Effect |
 |-----|---------|--------|
 | `GP_PROMOTE` | unset | `"1"` enables GP brain paper promotion |
-| `GP_EXCLUDE_PAIRS` | `"GBP/JPY,BTC/USD"` | pairs never GP-promoted (negative daily paper expectancy: GBP/JPY −6.30%, BTC/USD −26.01%) |
+| `GP_EXCLUDE_PAIRS` | `"GBP/JPY,BTC/USD"` | seeds initial promote-gate bans |
+| `GP_PROMOTE_GATE_MIN_SAMPLES` | `30` | min PnL samples before ban/unban flip |
+| `GP_PROMOTE_GATE_BAN` | `-0.05` | mean % expectancy → ban if ≤ |
+| `GP_PROMOTE_GATE_UNBAN` | `0.05` | mean % expectancy → unban if ≥ |
+| `GP_PROMOTE_GATE_COOLDOWN_S` | `86400` | seconds after a flip before another flip |
 
-**Measured daily-regime paper expectancy** (basis for the exclusion list):
+**Historical daily-regime paper expectancy** (basis for the original exclude list):
 XAU/USD +4.28%, XAG/USD +4.28%, ETH/USD +16.77%, EUR/USD +1.43%, AUD/USD +0.79%,
-GBP/USD +0.53%, GBP/JPY −6.30% (excluded), BTC/USD −26.01% (excluded).
+GBP/USD +0.53%, GBP/JPY −6.30% (seeded ban), BTC/USD −26.01% (seeded ban).
 
 ---
 

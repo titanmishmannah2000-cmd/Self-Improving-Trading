@@ -99,6 +99,12 @@ from hermes_core.engines.skip_shadow_learn import (
     skip_shadow_promote_enabled,
     skip_shadow_reflect_enabled,
 )
+from hermes_core.engines.gp_promote_gate import (
+    is_promote_allowed,
+    observe_shadow,
+    record_pnl as gp_gate_record_pnl,
+    refresh_from_pnls,
+)
 from hermes_core.engines.reflect import (
     _is_reflection_done,
     _mark_reflection_done,
@@ -162,6 +168,7 @@ __all__ = [
     "skip_shadow_promote_enabled", "maybe_promote_skip_shadow",
     "promote_skip_shadow_proposal",
     "analyze_skip_shadow", "format_skip_shadow_context", "propose_skip_shadow_notes",
+    "is_promote_allowed", "gp_gate_record_pnl", "refresh_from_pnls", "observe_shadow",
     "run_cycle", "write_heartbeat", "maybe_circuit_break",
     "MAX_CONSECUTIVE_FAILURES", "CIRCUIT_SLEEP_S",
 ]

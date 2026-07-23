@@ -315,6 +315,10 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
                 gpi.record_win(pair)
             else:
                 gpi.record_loss(pair)
+            # Feed paper GP closes into the promote gate (ban/unban evidence).
+            with contextlib.suppress(Exception):
+                from hermes_core.engines import gp_promote_gate as gpg
+                gpg.record_pnl(bot, pair, float(pnl))
     # [S18] Discord/webhook alert on real trade close (fail-soft)
     if alert_fn is not None:
         with contextlib.suppress(Exception):
@@ -435,6 +439,19 @@ def _log_gp_shadow(bot: str, pair: str, prices: list[float], strategy: dict,
         if sig is not None:
             consensus = sig.meta.get("consensus") or "neutral"
         _GP_CONSENSUS_CACHE[pair] = consensus
+
+        # Forward-settle shadow expectancy into the promote gate (banned pairs
+        # still accumulate evidence while invent/shadow keep running).
+        with contextlib.suppress(Exception):
+            from hermes_core.engines import gp_promote_gate as gpg
+            _dir = None
+            if sig is not None:
+                _gs = float(sig.meta.get("gp_strength") or 0.0)
+                if _gs > 0:
+                    _dir = 1
+                elif _gs < 0:
+                    _dir = -1
+            gpg.observe_shadow(bot, pair, float(prices[-1]), direction=_dir)
 
         now = time.time()
         key = (bot, pair)
@@ -769,9 +786,20 @@ def run_cycle(
                 _os_count, vol_above, reentry, cycle, session_token,
             )
             gp_sig = None
-            _excl = {p.strip().upper() for p in
-                     get_env("GP_EXCLUDE_PAIRS", "GBP/JPY,BTC/USD").split(",") if p.strip()}
-            _want_gp = get_env("GP_PROMOTE") == "1" and pair not in _excl
+            # GP promote gate: expectancy-driven per-pair ban/unban (seeds from
+            # GP_EXCLUDE_PAIRS). Invent/shadow still run when banned.
+            _want_gp = False
+            if get_env("GP_PROMOTE") == "1":
+                try:
+                    from hermes_core.engines import gp_promote_gate as gpg
+                    _want_gp = gpg.is_promote_allowed(bot, pair)
+                except Exception:  # noqa: BLE001 — fail open to env list only
+                    _excl = {
+                        p.strip().upper()
+                        for p in get_env("GP_EXCLUDE_PAIRS", "GBP/JPY,BTC/USD").split(",")
+                        if p.strip()
+                    }
+                    _want_gp = pair.upper() not in _excl
             # Legacy: GP only if traditional quiet. Ranking: also score GP when
             # traditional fires so the better edge can win.
             if _want_gp and (trad_sig is None or _rank_on):
