@@ -1,10 +1,76 @@
 {
-  "suppressions": {},
+  "suppressions": {
+    "BTC/USD": [],
+    "ETH/USD": []
+  },
   "priority_discovery": false,
-  "probe_interval": 50,
+  "probe_interval": 10,
   "rollback": false,
   "soft_weights": true,
-  "allocation": {},
-  "rebuilt_from_scrub": true,
-  "ts": 1784852004.0930688
+  "allocation": {
+    "BTC/USD": {
+      "mean_reversion": {
+        "weight": 1.0,
+        "mode": "soft",
+        "suppressed_soft": false,
+        "evidence_n": 0,
+        "wr": null,
+        "reasons": [
+          "neutral"
+        ]
+      },
+      "rsi_momentum": {
+        "weight": 1.0,
+        "mode": "soft",
+        "suppressed_soft": false,
+        "evidence_n": 0,
+        "wr": null,
+        "reasons": [
+          "neutral"
+        ]
+      },
+      "gp_ensemble": {
+        "weight": 1.0,
+        "mode": "soft",
+        "suppressed_soft": false,
+        "evidence_n": 0,
+        "wr": null,
+        "reasons": [
+          "neutral"
+        ]
+      }
+    },
+    "ETH/USD": {
+      "mean_reversion": {
+        "weight": 1.0,
+        "mode": "soft",
+        "suppressed_soft": false,
+        "evidence_n": 0,
+        "wr": null,
+        "reasons": [
+          "neutral"
+        ]
+      },
+      "rsi_momentum": {
+        "weight": 1.0,
+        "mode": "soft",
+        "suppressed_soft": false,
+        "evidence_n": 0,
+        "wr": null,
+        "reasons": [
+          "neutral"
+        ]
+      },
+      "gp_ensemble": {
+        "weight": 1.0,
+        "mode": "soft",
+        "suppressed_soft": false,
+        "evidence_n": 0,
+        "wr": null,
+        "reasons": [
+          "neutral"
+        ]
+      }
+    }
+  }
 }

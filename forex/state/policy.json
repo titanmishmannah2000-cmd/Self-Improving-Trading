@@ -8,133 +8,133 @@
   "priority_discovery": false,
   "probe_interval": 10,
   "rollback": false,
-  "soft_weights": false,
+  "soft_weights": true,
   "allocation": {
     "EUR/USD": {
       "mean_reversion": {
         "weight": 1.0,
-        "mode": "disabled",
+        "mode": "soft",
         "suppressed_soft": false,
         "evidence_n": 0,
         "wr": null,
         "reasons": [
-          "disabled"
+          "neutral"
         ]
       },
       "rsi_momentum": {
         "weight": 1.0,
-        "mode": "disabled",
+        "mode": "soft",
         "suppressed_soft": false,
         "evidence_n": 0,
         "wr": null,
         "reasons": [
-          "disabled"
+          "neutral"
         ]
       },
       "gp_ensemble": {
         "weight": 1.0,
-        "mode": "disabled",
+        "mode": "soft",
         "suppressed_soft": false,
         "evidence_n": 0,
         "wr": null,
         "reasons": [
-          "disabled"
+          "neutral"
         ]
       }
     },
     "GBP/USD": {
       "mean_reversion": {
         "weight": 1.0,
-        "mode": "disabled",
+        "mode": "soft",
         "suppressed_soft": false,
         "evidence_n": 0,
         "wr": null,
         "reasons": [
-          "disabled"
+          "neutral"
         ]
       },
       "rsi_momentum": {
         "weight": 1.0,
-        "mode": "disabled",
+        "mode": "soft",
         "suppressed_soft": false,
         "evidence_n": 0,
         "wr": null,
         "reasons": [
-          "disabled"
+          "neutral"
         ]
       },
       "gp_ensemble": {
         "weight": 1.0,
-        "mode": "disabled",
+        "mode": "soft",
         "suppressed_soft": false,
         "evidence_n": 0,
         "wr": null,
         "reasons": [
-          "disabled"
+          "neutral"
         ]
       }
     },
     "GBP/JPY": {
       "mean_reversion": {
         "weight": 1.0,
-        "mode": "disabled",
+        "mode": "soft",
         "suppressed_soft": false,
         "evidence_n": 0,
         "wr": null,
         "reasons": [
-          "disabled"
+          "neutral"
         ]
       },
       "rsi_momentum": {
         "weight": 1.0,
-        "mode": "disabled",
+        "mode": "soft",
         "suppressed_soft": false,
         "evidence_n": 0,
         "wr": null,
         "reasons": [
-          "disabled"
+          "neutral"
         ]
       },
       "gp_ensemble": {
         "weight": 1.0,
-        "mode": "disabled",
+        "mode": "soft",
         "suppressed_soft": false,
         "evidence_n": 0,
         "wr": null,
         "reasons": [
-          "disabled"
+          "neutral"
         ]
       }
     },
     "AUD/USD": {
       "mean_reversion": {
         "weight": 1.0,
-        "mode": "disabled",
+        "mode": "soft",
         "suppressed_soft": false,
         "evidence_n": 0,
         "wr": null,
         "reasons": [
-          "disabled"
+          "neutral"
         ]
       },
       "rsi_momentum": {
         "weight": 1.0,
-        "mode": "disabled",
+        "mode": "soft",
         "suppressed_soft": false,
         "evidence_n": 0,
         "wr": null,
         "reasons": [
-          "disabled"
+          "neutral"
         ]
       },
       "gp_ensemble": {
         "weight": 1.0,
-        "mode": "disabled",
+        "mode": "soft",
         "suppressed_soft": false,
         "evidence_n": 0,
         "wr": null,
         "reasons": [
-          "disabled"
+          "neutral"
         ]
       }
     }

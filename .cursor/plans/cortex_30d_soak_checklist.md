@@ -23,10 +23,10 @@ Track every inventory item from the Cortex audit. Status: done / ops-pending.
 | 9 | Exile/reinstate on GP sub-block WR | **done** | `record_indicator_outcome` |
 | 10 | Exile file = source of truth; sync on load | **done** | `_sync_exile_flags_from_file` |
 | 11 | `best_entry_type(pair)` per-pair | **done** | `decision_cortex` |
-| 12 | Rebuild memory from clean trades (#18) | **tool ready** | `uv run python tools/rebuild_cortex.py` |
-| 13 | Recompute policy from clean cortex (#17) | **tool ready** | same tool |
+| 12 | Rebuild memory from clean trades (#18) | **done** | `tools/rebuild_cortex.py` + `state_hygiene --rebuild-learning` |
+| 13 | Recompute policy from clean cortex (#17) | **done** | same tools |
 | 14 | Dead flags documented (priority_discovery ops-only) | **done** | summary `gates` text |
-| 19 | Scrub SOP (quarantine seeds + rebuild + clear exile) | **tool ready** | `tools/rebuild_cortex.py` |
+| 19 | Scrub SOP (quarantine seeds + rebuild + clear exile) | **done** | `tools/rebuild_cortex.py` / `state_hygiene.py` |
 
 ## P2 — hygiene
 
@@ -38,13 +38,15 @@ Track every inventory item from the Cortex audit. Status: done / ops-pending.
 | 18 | Path docs fixed | **done** | cortex docstring + `COMPONENT_REGISTRY.md` |
 | 20 | Probe fail-open documented | **done** | `risk.apply_probe_sizing` docstring |
 
-## Operator steps (Railway / volume) — still required
+## Operator steps
 
-- [ ] On each bot volume: `HERMES_STATE_ROOT` + `HERMES_BOT_NAME` set correctly
-- [ ] Run `uv run python tools/rebuild_cortex.py` against the **volume** (or copy script + run in service) so runtime cortex is rebuilt from post-scrub `trades.jsonl`
-- [ ] Confirm self-audit cortex checks green: `cortex_no_corrupt`, `cortex_exile_no_seed_stub`, `cortex_stub_policy_absent`, `cortex_stub_tracker_absent`
-- [ ] Redeploy forex / gold / crypto after code lands
-- [ ] Start 30-day clock only after go/no-go (Discovery plan + this checklist)
+- [x] Per-service `HERMES_BOT_NAME` + `HERMES_STATE_ROOT=/data` + `PRICE_BACKEND=aggregate` confirmed on Railway (forex/gold/crypto)
+- [x] Local rebuild: `tools/rebuild_cortex.py` + `tools/state_hygiene.py --rebuild-learning`
+- [x] Local self-audit cortex checks green (`cortex_no_corrupt`, `cortex_exile_no_seed_stub`, `cortex_stub_policy_absent`, `cortex_stub_tracker_absent`, `policy_json_valid`)
+- [x] Redeploy forex / gold / crypto / dashboard from source (`railway redeploy --from-source`)
+- [x] `Dockerfile` copies `tools/` so volume ops scripts exist in the image
+- [x] Start 30-day paper clock markers via `tools/start_soak_clock.py` → `{bot}/state/soak_started.json`
+- [ ] After image with `tools/` is live: SSH each service and run `python tools/start_soak_clock.py <bot>` against `/data` (volume truth)
 
 ## Tests to re-run after further edits
 

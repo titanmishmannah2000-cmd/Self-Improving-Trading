@@ -18,9 +18,20 @@ Complete after the soak-readiness code is deployed. Do **not** start the 30-day 
 
 ```bash
 python tools/state_hygiene.py --rebuild-learning --rotate-skips
+python tools/rebuild_cortex.py
+# Stamp the 30-day paper clock (writes {bot}/state/soak_started.json):
+python tools/start_soak_clock.py forex gold crypto
 ```
 
 This quarantines legacy `state/` runtime files, removes `live_prices_*.json` stubs + stub heartbeats, deletes `goldbot/`, bootstraps `{forex,gold,crypto}/state/trades.jsonl`, sets soak sessions to `24h`, and rebuilds cortex/policy from post-scrub trades.
+
+On Railway (image must include `tools/`):
+
+```bash
+railway ssh -s forex -- python tools/start_soak_clock.py forex
+railway ssh -s gold -- python tools/start_soak_clock.py gold
+railway ssh -s crypto -- python tools/start_soak_clock.py crypto
+```
 
 ## Go / no-go
 
