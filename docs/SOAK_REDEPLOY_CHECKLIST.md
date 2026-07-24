@@ -29,7 +29,7 @@ python -m hermes_core.engines.self_audit
 python -c "from hermes_core.engines.self_audit import run_all; import json; print(json.dumps(run_all(), indent=2))"
 ```
 
-Require `go_nogo: true` for forex, gold, and crypto (heartbeat age &lt; 10m, non-synthetic prices, trades file present, archive isolated). Soft checks (GP admitted / shadow active) may stay red briefly while invent runs — start the soak when classical fills are appending **or** GP reject logs show invent is healthy.
+Require `go_nogo: true` for forex, gold, and crypto (heartbeat age &lt; 10m, non-synthetic prices, trades file present, archive isolated, **not** effectively paused). If `not_effectively_paused` fails, rotate skips (`--rotate-skips`) and confirm bots are fetching real candles before starting the clock. Soft checks (GP admitted / shadow active) may stay red briefly while invent runs — start the soak when classical fills are appending **or** GP reject logs show invent is healthy.
 
 ## During the 30 days
 
