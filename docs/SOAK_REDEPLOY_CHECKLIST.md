@@ -34,10 +34,24 @@ Require `go_nogo: true` for forex, gold, and crypto (heartbeat age &lt; 10m, non
 
 ## During the 30 days
 
-- Weekly: WR, expectancy, DD, admit rate, skip mix, heartbeat age.
+- Weekly: WR, expectancy, DD, admit rate, skip mix, heartbeat age,
+  `last_discovery_run_ts` / invent pulse `status`+`reject_counts`.
 - Auto-halt triggers: synthetic prices, feed-error spike, idle/pause SLO
   (all recent skips are `no_signal`/feed/BB for hours), or manual `halt` file.
 - L21 novel-regime flatline pauses **new entries** for 60 cycles and appends
   `{bot}/state/flatline_log.jsonl` (alert after 3× `NOVEL_REGIME` on a pair).
 - DD past config `max_drawdown` / `failure_below` → halt and investigate.
 - Expect **clean data + possible mild paper edge**, not guaranteed profit.
+
+## Discovery soak watch-outs (post-hardening)
+
+- Invent timeout abandons the waiter (does **not** hang the discovery daemon);
+  `status=timeout` / `in_flight` pulses are normal under load — chronic forever
+  timeout means raise `timeout_s` or shrink gens/pop for that bot.
+- GP lockout unlocks after `GP_LOCKOUT_DECAY_S` (default 6h); exile reinstates
+  after `EXILE_DECAY_S` (default 7d) even without 100-entry recovery.
+- `hypotheses_kb.jsonl` auto-rotates past `HYPOTHESES_KB_MAX_LINES`; hygiene
+  also rotates on `--` default run.
+- Residual risks still not fully eliminated: abandoned invent threads can
+  briefly race a later pass; S10 remain strict so `admit_zero` is expected
+  often; classical entries should carry the soak if GP stays in shadow.

@@ -11,6 +11,8 @@ def test_reinvent_due_when_votable_and_interval_elapsed(monkeypatch, tmp_path):
     monkeypatch.setattr(loop, "DISCOVERY_REINVENT_INTERVAL_S", 10)
     loop._DISCOVERY_LAST.clear()
     loop._DISCOVERY_LAST_INVENT.clear()
+    loop._DISCOVERY_IN_FLIGHT.clear()
+    loop._LAST_DISCOVERY_RUN.clear()
 
     calls: list[dict] = []
 

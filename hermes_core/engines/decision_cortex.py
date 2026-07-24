@@ -8,6 +8,8 @@ Governance (blueprint ENGINE 8 / Phase 15):
   * auto-exile: an indicator with <30% WR as a GP entry after >=5 attempts is
     exiled (L36 exile filter — removed from GP candidacy).
   * exile decay: reconsider after 100 entries; reinstate if WR >= 40%.
+  * wall-clock escape: reinstate after EXILE_WALL_CLOCK_S (default 7d) so an
+    early soak exile streak cannot empty the ensemble for the whole run.
   * best_entry_type() always returns a known, valid type.
 
 Persistence:
@@ -18,6 +20,8 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
+import time
 from pathlib import Path
 
 from hermes_core.state.paths import cortex_dir, current_bot
@@ -27,6 +31,8 @@ EXILE_WR = 0.30  # [GUARD L36] WR below this after enough attempts -> exile
 EXILE_MIN_ATTEMPTS = 5  # need >=5 GP attempts before exile can trigger
 REINSTATE_WR = 0.40  # WR at/above this reinstates an exiled indicator
 EXILE_DECAY_ENTRIES = 100  # reconsider exiled indicators every 100 entries
+# Wall-clock escape so an early-soak exile streak cannot empty GP forever.
+EXILE_WALL_CLOCK_S = int(os.getenv("EXILE_DECAY_S", str(7 * 86400)))
 VALID_ENTRY_TYPES = ("mean_reversion", "gp_ensemble")
 
 # Optional test overrides (tests monkeypatch these module attributes).
@@ -398,22 +404,50 @@ class Cortex:
         wr = st["wins"] / st["attempts"]
         exiles = _load_exiles(self._bot)
         if st["exiled"]:
-            # decay reconsider: only act near the decay cadence, reinstate >=40%
-            if st["attempts"] % EXILE_DECAY_ENTRIES == 0 and wr >= REINSTATE_WR:
+            # decay reconsider: entries cadence OR wall-clock escape
+            aged = False
+            rec = exiles.get(ind_id) or {}
+            ts = rec.get("exiled_at")
+            if ts is not None and (time.time() - float(ts)) >= max(1, int(EXILE_WALL_CLOCK_S)):
+                aged = True
+            if (st["attempts"] % EXILE_DECAY_ENTRIES == 0 and wr >= REINSTATE_WR) or aged:
                 st["exiled"] = False
                 exiles.pop(ind_id, None)
         elif st["attempts"] >= EXILE_MIN_ATTEMPTS and wr < EXILE_WR:
             st["exiled"] = True
-            exiles[ind_id] = {"exiled_at_attempts": st["attempts"], "wr": round(wr, 3)}
+            exiles[ind_id] = {
+                "exiled_at_attempts": st["attempts"],
+                "wr": round(wr, 3),
+                "exiled_at": time.time(),
+            }
         _save_exiles(exiles, self._bot)
         self._flush()
 
     def is_indicator_exiled(self, ind_id: str) -> bool:
-        return bool(_load_exiles(self._bot).get(ind_id))
+        exiles = _load_exiles(self._bot)
+        rec = exiles.get(ind_id)
+        if not rec:
+            return False
+        ts = rec.get("exiled_at")
+        if ts is not None and (time.time() - float(ts)) >= max(1, int(EXILE_WALL_CLOCK_S)):
+            # Wall-clock reinstate without waiting for another outcome tick.
+            exiles.pop(ind_id, None)
+            _save_exiles(exiles, self._bot)
+            st = self._indicator_stats.get(ind_id)
+            if st is not None:
+                st["exiled"] = False
+                self._flush()
+            return False
+        return True
 
     def exile_indicator(self, ind_id: str) -> None:
         exiles = _load_exiles(self._bot)
-        exiles[ind_id] = exiles.get(ind_id, {"manual": True})
+        prev = exiles.get(ind_id) or {}
+        if not isinstance(prev, dict):
+            prev = {}
+        prev.setdefault("manual", True)
+        prev.setdefault("exiled_at", time.time())
+        exiles[ind_id] = prev
         _save_exiles(exiles, self._bot)
         if ind_id in self._indicator_stats:
             self._indicator_stats[ind_id]["exiled"] = True

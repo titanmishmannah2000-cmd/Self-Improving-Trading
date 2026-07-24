@@ -25,6 +25,8 @@ Contract (Section 6):
 from __future__ import annotations
 
 import json
+import os
+import time
 from pathlib import Path
 
 from hermes_core.state.paths import gp_state_path
@@ -33,6 +35,8 @@ from hermes_core.state.paths import gp_state_path
 DEFAULT_GP_SCORE = 0.0  # [GUARD L29] corrected from -0.3 (Problem 3)
 SCORE_GATE = 0.0  # entry allowed only if score >= this
 LOCKOUT_AFTER = 3  # consecutive losses -> locked [L29]
+# Wall-clock unlock so a 3-loss streak cannot empty the ensemble for the whole soak.
+LOCKOUT_DECAY_S = int(os.getenv("GP_LOCKOUT_DECAY_S", str(6 * 3600)))
 CULL_WR = 0.40  # same-regime WR below this -> cull [Problem 4]
 CULL_MIN_SIGNALS = 50  # need this many same-regime signals before culling
 REGIME_MISMATCH_PENALTY = 0.5  # weight multiplier when used outside trained regime
@@ -111,6 +115,8 @@ def record_loss(pair: str) -> None:
     state = _load_state(pair)
     seq = state.setdefault("loss_seq", {})
     seq[pair] = seq.get(pair, 0) + 1
+    if seq[pair] >= LOCKOUT_AFTER:
+        state.setdefault("lockout_ts", {})[pair] = time.time()
     _save_state(state, pair)
 
 
@@ -118,11 +124,27 @@ def record_win(pair: str) -> None:
     """Record a winning GP entry; resets the consecutive-loss counter."""
     state = _load_state(pair)
     state.setdefault("loss_seq", {})[pair] = 0
+    state.setdefault("lockout_ts", {}).pop(pair, None)
     _save_state(state, pair)
 
 
 def is_locked(pair: str) -> bool:
-    return _load_state(pair).get("loss_seq", {}).get(pair, 0) >= LOCKOUT_AFTER
+    """True while consecutive losses >= LOCKOUT_AFTER and decay window not elapsed."""
+    state = _load_state(pair)
+    if state.get("loss_seq", {}).get(pair, 0) < LOCKOUT_AFTER:
+        return False
+    locked_at = state.get("lockout_ts", {}).get(pair)
+    if locked_at is None:
+        # Legacy lock without timestamp — start the decay clock now.
+        state.setdefault("lockout_ts", {})[pair] = time.time()
+        _save_state(state, pair)
+        return True
+    if (time.time() - float(locked_at)) >= max(1, int(LOCKOUT_DECAY_S)):
+        state.setdefault("loss_seq", {})[pair] = 0
+        state.setdefault("lockout_ts", {}).pop(pair, None)
+        _save_state(state, pair)
+        return False
+    return True
 
 
 def should_suppress(pair: str, cond: dict | None = None) -> tuple[bool, str]:

@@ -1068,20 +1068,60 @@ def discover(
     """
     rng = random.Random(seed)
     prices = list(prices)
-    if len(prices) < SIGNAL_LOOKBACK:
-        return []
-
     run_id = (
         f"{ENGINE_VERSION}_{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}_{uuid.uuid4().hex[:8]}"
     )
-    n_islands = max(1, int(n_islands if n_islands is not None else N_ISLANDS_DEFAULT))
     interval = str(interval or "1d").strip() or "1d"
     h_bin = _horizon_bin(horizon)
+
+    def _early_pulse(status: str, reason: str) -> None:
+        """Always leave a dashboard-visible pulse — even soft-fail early exits."""
+        with contextlib.suppress(Exception):
+            _save_discovery_pulse(
+                pair,
+                {
+                    "run_id": run_id,
+                    "pair": pair,
+                    "engine_version": ENGINE_VERSION,
+                    "ts": datetime.now(UTC).isoformat(),
+                    "interval": interval,
+                    "horizon": horizon,
+                    "n_islands": max(
+                        1, int(n_islands if n_islands is not None else N_ISLANDS_DEFAULT)
+                    ),
+                    "generations": generations,
+                    "pop_size": pop_size,
+                    "candidates_evaluated": 0,
+                    "candidates_unique": 0,
+                    "candidates_gated": 0,
+                    "admitted": 0,
+                    "admit_rate": 0.0,
+                    "best_oos": 0.0,
+                    "status": status,
+                    "reason": reason,
+                    "reject_counts": {},
+                    "map_elites": {
+                        "filled": 0,
+                        "total_cells": len(_map_elites_cells()),
+                        "coverage": 0.0,
+                    },
+                },
+            )
+
+    if len(prices) < SIGNAL_LOOKBACK:
+        _early_pulse("skipped_short_history", f"<{SIGNAL_LOOKBACK} bars for invent")
+        return []
+
+    n_islands = max(1, int(n_islands if n_islands is not None else N_ISLANDS_DEFAULT))
 
     cut = int(len(prices) * 0.6)
     train = prices[:cut]
     test = prices[cut:]
     if len(train) < SIGNAL_LOOKBACK or len(test) < 40:
+        _early_pulse(
+            "skipped_short_split",
+            f"train<{SIGNAL_LOOKBACK} or test<40 (n={len(prices)})",
+        )
         return []
 
     # 1) Evolve on TRAIN (islands + lexicase + constant polish).
@@ -1205,6 +1245,7 @@ def discover(
                 existing_signals=existing_signals,
                 horizon=horizon,
                 interval=interval,
+                bot=bot_for_pair(pair),
             )
             if not bt.get("approved"):
                 rejects["s10"] += 1
@@ -1289,7 +1330,33 @@ def discover(
     _save_discovery_pulse(pair, pulse)
 
     if admitted:
-        _save_discovered(pair, admitted)
+        # Merge with prior votable so reinvent never briefly empties the book
+        # between discover()'s write and the caller's merge pass.
+        try:
+            prior = [
+                i
+                for i in load_discovered_indicators(pair, include_shared=False)
+                if indicator_expr(i)
+            ]
+            by_key: dict[str, dict] = {}
+            for row in prior + list(admitted):
+                k = str(row.get("expr") or row.get("expr_str") or "").strip()
+                if not k:
+                    continue
+                prev = by_key.get(k)
+                if prev is None or float(row.get("oos_corr") or 0) >= float(
+                    prev.get("oos_corr") or 0
+                ):
+                    by_key[k] = row
+            merged = sorted(
+                by_key.values(),
+                key=lambda x: float(x.get("oos_corr") or 0),
+                reverse=True,
+            )[: max(top_k, 10)]
+            _save_discovered(pair, merged)
+            admitted = merged
+        except Exception:  # noqa: BLE001
+            _save_discovered(pair, admitted)
     return admitted
 
 
@@ -1395,6 +1462,14 @@ def _discovered_dir(pair: str | None = None) -> Path:
         return repo_root() / "state" / "discovered"
 
 
+def _atomic_write_json(path: Path, data: object) -> None:
+    """Write JSON via temp+replace so readers never see a partial file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
 def _pulse_path(pair: str) -> Path:
     return _discovered_dir(pair) / f"_pulse_{_pair_safe(pair)}.json"
 
@@ -1402,8 +1477,7 @@ def _pulse_path(pair: str) -> Path:
 def _save_discovery_pulse(pair: str, pulse: dict) -> Path:
     """Persist the latest discovery-run pulse for dashboard surfacing."""
     path = _pulse_path(pair)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(pulse, indent=2), encoding="utf-8")
+    _atomic_write_json(path, pulse)
     # Also merge into the aggregate pulse index used by the runner push
     # (per owning bot — not a global forex dump).
     index_path = _discovered_dir(pair) / "_discovery_pulse.json"
@@ -1414,7 +1488,7 @@ def _save_discovery_pulse(pair: str, pulse: dict) -> Path:
     except (json.JSONDecodeError, OSError):
         index = {}
     index[pair] = pulse
-    index_path.write_text(json.dumps(index, indent=2), encoding="utf-8")
+    _atomic_write_json(index_path, index)
     return path
 
 
@@ -1630,8 +1704,7 @@ def _save_discovered(pair: str, inds: list[dict]) -> Path:
         )
         clean.append(row)
     path = _discovered_path(pair)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(clean, indent=2), encoding="utf-8")
+    _atomic_write_json(path, clean)
     return path
 
 
@@ -1684,8 +1757,14 @@ def load_discovered_indicators(pair: str, include_shared: bool = True) -> list[d
                 if votable:
                     _save_discovered(pair, votable)
                     own = votable
+                else:
+                    # Seed-only legacy hit — never surface as discoveries.
+                    own = []
         except OSError:
             pass
+
+    # Hard filter: dashboard seed fixtures are never votable discoveries.
+    own = [i for i in own if not _is_dashboard_seed_fixture(i)]
 
     if not include_shared:
         return own

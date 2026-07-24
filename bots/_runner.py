@@ -377,21 +377,33 @@ def _discovery_loop(
 
     interval = max(int(get_env("DISCOVERY_INTERVAL_S", "3600")), 60)
     # Run an immediate first pass shortly after startup, then every `interval`.
+    last_pass_started = 0.0
     while not stop.is_set():
+        last_pass_started = time.time()
         for pair in pairs:
             if stop.is_set():
                 return
             try:
-                from hermes_core.engines.loop import _maybe_discover
+                from hermes_core.engines.loop import _DISCOVERY_IN_FLIGHT, _maybe_discover
 
                 _maybe_discover(bot, pair, cortex=cortex)
                 n = len(load_discovered_indicators(pair))
-                print(f"[hermes][discovery] {bot}/{pair}: discovered={n}", flush=True)
+                in_flight = any(k[0] == bot and k[1] == pair for k in _DISCOVERY_IN_FLIGHT)
+                print(
+                    f"[hermes][discovery] {bot}/{pair}: discovered={n} in_flight={in_flight}",
+                    flush=True,
+                )
             except Exception as exc:  # noqa: BLE001 — never let discovery kill the bot
                 print(
                     f"[hermes][discovery] {bot}/{pair}: ERROR {exc!r}", file=sys.stderr, flush=True
                 )
                 continue
+        # Watchdog breadcrumb: if this line stops appearing, invent hung the thread.
+        age = time.time() - last_pass_started
+        print(
+            f"[hermes][discovery] {bot}: pass_complete pairs={len(pairs)} elapsed_s={age:.1f}",
+            flush=True,
+        )
         # Push discovered state now (decoupled from the trade loop). [X1]
         try:
             if cfg is not None:

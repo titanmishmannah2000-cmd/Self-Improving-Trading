@@ -37,8 +37,10 @@ Crisis stress relaxes ADX so the stop/DD gate is not vacated.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
+import os
 import random
 from collections.abc import Callable
 from pathlib import Path
@@ -59,10 +61,36 @@ OOS_CORR_MIN = 0.15  # 99th-percentile OOS correlation floor (L53)
 KB_PATH: Path | None = None
 
 
-def _kb_path() -> Path:
+def _kb_path(bot: str | None = None) -> Path:
     if KB_PATH is not None:
         return KB_PATH
-    return hypotheses_kb_path()
+    return hypotheses_kb_path(bot)
+
+
+# Cap KB growth so S10 full-file scans stay cheap over a 30-day soak.
+KB_MAX_LINES = int(os.environ.get("HYPOTHESES_KB_MAX_LINES", "5000"))
+KB_KEEP_LINES = int(os.environ.get("HYPOTHESES_KB_KEEP_LINES", "3000"))
+
+
+def rotate_hypotheses_kb(path: Path | None = None, *, bot: str | None = None) -> int:
+    """Keep the newest KB_KEEP_LINES when the jsonl exceeds KB_MAX_LINES.
+
+    Returns number of lines dropped (0 if no rotate). Fail-soft.
+    """
+    p = path or _kb_path(bot)
+    try:
+        if not p.exists():
+            return 0
+        lines = [ln for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        if len(lines) <= KB_MAX_LINES:
+            return 0
+        kept = lines[-KB_KEEP_LINES:]
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        tmp.replace(p)
+        return len(lines) - len(kept)
+    except OSError:
+        return 0
 
 
 # ── price source (injectable) ─────────────────────────────────────────────
@@ -484,9 +512,9 @@ def phase0_corr(signal: list[float], prices: list[float], horizon: int = 1) -> f
 
 
 # ── historical hypothesis KB ──────────────────────────────────────────────
-def _kb_hit(pair: str, param: str, old_val, new_val) -> dict | None:
+def _kb_hit(pair: str, param: str, old_val, new_val, *, bot: str | None = None) -> dict | None:
     """Return a prior verdict for this exact proposal, if recorded."""
-    path = _kb_path()
+    path = _kb_path(bot)
     if not path.exists():
         return None
     try:
@@ -506,8 +534,10 @@ def _kb_hit(pair: str, param: str, old_val, new_val) -> dict | None:
     return None
 
 
-def _kb_record(pair: str, param: str, old_val, new_val, approved: bool, reason: str) -> None:
-    path = _kb_path()
+def _kb_record(
+    pair: str, param: str, old_val, new_val, approved: bool, reason: str, *, bot: str | None = None
+) -> None:
+    path = _kb_path(bot)
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with open(path, "a", encoding="utf-8") as fh:
@@ -527,6 +557,9 @@ def _kb_record(pair: str, param: str, old_val, new_val, approved: bool, reason: 
             )
     except OSError:
         pass
+    # Bound growth so every S10 gate doesn't re-scan an unbounded jsonl.
+    with contextlib.suppress(Exception):
+        rotate_hypotheses_kb(path)
 
 
 def _bump_version(pair: str, bot: str = "forex") -> str | None:
@@ -887,7 +920,7 @@ def backtest_gp_indicator(
     # Regime-scoped KB param; legacy unscoped ``gp_expr`` still readable for
     # horizon=1 / no-interval callers, but new invent always writes scoped keys.
     kb_param = f"gp_expr|{iv or '1d'}|h{h}" if (iv is not None or h != 1) else "gp_expr"
-    cached = _kb_hit(pair, kb_param, "", expr_key)
+    cached = _kb_hit(pair, kb_param, "", expr_key, bot=bot)
     if cached is None and kb_param != "gp_expr":
         # Do NOT fall back to legacy unscoped rejects — those were scored on a
         # different invent horizon/TF and must not block the new regime.
@@ -918,7 +951,7 @@ def backtest_gp_indicator(
             "phases": {},
             "expr": expr_key,
         }
-        _kb_record(pair, kb_param, "", expr_key, False, verdict["reason"])
+        _kb_record(pair, kb_param, "", expr_key, False, verdict["reason"], bot=bot)
         return verdict
 
     try:
@@ -931,7 +964,7 @@ def backtest_gp_indicator(
             "phases": {},
             "expr": expr_key,
         }
-        _kb_record(pair, kb_param, "", expr_key, False, verdict["reason"])
+        _kb_record(pair, kb_param, "", expr_key, False, verdict["reason"], bot=bot)
         return verdict
 
     if len(signal) < 20:
@@ -941,7 +974,7 @@ def backtest_gp_indicator(
             "phases": {},
             "expr": expr_key,
         }
-        _kb_record(pair, kb_param, "", expr_key, False, verdict["reason"])
+        _kb_record(pair, kb_param, "", expr_key, False, verdict["reason"], bot=bot)
         return verdict
 
     # Align prices to signal length for corr/sim (signal starts after lookback).
@@ -1091,5 +1124,5 @@ def backtest_gp_indicator(
         "horizon": h,
         "interval": iv,
     }
-    _kb_record(pair, kb_param, "", expr_key, approved, verdict["reason"])
+    _kb_record(pair, kb_param, "", expr_key, approved, verdict["reason"], bot=bot)
     return verdict

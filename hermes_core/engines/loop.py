@@ -86,6 +86,12 @@ DISCOVERY_INTERVAL_S = int(get_env("DISCOVERY_INTERVAL_S", "3600"))
 DISCOVERY_REINVENT_INTERVAL_S = int(get_env("DISCOVERY_REINVENT_INTERVAL_S", str(6 * 3600)))
 _DISCOVERY_LAST: dict[tuple[str, str], float] = {}  # (bot, pair) -> last pass epoch
 _DISCOVERY_LAST_INVENT: dict[tuple[str, str], float] = {}  # (bot, pair) -> last full invent
+# Per-bot wall-clock of last discovery pass (any outcome) — surfaces on heartbeat
+# as last_discovery_run_ts for dashboard stale-day metrics.
+_LAST_DISCOVERY_RUN: dict[str, float] = {}
+# In-flight invents: timeout abandons the waiter but the worker may still run;
+# skip spawning a second invent for the same (bot, pair) until it finishes.
+_DISCOVERY_IN_FLIGHT: set[tuple[str, str]] = set()
 
 
 def _state_dir(bot: str) -> Path:
@@ -175,6 +181,9 @@ def write_heartbeat(
         # (e.g. gold/silver), so the card still shows a live mini-chart.
         "price_history": price_history or {},
     }
+    disc_ts = _LAST_DISCOVERY_RUN.get(asset)
+    if disc_ts:
+        data["last_discovery_run_ts"] = datetime.fromtimestamp(disc_ts, UTC).isoformat()
     try:
         with open(HEARTBEAT_PATH, "w", encoding="utf-8") as fh:
             json.dump(data, fh, default=str)
@@ -672,6 +681,9 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
         except Exception:  # noqa: BLE001 — pulse must never break invent
             pass
 
+    def _mark_discovery_run() -> None:
+        _LAST_DISCOVERY_RUN[bot] = time.time()
+
     def _work() -> None:
         import logging as _logging
 
@@ -795,9 +807,19 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
                 seed=invent_seed,
             )
 
-    # Bound the work so a slow network/price API can't stall the trade loop.
-    # Discovery runs in its own background thread; crypto gets a longer cap so
-    # invent can finish and appear on Discovered.
+    # Bound the work so a slow network/price API can't stall the discovery
+    # daemon. CRITICAL: do NOT use `with ThreadPoolExecutor` — on timeout its
+    # __exit__ waits for the hung worker and freezes discovery forever. Abandon
+    # the waiter, leave the worker daemonized, and skip re-entry via in-flight.
+    if key in _DISCOVERY_IN_FLIGHT:
+        _status_pulse(
+            status="in_flight",
+            reason="previous invent still running after timeout; not spawning another",
+        )
+        _mark_discovery_run()
+        _DISCOVERY_LAST[key] = time.time()
+        return
+
     try:
         from concurrent.futures import ThreadPoolExecutor
         from concurrent.futures import TimeoutError as FuturesTimeout
@@ -807,25 +829,47 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
             f"(have_votable={have_votable} should_invent={should_invent})",
             flush=True,
         )
-        with ThreadPoolExecutor(max_workers=1) as ex:
-            ex.submit(_work).result(timeout=int(prof["timeout_s"]))
-    except FuturesTimeout:
-        msg = f"[discovery] {bot}/{pair}: error -> TimeoutError after {prof['timeout_s']}s"
-        print(msg, flush=True)
-        _status_pulse(
-            status="timeout",
-            reason=f"invent exceeded {prof['timeout_s']}s",
-        )
-        return
+        _DISCOVERY_IN_FLIGHT.add(key)
+
+        def _work_guarded() -> None:
+            try:
+                _work()
+            finally:
+                _DISCOVERY_IN_FLIGHT.discard(key)
+
+        ex = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"invent-{bot}")
+        try:
+            fut = ex.submit(_work_guarded)
+            fut.result(timeout=int(prof["timeout_s"]))
+        except FuturesTimeout:
+            msg = (
+                f"[discovery] {bot}/{pair}: error -> TimeoutError after "
+                f"{prof['timeout_s']}s (worker abandoned, not joined)"
+            )
+            print(msg, flush=True)
+            _status_pulse(
+                status="timeout",
+                reason=f"invent exceeded {prof['timeout_s']}s",
+            )
+            _mark_discovery_run()
+            # Throttle retries so we don't spam while the abandoned worker runs.
+            _DISCOVERY_LAST[key] = time.time()
+            return
+        finally:
+            # wait=False: never block the discovery loop on a hung invent worker.
+            ex.shutdown(wait=False, cancel_futures=True)
     except Exception as _exc:  # surface the real reason instead of silent drop
         import logging as _logging
 
+        _DISCOVERY_IN_FLIGHT.discard(key)
         msg = f"[discovery] {bot}/{pair}: error -> {type(_exc).__name__}: {_exc}"
         _logging.getLogger("hermes.discovery").warning(msg)
         print(msg, flush=True)
         _status_pulse(status="error", reason=str(_exc)[:200])
+        _mark_discovery_run()
         return
     _DISCOVERY_LAST[key] = time.time()
+    _mark_discovery_run()
     # Confirm invent regime in bot stdout (even when admitted=0).
     print(
         f"[hermes][discovery] {bot}/{pair}: invent={prof['interval']}/h={prof['horizon']} "

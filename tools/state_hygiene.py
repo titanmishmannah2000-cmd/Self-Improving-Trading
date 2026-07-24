@@ -194,6 +194,19 @@ def clean_hypotheses_books() -> list[str]:
     return actions
 
 
+def rotate_hypotheses_kb_books() -> list[str]:
+    """Cap hypotheses_kb.jsonl growth (S10 full-file scan per invent candidate)."""
+    from hermes_core.engines.backtest import rotate_hypotheses_kb
+
+    actions: list[str] = []
+    for bot in BOTS:
+        path = bot_state_dir(bot) / "hypotheses_kb.jsonl"
+        dropped = rotate_hypotheses_kb(path, bot=bot)
+        if dropped:
+            actions.append(f"rotated hypotheses_kb {path}: dropped={dropped}")
+    return actions
+
+
 def rebuild_learning(bot: str = "forex") -> list[str]:
     """Rebuild cortex + neutral policy from post-scrub trades only."""
     actions: list[str] = []
@@ -336,6 +349,7 @@ def main() -> None:
     actions += bootstrap_canonical()
     actions += purge_seed_discovered()
     actions += clean_hypotheses_books()
+    actions += rotate_hypotheses_kb_books()
     if not args.no_sessions_24h and args.sessions_24h:
         actions += set_soak_sessions_24h()
     if args.rebuild_learning:
