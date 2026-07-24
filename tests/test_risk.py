@@ -83,13 +83,18 @@ def test_rr_guard_blocks():
 
 
 def test_atr_stop_floor():
-    # Floor not binding: ATR distance (0.0035*1.5=0.00525) > floor (0.0008)
-    stp = compute_atr_stop(1.1000, 0.0035, 1.5, 0.0008)
+    # floor_pct is percent of entry (0.3 → 0.3% → 1.1 * 0.003 = 0.0033)
+    # Floor not binding: ATR distance (0.0035*1.5=0.00525) > floor (0.0033)
+    stp = compute_atr_stop(1.1000, 0.0035, 1.5, 0.3)
     assert stp == pytest.approx(1.1000 - 0.0035 * 1.5)
     # Floor binding: tiny ATR distance, floor forces a wider (safer) stop
-    bound = compute_atr_stop(1.1000, 0.0001, 1.5, 0.0008)
-    assert bound == pytest.approx(1.1000 - 0.0008)  # floor wins
-    assert bound >= 1.1000 - 0.0008  # never tighter than floor
+    floor_dist = abs(1.1000) * (0.3 / 100.0)
+    bound = compute_atr_stop(1.1000, 0.0001, 1.5, 0.3)
+    assert bound == pytest.approx(1.1000 - floor_dist)  # floor wins
+    assert bound >= 1.1000 - floor_dist  # never tighter than floor
+    # use_atr_floor=False ignores floor
+    no_floor = compute_atr_stop(1.1000, 0.0001, 1.5, 0.3, use_atr_floor=False)
+    assert no_floor == pytest.approx(1.1000 - 0.0001 * 1.5)
 
 
 # --- [GUARD L40] param-range gate ------------------------------------------

@@ -37,6 +37,27 @@ def test_corrupt_json_quarantined(tmp_path):
     assert len(q) == 1
 
 
+def test_memory_not_dict_quarantined(tmp_path, monkeypatch):
+    mem = tmp_path / "cortex" / "cortex_memory.json"
+    mem.parent.mkdir(parents=True)
+    mem.write_text("[1, 2, 3]", encoding="utf-8")
+    c = dc.Cortex(bot="forex")
+    assert c._entries == []
+    assert list(mem.parent.glob("cortex_memory.json.corrupt-*"))
+    assert not mem.exists()
+
+
+def test_record_outcome_flat_not_counted_in_wr():
+    c = dc.Cortex(bot="forex")
+    c.record_outcome("EUR/USD", "mean_reversion", 1.0)
+    c.record_outcome("EUR/USD", "mean_reversion", 0.0)
+    c.record_outcome("EUR/USD", "mean_reversion", -1e-9)
+    c.record_outcome("EUR/USD", "mean_reversion", -0.5)
+    assert c.entry_type_wr("mean_reversion", pair="EUR/USD") == pytest.approx(0.5)
+    flats = [e for e in c._entries if e.get("outcome") == "flat"]
+    assert len(flats) == 2
+
+
 def test_cortex_corrupt_memory_does_not_wipe_without_trace(tmp_path, monkeypatch):
     mem = tmp_path / "cortex" / "cortex_memory.json"
     mem.parent.mkdir(parents=True)

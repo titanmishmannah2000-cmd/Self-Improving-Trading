@@ -35,6 +35,7 @@ class Goal:
     min_sharpe: float
     reflection_every: int
     one_variable_only: bool
+    failure_below: float = -10.0
 
 
 @dataclass

@@ -335,6 +335,7 @@ def test_log_gp_shadow_writes_record(tmp_path, monkeypatch):
     assert rec["pair"] == "EUR/USD"
     assert rec["signal"] == "gp_ensemble"
     assert rec["consensus"] in ("bullish", "strong_bullish", "bearish", "strong_bearish")
+    assert int(rec.get("num_active") or 0) > 0
 
 
 def test_log_gp_shadow_fail_soft(tmp_path, monkeypatch):
@@ -639,7 +640,8 @@ def test_runner_open_trade_carries_entry_type():
 def test_b10_live_feedback_relabels_and_suppresses(tmp_path, monkeypatch):
     """Realized GP PnL must bend discovered-indicator fitness, and a losing
     indicator must be flagged 'suppress' so it is excluded from the ensemble
-    vote (B10 closes the self-evolving loop)."""
+    vote (B10 closes the self-evolving loop). Soft-suppress needs >=3 formulas
+    so hard suppress still leaves >=2 votable."""
     import hermes_core.engines.decision_cortex as cx
 
     # Redirect cortex disk state too (autouse fixture already redirects DISCOVERED_DIR).
@@ -647,6 +649,64 @@ def test_b10_live_feedback_relabels_and_suppresses(tmp_path, monkeypatch):
     monkeypatch.setattr(cx, "MEMORY_PATH", tmp_path / "cortex" / "m.json")
     monkeypatch.setattr(cx, "EXILE_PATH", tmp_path / "cortex" / "e.json")
 
+    _write_discovered(
+        "EUR/USD",
+        [
+            {
+                "name": "A_win",
+                "expr": "A_win",
+                "fitness": 0.30,
+                "win_rate": 0.5,
+                "complexity": 2,
+                "nodes": 2,
+                "horizon": 10,
+                "interval": "1d",
+                "source": "genetic",
+            },
+            {
+                "name": "C_ok",
+                "expr": "C_ok",
+                "fitness": 0.28,
+                "win_rate": 0.5,
+                "complexity": 2,
+                "nodes": 2,
+                "horizon": 10,
+                "interval": "1d",
+                "source": "genetic",
+            },
+            {
+                "name": "B_lose",
+                "expr": "B_lose",
+                "fitness": 0.40,
+                "win_rate": 0.5,
+                "complexity": 2,
+                "nodes": 2,
+                "horizon": 10,
+                "interval": "1d",
+                "source": "genetic",
+            },
+        ],
+    )
+
+    cortex = cx.Cortex()
+    n_min = gp.LIVE_FEEDBACK_MIN_SAMPLES
+    for _ in range(n_min):
+        cortex.record_indicator_outcome("A_win", +2.4, entry_type="gp_ensemble")
+    for _ in range(n_min):
+        cortex.record_indicator_outcome("C_ok", +0.5, entry_type="gp_ensemble")
+    for _ in range(n_min):
+        cortex.record_indicator_outcome("B_lose", -1.6, entry_type="gp_ensemble")
+
+    n = gp.apply_live_feedback("EUR/USD", cortex)
+    assert n == 3
+
+    reloaded = {i["name"]: i for i in gp.load_discovered_indicators("EUR/USD")}
+    assert reloaded["A_win"]["live_flag"] == "promote"
+    assert reloaded["A_win"]["live_fitness"] >= 0.30
+    assert reloaded["B_lose"]["live_flag"] == "suppress"
+    assert reloaded["B_lose"]["live_fitness"] < 0.40
+
+    # Soft-suppress: with only 2 formulas, hard suppress demotes to probe.
     _write_discovered(
         "EUR/USD",
         [
@@ -674,21 +734,10 @@ def test_b10_live_feedback_relabels_and_suppresses(tmp_path, monkeypatch):
             },
         ],
     )
-
-    cortex = cx.Cortex()
-    for _ in range(5):
-        cortex.record_indicator_outcome("A_win", +2.4, entry_type="gp_ensemble")
-    for _ in range(5):
-        cortex.record_indicator_outcome("B_lose", -1.6, entry_type="gp_ensemble")
-
-    n = gp.apply_live_feedback("EUR/USD", cortex)
-    assert n == 2
-
-    reloaded = {i["name"]: i for i in gp.load_discovered_indicators("EUR/USD")}
-    assert reloaded["A_win"]["live_flag"] == "promote"
-    assert reloaded["A_win"]["live_fitness"] >= 0.30
-    assert reloaded["B_lose"]["live_flag"] == "suppress"
-    assert reloaded["B_lose"]["live_fitness"] < 0.40
+    n2 = gp.apply_live_feedback("EUR/USD", cortex)
+    assert n2 == 2
+    soft = {i["name"]: i for i in gp.load_discovered_indicators("EUR/USD")}
+    assert soft["B_lose"]["live_flag"] == "probe"
 
     # The suppressed indicator must NOT be able to vote the ensemble.
     series = list([100.0] * 120) + [100.0 + i * 2 for i in range(30)]

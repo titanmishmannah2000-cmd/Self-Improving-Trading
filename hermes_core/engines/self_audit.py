@@ -230,9 +230,9 @@ def run(bot: str | None = None) -> Report:
                 checks.append(
                     _check(
                         "gold_cycle_advancing",
-                        cycle >= 1,
+                        cycle >= 2,
                         f"cycle={cycle}",
-                        critical=False,
+                        critical=True,
                     )
                 )
         except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
@@ -347,8 +347,16 @@ def run(bot: str | None = None) -> Report:
         )
     )
 
-    # Halt status (informational ΓÇö halted is not a soak fail by itself)
+    # Halt status — sticky halt is a soak fail (entries frozen).
     halted, halt_reason = entries_halted(b)
+    checks.append(
+        _check(
+            "not_halted",
+            not halted,
+            f"halted={halted} {halt_reason}",
+            critical=True,
+        )
+    )
     checks.append(
         _check(
             "halt_switch_readable",
@@ -467,11 +475,14 @@ def run(bot: str | None = None) -> Report:
         "trades_file",
         "archive_isolated",
         "not_effectively_paused",
+        "not_halted",
         "cortex_no_corrupt",
         "cortex_exile_no_seed_stub",
         "cortex_stub_policy_absent",
         "cortex_stub_tracker_absent",
     }
+    if b == "gold":
+        must.add("gold_cycle_advancing")
     go = all(c["passed"] for c in checks if c["name"] in must)
     return Report(bot=b, ok=critical_ok, go_nogo=go, checks=checks)
 

@@ -142,3 +142,37 @@ def test_gp_intelligence_wrapper():
     assert eng.is_locked("EUR/USD") is True
     suppressed, reason = eng.should_suppress("EUR/USD")
     assert suppressed and reason
+
+
+def test_record_outcome_updates_score_and_flat_neutrality():
+    pair = "NZD/USD"
+    assert gp.gp_entry_score(pair) == 0.0
+    assert gp.record_outcome(pair, 0.0) == "flat"
+    assert gp.record_outcome(pair, 1e-9) == "flat"
+    assert gp.gp_entry_score(pair) == 0.0  # flat does not move score
+    assert gp.is_locked(pair) is False
+
+    assert gp.record_outcome(pair, 1.5) == "win"
+    assert gp.gp_entry_score(pair) == pytest.approx(1.0)  # wr=1.0
+    assert gp.record_outcome(pair, -0.8) == "loss"
+    # wr=0.5 → score 0.0 (still not suppressed by score gate)
+    assert gp.gp_entry_score(pair) == pytest.approx(0.0)
+    suppressed, _ = gp.should_suppress(pair)
+    assert suppressed is False
+
+    # More losses push score below SCORE_GATE
+    gp.record_outcome(pair, -1.0)
+    assert gp.gp_entry_score(pair) < gp.SCORE_GATE
+    suppressed, reason = gp.should_suppress(pair)
+    assert suppressed is True
+    assert "gp_entry_score" in reason or "locked" in reason.lower()
+
+
+def test_update_indicator_public_matches_by_name():
+    reg = [{"name": "expr_a", "fitness": 0.5, "by_regime": {}}]
+    out = gp.update_indicator(reg, "expr_a", 1.0, "trend")
+    bucket = out[0]["by_regime"]["trend"]
+    assert bucket["signals"] == 1 and bucket["wins"] == 1
+    # flat is a no-op
+    gp.update_indicator(reg, "expr_a", 0.0, "trend")
+    assert bucket["signals"] == 1

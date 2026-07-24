@@ -25,7 +25,7 @@ import os
 import time
 from pathlib import Path
 
-from hermes_core.state.atomic_json import atomic_write_json, load_json
+from hermes_core.state.atomic_json import atomic_write_json, load_json, quarantine_corrupt
 from hermes_core.state.paths import cortex_dir, current_bot
 
 # ── gates ──────────────────────────────────────────────────────────────────
@@ -68,13 +68,15 @@ def _load_memory(bot: str | None = None) -> dict:
     """Persisted entry/outcome history (D2): survives restart + per-cycle reset.
 
     Corrupt files are quarantined (``*.corrupt-<ts>``) — never silently treated
-    as empty then overwritten without an audit trail.
+    as empty then overwritten without an audit trail. Valid JSON that is not a
+    dict is also quarantined (wrong-shape pollution).
     """
     _, _, memory_path = _cortex_paths(bot)
     raw = load_json(memory_path, default=None)
     if raw is None:
         return {"entries": [], "indicator_stats": {}}
     if not isinstance(raw, dict):
+        quarantine_corrupt(memory_path, reason="not_dict")
         return {"entries": [], "indicator_stats": {}}
     entries = raw.get("entries")
     stats = raw.get("indicator_stats")
@@ -167,11 +169,20 @@ class Cortex:
         mfe_capture: float | None = None,
         partial: bool = False,
     ) -> None:
+        try:
+            _pnl = float(pnl)
+        except (TypeError, ValueError):
+            _pnl = 0.0
+        # Flat PnL is neither win nor loss for WR / policy math.
+        if abs(_pnl) < 1e-6:
+            _outcome: int | str = "flat"
+        else:
+            _outcome = 1 if _pnl > 0 else 0
         row = {
             "pair": pair,
             "type": entry_type,
-            "outcome": 1 if pnl > 0 else 0,
-            "pnl": float(pnl),
+            "outcome": _outcome,
+            "pnl": _pnl,
         }
         if partial:
             row["partial"] = True
@@ -234,12 +245,13 @@ class Cortex:
             for e in self._entries
             if e.get("type") == entry_type
             and e.get("outcome") is not None
+            and e.get("outcome") != "flat"
             and not e.get("partial")
             and (pair is None or e.get("pair") == pair)
         ]
         if not outcomes:
             return None
-        wins = sum(e["outcome"] for e in outcomes)
+        wins = sum(1 for e in outcomes if e.get("outcome") in (1, True))
         return wins / len(outcomes)
 
     def evidence_n(self, pair: str, entry_type: str) -> int:
@@ -268,9 +280,10 @@ class Cortex:
             if e.get("pair") == pair
             and e.get("type") == entry_type
             and e.get("outcome") is not None
+            and e.get("outcome") != "flat"
             and not e.get("partial")
         ]
-        wins = sum(1 for e in outcomes if int(e.get("outcome") or 0) == 1)
+        wins = sum(1 for e in outcomes if e.get("outcome") in (1, True))
         losses = len(outcomes) - wins
         win_pnls: list[float] = []
         loss_pnls: list[float] = []
@@ -281,7 +294,7 @@ class Cortex:
                 pnl = float(e["pnl"])
             except (TypeError, ValueError):
                 continue
-            if int(e.get("outcome") or 0) == 1:
+            if e.get("outcome") in (1, True):
                 win_pnls.append(pnl)
             else:
                 loss_pnls.append(abs(pnl))
@@ -579,19 +592,20 @@ class Cortex:
         by_pair: dict[str, dict] = {}
         for e in self._entries:
             outcome = e.get("outcome")
-            if outcome is None or e.get("partial"):
+            if outcome is None or outcome == "flat" or e.get("partial"):
                 continue
             t = e.get("type")
             p = e.get("pair")
+            win = 1 if outcome in (1, True) else 0
             if t:
                 d = by_type.setdefault(t, {"n": 0, "wins": 0, "pnl": 0.0})
                 d["n"] += 1
-                d["wins"] += outcome
+                d["wins"] += win
                 d["pnl"] += e.get("pnl", 0.0)
             if p:
                 d = by_pair.setdefault(p, {"n": 0, "wins": 0, "pnl": 0.0})
                 d["n"] += 1
-                d["wins"] += outcome
+                d["wins"] += win
                 d["pnl"] += e.get("pnl", 0.0)
         indicators = {}
         for ind_id, st in self._indicator_stats.items():

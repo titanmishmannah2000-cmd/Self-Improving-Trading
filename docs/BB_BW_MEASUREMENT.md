@@ -2,10 +2,16 @@
 
 Live guard: `BB_BW_MIN = 0.0003` in `hermes_core/engines/guards.py`.
 
+## Persistence
+
+Live samples are appended via `append_bb_sample` to `{bot}/state/bb_bw_samples.jsonl`
+(one JSON object per line: `ts`, `pair`, `bw`).
+
 ## Procedure
 
 1. Run bots on **real** prices for 24–48h with soak sessions `24h`.
-2. Collect `bb_bandwidth:*` skip reasons and/or call `bb_bandwidth_samples()` from a debug shell after cycles.
+2. Collect `bb_bandwidth:*` skip reasons and/or read `{bot}/state/bb_bw_samples.jsonl`
+   (or call `bb_bandwidth_samples()` from a debug shell after cycles).
 3. Only lower/raise `BB_BW_MIN` if the distribution shows the floor is blocking healthy FX MR (typical live tick bw ~0.0004–0.0006).
 4. Log the decision here:
 

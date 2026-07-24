@@ -411,6 +411,18 @@ def _discovery_loop(
 
 
 async def run_bot(bot_name: str) -> None:
+    import signal
+    import traceback as _tb
+
+    from hermes_core.engines.loop import maybe_circuit_break
+    from hermes_core.engines.soak_controls import (
+        append_trade,
+        load_open_book,
+        orphan_force_close_records,
+        save_open_book,
+    )
+    from hermes_core.notify.discord import send_trade_alert
+
     load_env()  # apply .env (fail-soft) before anything reads keys
     # Bot-name resolution precedence: CLI override (argv[1]) > explicit call arg
     # (e.g. bots.crypto.main calls run_bot("crypto")) > HERMES_BOT_NAME in .env.
@@ -444,22 +456,47 @@ async def run_bot(bot_name: str) -> None:
         with contextlib.suppress(Exception):
             await aggregator.connect()
 
-    cycle = 0
     _stop = threading.Event()
-    # Positions + re-entry cooldowns MUST persist across cycles, or an entry is
-    # never carried to its exit and NO trade is ever recorded (the bot "never
-    # trades"). These live for the process lifetime; open_positions is also
-    # pushed to the dashboard each cycle so live positions are visible.
-    open_positions: dict = {}
-    reentry: dict = {}
+    # Restore open book from disk (survives Railway restart).
+    book = load_open_book(bot)
+    open_positions: dict = dict(book.get("open_positions") or {})
+    reentry: dict = dict(book.get("reentry") or {})
+    consecutive_failures = int(book.get("consecutive_failures") or 0)
+    cycle = int(book.get("cycle") or 0)
+    if open_positions:
+        print(
+            f"[hermes] restored {len(open_positions)} open position(s) from disk",
+            flush=True,
+        )
     # oversold_pairs from the previous cycle feeds momentum's multi-pair gate.
     oversold_pairs = 0
     # No real volume feed yet — pass False so evaluate_entry uses the ATR%
     # proxy against YAML vol_* thresholds (unlocks gold/AUD momentum).
     vol_above = False
+
+    def _alert_fn(b: str, pair: str, reason: str, pnl: float) -> None:
+        with contextlib.suppress(Exception):
+            send_trade_alert(b, pair, reason, float(pnl))
+
+    def _persist_book() -> None:
+        with contextlib.suppress(Exception):
+            save_open_book(
+                bot,
+                open_positions=open_positions,
+                reentry=reentry,
+                cycle=cycle,
+                consecutive_failures=consecutive_failures,
+            )
+
+    def _on_signal(signum, _frame) -> None:
+        print(f"[hermes] signal {signum} — graceful stop", flush=True)
+        _stop.set()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        with contextlib.suppress(Exception):
+            signal.signal(sig, _on_signal)
+
     # Background GP discovery — fully decoupled from the heartbeat cycle.
-    # A persistent Cortex instance lets B10 feed REAL paper-PnL results back
-    # into discovered-indicator fitness (it reads the on-disk cortex memory).
     _disc_cortex = None
     try:
         from hermes_core.engines.decision_cortex import Cortex
@@ -483,7 +520,7 @@ async def run_bot(bot_name: str) -> None:
     except Exception as exc:  # noqa: BLE001 — monitor must never block bot start
         print(f"[hermes] soak monitor not started: {exc!r}", file=sys.stderr, flush=True)
     try:
-        while True:
+        while not _stop.is_set():
             cycle += 1
             # run_cycle already iterates ALL configured pairs — call it once per
             # cadence. The old per-pair loop re-ran the full cycle N times and
@@ -499,12 +536,26 @@ async def run_bot(bot_name: str) -> None:
                     oversold_pairs=oversold_pairs,
                     vol_above=vol_above,
                     history_fn=getattr(aggregator, "seed_history_fn", seed_history),
+                    consecutive_failures=consecutive_failures,
+                    alert_fn=_alert_fn,
                 )
             except Exception:  # noqa: BLE001 — one bad cycle must not kill the bot
                 print(f"[hermes] {bot} cycle {cycle} errored", file=sys.stderr, flush=True)
+                _tb.print_exc()
                 summary = None
             if isinstance(summary, dict):
                 oversold_pairs = summary.get("oversold_pairs", oversold_pairs)
+                consecutive_failures = int(
+                    summary.get("consecutive_failures", consecutive_failures) or 0
+                )
+                # L24 circuit breaker — pause 300s then reset (wired in production).
+                if summary.get("circuit_open") or consecutive_failures >= 5:
+                    print(
+                        f"[hermes][L24] {bot}: circuit open cf={consecutive_failures}",
+                        flush=True,
+                    )
+                    await asyncio.to_thread(maybe_circuit_break, consecutive_failures)
+                    consecutive_failures = 0
                 prices = summary.get("prices")
                 if isinstance(prices, dict) and prices:
                     _push_prices_threaded(bot, prices)
@@ -513,9 +564,19 @@ async def run_bot(bot_name: str) -> None:
                 # overview populate. Fail-soft; a dead dashboard must never
                 # stall the bot. [Gap 1]
                 _push_state(bot, cfg, cycle, summary)
-            await asyncio.sleep(cycle_seconds)
+            _persist_book()
+            # Interruptible sleep so SIGTERM can stop promptly.
+            if _stop.wait(cycle_seconds):
+                break
     finally:
         _stop.set()
+        _persist_book()
+        # If we still have opens at shutdown and HALT_FLATTEN=1, force-flat orphans.
+        if get_env("HALT_FLATTEN", "0") == "1" and open_positions:
+            for rec in orphan_force_close_records(bot, open_positions):
+                append_trade(bot, rec)
+            open_positions.clear()
+            _persist_book()
         if aggregator is not None:
             with contextlib.suppress(Exception):
                 await aggregator.aclose()

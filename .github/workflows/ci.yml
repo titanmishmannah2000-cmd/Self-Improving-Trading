@@ -54,6 +54,9 @@ jobs:
       - name: G-secret
         run: uv run python tools/verify_no_secrets.py
 
+      - name: verify_env_example
+        run: uv run python tools/verify_env_example.py
+
       - name: G-mutate
         run: |
           uv run mutmut run --paths-to-mutate hermes_core/indicators --max-children 2

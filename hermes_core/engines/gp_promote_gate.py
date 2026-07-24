@@ -15,14 +15,16 @@ Gates (env-overridable):
 
 from __future__ import annotations
 
-import json
+import threading
 import time
 from pathlib import Path
 
 from hermes_core.env import get_env
+from hermes_core.state.atomic_json import atomic_write_json, load_json
 from hermes_core.state.paths import bot_state_dir
 
 STATE_NAME = "gp_promote_gate.json"
+_STATE_LOCK = threading.RLock()
 
 # Defaults chosen to match the measured daily paper book that seeded
 # GP_EXCLUDE_PAIRS (BTC ~−26% cumulative / many bars → clearly negative mean).
@@ -107,12 +109,7 @@ def _empty_pair(banned: bool = False, *, seeded: bool = False) -> dict:
 
 def load_state(bot: str) -> dict:
     path = state_path(bot)
-    if not path.exists():
-        return {"pairs": {}}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {"pairs": {}}
+    data = load_json(path, default={"pairs": {}}, quarantine=True)
     if not isinstance(data, dict):
         return {"pairs": {}}
     pairs = data.get("pairs")
@@ -124,8 +121,7 @@ def load_state(bot: str) -> dict:
 def save_state(bot: str, state: dict) -> None:
     path = state_path(bot)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8")
+        atomic_write_json(path, state, indent=2)
     except OSError:
         pass
 
@@ -215,43 +211,44 @@ def _apply_samples(
     replace: bool = False,
 ) -> dict:
     """Update rolling samples and re-evaluate ban status. Persists."""
-    now = time.time() if now is None else float(now)
-    st = ensure_seeded(bot, state=state)
-    rec = _pair_rec(st, pair)
-    window = sample_window()
-    cleaned = [float(x) for x in samples]
-    if replace:
-        rec["samples"] = cleaned[-window:]
-    else:
-        merged = list(rec.get("samples") or []) + cleaned
-        rec["samples"] = merged[-window:]
-    rec["n"] = len(rec["samples"])
-    rec["expectancy"] = round(compute_expectancy(rec["samples"]), 6)
+    with _STATE_LOCK:
+        now = time.time() if now is None else float(now)
+        st = ensure_seeded(bot, state=state)
+        rec = _pair_rec(st, pair)
+        window = sample_window()
+        cleaned = [float(x) for x in samples]
+        if replace:
+            rec["samples"] = cleaned[-window:]
+        else:
+            merged = list(rec.get("samples") or []) + cleaned
+            rec["samples"] = merged[-window:]
+        rec["n"] = len(rec["samples"])
+        rec["expectancy"] = round(compute_expectancy(rec["samples"]), 6)
 
-    new_banned, reason = decide(
-        bool(rec.get("banned")),
-        float(rec["expectancy"]),
-        int(rec["n"]),
-        now=now,
-        last_change_ts=float(rec.get("last_change_ts") or 0.0),
-    )
-    if new_banned != bool(rec.get("banned")):
-        rec["banned"] = new_banned
-        rec["last_change_ts"] = now
-        rec["last_reason"] = reason
-        # Once evidence drives a flip, it is no longer just an env seed.
-        if reason in ("ban_expectancy", "unban_expectancy"):
-            rec["seeded_from_env"] = False
-    else:
-        rec["last_reason"] = reason
-    save_state(bot, st)
-    return {
-        "pair": normalize_pair(pair),
-        "banned": bool(rec["banned"]),
-        "n": int(rec["n"]),
-        "expectancy": float(rec["expectancy"]),
-        "reason": rec["last_reason"],
-    }
+        new_banned, reason = decide(
+            bool(rec.get("banned")),
+            float(rec["expectancy"]),
+            int(rec["n"]),
+            now=now,
+            last_change_ts=float(rec.get("last_change_ts") or 0.0),
+        )
+        if new_banned != bool(rec.get("banned")):
+            rec["banned"] = new_banned
+            rec["last_change_ts"] = now
+            rec["last_reason"] = reason
+            # Once evidence drives a flip, it is no longer just an env seed.
+            if reason in ("ban_expectancy", "unban_expectancy"):
+                rec["seeded_from_env"] = False
+        else:
+            rec["last_reason"] = reason
+        save_state(bot, st)
+        return {
+            "pair": normalize_pair(pair),
+            "banned": bool(rec["banned"]),
+            "n": int(rec["n"]),
+            "expectancy": float(rec["expectancy"]),
+            "reason": rec["last_reason"],
+        }
 
 
 def record_pnl(
@@ -349,48 +346,49 @@ def observe_shadow(
     except Exception:  # noqa: BLE001 — never block shadow on sanity import
         pass
 
-    st = ensure_seeded(bot, state=state)
-    rec = _pair_rec(st, pair)
-    pending = rec.get("pending_shadow")
-    result = None
-
-    if isinstance(pending, dict):
-        age = now - float(pending.get("ts") or 0.0)
-        entry = float(pending.get("price") or 0.0)
-        direc = int(pending.get("direction") or 0)
-        # Drop contaminated pending entries instead of settling nonsense PnL.
-        try:
-            from hermes_core.engines.soak_controls import pair_price_scale_ok
-
-            if entry > 0 and not pair_price_scale_ok(pair, entry):
-                rec["pending_shadow"] = None
-                rec["last_reason"] = "dropped_bad_scale_pending"
-                save_state(bot, st)
-                pending = None
-        except Exception:  # noqa: BLE001
-            pass
-        if (
-            isinstance(pending, dict)
-            and entry > 0
-            and direc in (-1, 1)
-            and age >= shadow_horizon_s()
-        ):
-            pnl = (px / entry - 1.0) * 100.0 * direc
-            rec["pending_shadow"] = None
-            save_state(bot, st)
-            result = record_pnl(bot, pair, pnl, now=now, state=st)
-
-    if direction in (-1, 1):
-        # Reload after possible record_pnl persist.
-        st = load_state(bot)
-        ensure_seeded(bot, state=st)
+    with _STATE_LOCK:
+        st = ensure_seeded(bot, state=state)
         rec = _pair_rec(st, pair)
-        if rec.get("pending_shadow") is None:
-            rec["pending_shadow"] = {
-                "ts": now,
-                "price": px,
-                "direction": int(direction),
-            }
-            save_state(bot, st)
+        pending = rec.get("pending_shadow")
+        result = None
 
-    return result
+        if isinstance(pending, dict):
+            age = now - float(pending.get("ts") or 0.0)
+            entry = float(pending.get("price") or 0.0)
+            direc = int(pending.get("direction") or 0)
+            # Drop contaminated pending entries instead of settling nonsense PnL.
+            try:
+                from hermes_core.engines.soak_controls import pair_price_scale_ok
+
+                if entry > 0 and not pair_price_scale_ok(pair, entry):
+                    rec["pending_shadow"] = None
+                    rec["last_reason"] = "dropped_bad_scale_pending"
+                    save_state(bot, st)
+                    pending = None
+            except Exception:  # noqa: BLE001
+                pass
+            if (
+                isinstance(pending, dict)
+                and entry > 0
+                and direc in (-1, 1)
+                and age >= shadow_horizon_s()
+            ):
+                pnl = (px / entry - 1.0) * 100.0 * direc
+                rec["pending_shadow"] = None
+                save_state(bot, st)
+                result = record_pnl(bot, pair, pnl, now=now, state=st)
+
+        if direction in (-1, 1):
+            # Reload after possible record_pnl persist.
+            st = load_state(bot)
+            ensure_seeded(bot, state=st)
+            rec = _pair_rec(st, pair)
+            if rec.get("pending_shadow") is None:
+                rec["pending_shadow"] = {
+                    "ts": now,
+                    "price": px,
+                    "direction": int(direction),
+                }
+                save_state(bot, st)
+
+        return result

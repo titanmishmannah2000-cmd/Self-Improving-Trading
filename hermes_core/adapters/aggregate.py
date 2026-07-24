@@ -246,9 +246,11 @@ class _BaseSource:
     def _get_client(self) -> httpx.AsyncClient:
         # Tests inject a fake client via `source._client`; production builds a
         # fresh client per asyncio.run cycle so it binds to the current loop.
+        # Always assign so PriceAggregator.aclose can close the client.
         if self._client is not None:
             return self._client
-        return httpx.AsyncClient(timeout=SOURCE_TIMEOUT)
+        self._client = httpx.AsyncClient(timeout=SOURCE_TIMEOUT)
+        return self._client
 
     async def _cached(self, key: str, fetcher: Callable[[], object]) -> object:
         """Return a cached value if fresh; else call `fetcher`, cache + space it.

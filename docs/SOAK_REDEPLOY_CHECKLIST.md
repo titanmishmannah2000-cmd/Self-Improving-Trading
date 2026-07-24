@@ -5,25 +5,58 @@ Complete after the soak-readiness code is deployed. Do **not** start the 30-day 
 ## Railway / env
 
 1. Redeploy `forex`, `gold`, `crypto`, and `dashboard` from the same image.
-2. Confirm per-service `HERMES_BOT_NAME` is set (`forex` | `gold` | `crypto` | `dashboard`).
-3. Confirm `HERMES_STATE_ROOT` points at the persistent volume (e.g. `/data`).
-4. `PRICE_BACKEND=aggregate` (default). Keep GoldAPI for metals (no key).
-5. Set `DASHBOARD_API_URL` + `INGEST_TOKEN` on bots; `DASHBOARD_DB` / `DB_PATH` on dashboard (not a Windows path).
-6. Optional: `HALT_ENTRIES=1` to freeze new entries without killing the process; or touch `{bot}/state/halt`.
-7. Optional: `L21_FLATLINE=0` to log novel-regime events without pausing entries (escape hatch if L21 over-fires).
-8. `GP_PROMOTE=1` only when you want GP paper entries (shadow invent always runs).
-9. `GP_EXCLUDE_PAIRS` still seeds cold-start bans (`GBP/JPY,BTC/USD` by default).
+2. Confirm `railway.json` uses `restartPolicyType: ALWAYS` (uncapped restarts — do not set `restartPolicyMaxRetries: 3`).
+3. Confirm per-service `HERMES_BOT_NAME` is set (`forex` | `gold` | `crypto` | `dashboard`).
+4. Confirm `HERMES_STATE_ROOT` points at the persistent volume (e.g. `/data`).
+5. `PRICE_BACKEND=aggregate` (default). Keep GoldAPI for metals (no key).
+6. Set `DASHBOARD_API_URL` + `INGEST_TOKEN` on bots; `DASHBOARD_DB` / `DB_PATH` on dashboard (not a Windows path). `INGEST_TOKEN` is required when `RAILWAY_ENVIRONMENT` is set.
+7. Optional: `HALT_ENTRIES=1` to freeze new entries without killing the process; or touch `{bot}/state/halt`.
+8. Optional: `HALT_FLATTEN=1` to force-close orphan paper positions on process stop when a halt file is present.
+9. Optional: `L21_FLATLINE=0` to log novel-regime events without pausing entries (escape hatch if L21 over-fires).
+10. `GP_PROMOTE=1` only when you want GP paper entries (shadow invent always runs).
+11. `GP_EXCLUDE_PAIRS` still seeds cold-start bans (`GBP/JPY,BTC/USD` by default).
+12. Keep `REFLECT_AUTO_DEPLOY=0` for soak (reflection may approve; YAML deploy stays off unless you opt in).
 
 ## Local / volume hygiene
 
 ```bash
 python tools/state_hygiene.py --rebuild-learning --rotate-skips
 python tools/rebuild_cortex.py
-# Stamp the 30-day paper clock (writes {bot}/state/soak_started.json):
-python tools/start_soak_clock.py forex gold crypto
 ```
 
 This quarantines legacy `state/` runtime files, removes `live_prices_*.json` stubs + stub heartbeats, deletes `goldbot/`, bootstraps `{forex,gold,crypto}/state/trades.jsonl`, sets soak sessions to `24h`, and rebuilds cortex/policy from post-scrub trades.
+
+## Go / no-go (before the clock)
+
+```bash
+python -m hermes_core.engines.self_audit
+# or
+python -c "from hermes_core.engines.self_audit import run_all; import json; print(json.dumps(run_all(), indent=2))"
+```
+
+Require `go_nogo: true` for forex, gold, and crypto (heartbeat age &lt; 10m, non-synthetic prices, trades file present, archive isolated, **not** effectively paused, **not** halted). Soft checks (GP admitted / shadow active) may stay red briefly while invent runs — start the soak when classical fills are appending **or** GP reject logs show invent is healthy.
+
+### Clear / recover halt after SLOs heal
+
+Idle/feed auto-halts recover automatically when skip SLOs are healthy (`maybe_recover_halt`). For a stuck halt after a known-good recovery:
+
+```bash
+# From a bot container / local with HERMES_STATE_ROOT set:
+python -c "from hermes_core.engines.soak_controls import clear_halt; clear_halt('forex')"
+# or delete the file:
+# rm $HERMES_STATE_ROOT/forex/state/halt
+# Also unset HALT_ENTRIES=0 if set on the service.
+```
+
+Re-run `self_audit` until `not_halted` and `go_nogo` are green for all three bots.
+
+## Stamp the 30-day clock (only after go/no-go)
+
+`start_soak_clock.py` **refuses** to stamp when `go_nogo` is false (use `--force` only as an ops escape hatch).
+
+```bash
+python tools/start_soak_clock.py forex gold crypto
+```
 
 On Railway (image must include `tools/`):
 
@@ -33,29 +66,20 @@ railway ssh -s gold -- uv run python tools/start_soak_clock.py gold
 railway ssh -s crypto -- uv run python tools/start_soak_clock.py crypto
 ```
 
-## Go / no-go
-
-```bash
-python -m hermes_core.engines.self_audit
-# or
-python -c "from hermes_core.engines.self_audit import run_all; import json; print(json.dumps(run_all(), indent=2))"
-```
-
-Require `go_nogo: true` for forex, gold, and crypto (heartbeat age &lt; 10m, non-synthetic prices, trades file present, archive isolated, **not** effectively paused). If `not_effectively_paused` fails, rotate skips (`--rotate-skips`) and confirm bots are fetching real candles before starting the clock. Soft checks (GP admitted / shadow active) may stay red briefly while invent runs — start the soak when classical fills are appending **or** GP reject logs show invent is healthy.
-
 ## During the 30 days
 
 - Automated: each bot runs `soak_monitor` (every `SOAK_MONITOR_INTERVAL_S`,
-  default 6h) and Discord-alerts on heartbeat staleness, go/no-go RED,
-  invent `chronic_timeout_backoff`, stale pulses, and high `admit_zero_streak`.
-  A weekly Discord digest summarizes pulse `status` / `admitted` /
-  `near_misses` / `admit_zero_streak` + heartbeat age even when healthy.
+  default **300s**) and Discord-alerts on heartbeat staleness, go/no-go RED,
+  **halt_active**, invent `chronic_timeout_backoff`, stale pulses, and high
+  `admit_zero_streak`. A weekly Discord digest summarizes pulse health even
+  when green. Failed Discord notifies are **not** latched forever.
 - Manual weekly (optional): confirm Discord digest arrived; skim WR / DD.
-- Auto-halt triggers: synthetic prices, feed-error spike, idle/pause SLO
-  (all recent skips are `no_signal`/feed/BB for hours), or manual `halt` file.
+- Auto-halt triggers: synthetic prices, feed-error spike, idle/pause SLO,
+  drawdown / `failure_below`, policy rollback, or manual `halt` file.
+  Recoverable idle/feed halts auto-clear when SLOs recover.
+- Open positions persist to `{bot}/state/open_book.json` and restore on restart.
 - L21 novel-regime flatline pauses **new entries** for 60 cycles and appends
   `{bot}/state/flatline_log.jsonl` (alert after 3× `NOVEL_REGIME` on a pair).
-- DD past config `max_drawdown` / `failure_below` → halt and investigate.
 - Expect **clean data + possible mild paper edge**, not guaranteed profit.
 
 ## Discovery soak watch-outs (post-hardening)

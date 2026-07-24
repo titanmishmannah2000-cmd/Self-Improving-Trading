@@ -21,6 +21,7 @@ COPY hermes_core/ hermes_core/
 COPY bots/ bots/
 COPY dashboard/ dashboard/
 COPY tools/ tools/
+COPY cron/ cron/
 COPY entrypoint.py ./
 
 # Drop in the built frontend from stage 1 at the path the backend expects

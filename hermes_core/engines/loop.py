@@ -63,16 +63,24 @@ from hermes_core.engines.risk import (
     size_regime_from_market,
 )
 from hermes_core.engines.soak_controls import (
+    DATA_HALT_EXIT_AFTER,
+    append_bb_sample,
+    append_trade,
+    book_drawdown_status,
     ensure_state_files,
     entries_halted,
     feed_error_rate,
     idle_skip_slo,
+    maybe_recover_halt,
     price_sanity_book,
     price_sanity_pair,
+    rotate_jsonl_if_large,
+    save_open_book,
     write_halt,
 )
 from hermes_core.env import get_env, load_env
 from hermes_core.indicators import compute_all
+from hermes_core.state.atomic_json import atomic_write_json
 
 MAX_CONSECUTIVE_FAILURES = 5  # [GUARD L24]
 CIRCUIT_SLEEP_S = 300  # 5-minute pause on circuit open
@@ -115,12 +123,18 @@ def _state_dir(bot: str) -> Path:
 
 
 def _session_token_for(hour: int) -> str:
-    """Resolve an hour to a session token (blueprint _get_session)."""
-    if 0 <= hour < 8:
+    """Resolve an hour to a session token (blueprint _get_session).
+
+    LDN/NY overlap (13–16 UTC) returns ``LDN_NY`` so ny_only strategies can fire.
+    """
+    h = int(hour) % 24
+    if 0 <= h < 8:
         return "ASIA"
-    if 8 <= hour < 17:
+    if 13 <= h < 17:
+        return "LDN_NY"  # London/NY overlap
+    if 8 <= h < 17:
         return "LDN"
-    if 13 <= hour < 21:
+    if 17 <= h < 21:
         return "NY"
     return "OTHER"
 
@@ -149,7 +163,8 @@ def _precount_oversold(bot: str, pairs: list, fetch_fn, history_fn) -> int:
 def _atr_stop_for(strategy: dict, entry: float, atr: float) -> float:
     mult = float(strategy.get("atr_multiplier", 1.5))
     floor = float(strategy.get("atr_floor_pct", 0.0))
-    return compute_atr_stop(entry, atr, mult, floor)
+    use_floor = strategy.get("use_atr_floor", True) is not False
+    return compute_atr_stop(entry, atr, mult, floor, use_atr_floor=use_floor)
 
 
 def write_heartbeat(
@@ -195,8 +210,7 @@ def write_heartbeat(
     if disc_ts:
         data["last_discovery_run_ts"] = datetime.fromtimestamp(disc_ts, UTC).isoformat()
     try:
-        with open(HEARTBEAT_PATH, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, default=str)
+        atomic_write_json(HEARTBEAT_PATH, data)
     except OSError:
         # heartbeat itself cannot break the loop; best-effort only
         pass
@@ -221,13 +235,9 @@ def _log_skip(bot: str, pair: str, cycle: int, reason: str) -> None:
         pass
 
 
-def _log_trade(bot: str, rec: dict) -> None:
-    TRADES_PATH = _state_dir(bot) / "trades.jsonl"
-    try:
-        with open(TRADES_PATH, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(rec, default=str) + "\n")
-    except OSError:
-        pass
+def _log_trade(bot: str, rec: dict) -> bool:
+    """Append a closed-trade row. Returns False if disk write failed."""
+    return append_trade(bot, rec)
 
 
 def _process_exit(
@@ -331,7 +341,7 @@ def _process_exit(
         if ex.new_stop is not None:
             pos["current_stop"] = ex.new_stop
         return
-    # --- REAL close: log the trade with the keys the dashboard reads.
+    # --- REAL close: log the trade BEFORE deleting the open (durability).
     entry_type = pos.get("entry_type", "mean_reversion")
     pnl = pos["unrealised_pct"]
     _exc = {}
@@ -339,32 +349,35 @@ def _process_exit(
         from hermes_core.engines.excursion import excursion_from_position
 
         _exc = excursion_from_position(pos, pnl)
-    _log_trade(
-        bot,
-        {
-            "id": pos.get("id") or f"{bot}:{pair}:{int(time.time())}",
-            "bot": bot,
-            "pair": pair,
-            "cycle": cycle,
-            "reason": ex.reason,
-            "exit_reason": ex.reason,
-            "entry_type": entry_type,
-            # Prefer the stamped strategy version; fall back to entry style.
-            "strategy_version": pos.get("strategy_version") or entry_type,
-            "entry_price": pos["entry_price"],
-            "exit_price": price,
-            "entry_ts": pos.get("entry_ts"),
-            "exit_ts": _now_iso(),
-            "pnl_pct": pnl,
-            "size": pos["size"],
-            "hold_cycles": pos.get("held_cycles", 0),
-            **{
-                k: _exc[k]
-                for k in ("mfe_pct", "mae_pct", "giveback_pct", "giveback_frac", "mfe_capture")
-                if k in _exc
-            },
+    trade_rec = {
+        "id": pos.get("id") or f"{bot}:{pair}:{int(time.time())}",
+        "bot": bot,
+        "pair": pair,
+        "cycle": cycle,
+        "reason": ex.reason,
+        "exit_reason": ex.reason,
+        "entry_type": entry_type,
+        "strategy_version": pos.get("strategy_version") or entry_type,
+        "entry_price": pos["entry_price"],
+        "exit_price": price,
+        "entry_ts": pos.get("entry_ts"),
+        "exit_ts": _now_iso(),
+        "pnl_pct": pnl,
+        "size": pos["size"],
+        "hold_cycles": pos.get("held_cycles", 0),
+        **{
+            k: _exc[k]
+            for k in ("mfe_pct", "mae_pct", "giveback_pct", "giveback_frac", "mfe_capture")
+            if k in _exc
         },
-    )
+    }
+    if not _log_trade(bot, trade_rec):
+        # Disk write failed — keep the open so we retry next cycle.
+        print(
+            f"[hermes][trade-log] {bot}/{pair}: close log FAILED — keeping open",
+            flush=True,
+        )
+        return
     reentry[pair] = {"last_exit_cycle": cycle}
     del open_positions[pair]
     # [CORTEX] record the outcome under the REAL entry_type;
@@ -394,19 +407,35 @@ def _process_exit(
         _credited = pos.get("gp_indicators") or [] if is_gp else []
         for ind_id in _credited:
             cortex.record_indicator_outcome(ind_id, pnl, entry_type="gp_ensemble")
-        # GPIntelligence consecutive-loss lockout (feeds should_suppress).
+        # GPIntelligence consecutive-loss lockout + rolling score WR.
+        # Flat PnL is neutral — does not increment loss_seq or pair score.
         if is_gp:
             from hermes_core.engines import gp_intelligence as gpi
 
-            if pnl > 0:
-                gpi.record_win(pair)
-            else:
-                gpi.record_loss(pair)
+            gpi.record_outcome(pair, float(pnl))
             # Feed paper GP closes into the promote gate (ban/unban evidence).
             with contextlib.suppress(Exception):
                 from hermes_core.engines import gp_promote_gate as gpg
 
                 gpg.record_pnl(bot, pair, float(pnl))
+            # Regime cull on discovered registry (Problem 4).
+            with contextlib.suppress(Exception):
+                from hermes_core.engines.genetic import (
+                    _save_discovered,
+                    load_discovered_indicators,
+                )
+
+                regime = str(
+                    pos.get("entry_regime")
+                    or pos.get("regime_label")
+                    or pos.get("regime")
+                    or "range"
+                )
+                registry = load_discovered_indicators(pair, include_shared=False) or []
+                if registry and _credited:
+                    for ind_id in _credited:
+                        gpi.update_indicator(registry, ind_id, float(pnl), regime)
+                    _save_discovered(pair, registry)
     # [S18] Discord/webhook alert on real trade close (fail-soft)
     if alert_fn is not None:
         with contextlib.suppress(Exception):
@@ -421,6 +450,140 @@ def _process_exit(
             chart_context=chart_context or "",
             goal=goal,
         )
+
+
+def _try_manage_open(
+    bot: str,
+    pair: str,
+    cycle: int,
+    *,
+    pos: dict,
+    price: float | None,
+    fetch_fn,
+    history_fn,
+    cortex,
+    reentry: dict,
+    open_positions: dict,
+    summary: dict,
+    alert_fn,
+    chart_contexts: dict,
+    goal: dict | None,
+    mark_fails: dict,
+    price_history: dict,
+    health_registry: dict,
+    consecutive_failures: int,
+) -> tuple[bool, float, int]:
+    """Manage an open position even when entry guards would skip.
+
+    Returns ``(handled, last_price, consecutive_failures)``. When handled is
+    True the caller must ``continue`` (entry path skipped).
+    """
+    mark = price
+    if mark is None:
+        mark = pos.get("last_mark") or pos.get("entry_price")
+        mark_fails[pair] = int(mark_fails.get(pair) or 0) + 1
+    else:
+        mark_fails[pair] = 0
+        pos["last_mark"] = float(mark)
+        last = float(mark)
+        summary["prices"][pair] = last
+        ph = price_history.setdefault(pair, [])
+        ph.append(last)
+        if len(ph) > 60:
+            del ph[: len(ph) - 60]
+        health_registry.setdefault("price_adapter", True)
+
+    if mark is None:
+        return True, 0.0, consecutive_failures
+
+    mark_f = float(mark)
+    prices: list[float] = []
+    try:
+        hist = history_fn(pair) if history_fn is not None else None
+        if hist is None and price is not None:
+            hist = fetch_fn(pair + ":history")
+        prices = [c["price"] for c in (hist or [])]
+    except Exception:  # noqa: BLE001
+        prices = []
+    if not prices:
+        prices = [mark_f]
+
+    pos["held_cycles"] = pos.get("held_cycles", 0) + 1
+    pos["unrealised_pct"] = (mark_f - pos["entry_price"]) / pos["entry_price"] * 100.0
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.exit import (
+            DEFAULT_MFE_GIVEBACK_FRAC,
+            DEFAULT_MFE_GIVEBACK_MIN_PCT,
+        )
+
+        if "mfe_giveback_min_pct" not in pos:
+            pos["mfe_giveback_min_pct"] = DEFAULT_MFE_GIVEBACK_MIN_PCT
+        if "mfe_giveback_frac" not in pos:
+            pos["mfe_giveback_frac"] = DEFAULT_MFE_GIVEBACK_FRAC
+        if "mfe_giveback_enabled" not in pos:
+            pos["mfe_giveback_enabled"] = True
+        if pos.get("trailing_atr_mult") is None:
+            pos["trailing_atr_mult"] = 1.5
+        if not pos.get("honor_current_stop"):
+            pos["honor_current_stop"] = True
+        te = pos.get("time_exit_cycles")
+        if te is not None and int(te) > 150:
+            pos["time_exit_cycles"] = 150
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.excursion import (
+            mfe_tracking_enabled,
+            update_position_excursions,
+        )
+
+        update_position_excursions(pos, pos["unrealised_pct"])
+        if mfe_tracking_enabled():
+            pos["mfe_tracking"] = True
+
+    from hermes_core.engines.exit import Exit
+
+    if int(mark_fails.get(pair) or 0) >= DATA_HALT_EXIT_AFTER:
+        force = Exit(reason="data_halt_exit", price=mark_f)
+        _process_exit(
+            bot,
+            pair,
+            cycle,
+            pos,
+            mark_f,
+            force,
+            cortex=cortex,
+            reentry=reentry,
+            open_positions=open_positions,
+            summary=summary,
+            alert_fn=alert_fn,
+            prices=prices,
+            chart_context=chart_contexts.get(pair, ""),
+            goal=goal,
+        )
+        mark_fails.pop(pair, None)
+        return True, mark_f, consecutive_failures
+
+    ex = evaluate_exit(pos, mark_f, prices)
+    if ex is not None:
+        _process_exit(
+            bot,
+            pair,
+            cycle,
+            pos,
+            mark_f,
+            ex,
+            cortex=cortex,
+            reentry=reentry,
+            open_positions=open_positions,
+            summary=summary,
+            alert_fn=alert_fn,
+            prices=prices,
+            chart_context=chart_contexts.get(pair, ""),
+            goal=goal,
+        )
+    return True, mark_f, consecutive_failures
+
+
+_REFLECT_SEM: object | None = None  # threading.Semaphore; lazy-init in reflect
 
 
 def _maybe_reflect_after_close(
@@ -441,10 +604,23 @@ def _maybe_reflect_after_close(
 
     from hermes_core.engines.reflect import maybe_reflect_pair
 
-    auto = get_env("REFLECT_AUTO_DEPLOY", "1") != "0"
+    auto = get_env("REFLECT_AUTO_DEPLOY", "0") != "0"
     log = _logging.getLogger("hermes.reflect")
 
+    # Cap concurrent reflect workers so a burst of closes cannot spawn unbounded
+    # threads during a 30-day soak (each worker may fetch/backtest).
+    global _REFLECT_SEM
+    if _REFLECT_SEM is None:
+        try:
+            n = max(1, int(get_env("REFLECT_MAX_THREADS", "2")))
+        except ValueError:
+            n = 2
+        _REFLECT_SEM = threading.Semaphore(n)
+
     def _work() -> None:
+        if not _REFLECT_SEM.acquire(blocking=False):
+            log.info("[reflect] %s/%s: skipped (thread cap)", bot, pair)
+            return
         try:
             result = maybe_reflect_pair(
                 bot,
@@ -465,6 +641,8 @@ def _maybe_reflect_after_close(
                 )
         except Exception as exc:  # noqa: BLE001
             log.warning("[reflect] %s/%s: error -> %s", bot, pair, exc)
+        finally:
+            _REFLECT_SEM.release()
 
     threading.Thread(
         target=_work,
@@ -1041,13 +1219,18 @@ def run_cycle(
     pairs = cfg.get("pairs", [])
     _halted, _halt_reason = entries_halted(bot)
     summary["halted"] = _halted
+    with contextlib.suppress(Exception):
+        if cycle % 60 == 1:
+            rotate_jsonl_if_large(bot)
     # Feed SLO: auto-halt when recent skips are dominated by feed/chart errors.
+    _feed: dict = {"ok": True}
+    _idle: dict = {"effectively_paused": False}
     try:
         _feed = feed_error_rate(_state_dir(bot) / "skips.jsonl")
         summary["feed_slo"] = _feed
         if not _feed.get("ok") and not _halted:
             write_halt(bot, f"feed_slo:rate={_feed.get('rate')}")
-            _halted, _halt_reason = True, "halt:feed_slo"
+            _halted, _halt_reason = True, f"feed_slo:rate={_feed.get('rate')}"
             summary["halted"] = True
             print(
                 f"[hermes][feed-slo] {bot}: auto-halt rate={_feed.get('rate')}",
@@ -1062,7 +1245,7 @@ def run_cycle(
         summary["idle_slo"] = _idle
         if _idle.get("effectively_paused") and not _halted:
             write_halt(bot, f"idle_slo:{_idle.get('detail')}")
-            _halted, _halt_reason = True, "halt:idle_slo"
+            _halted, _halt_reason = True, f"idle_slo:{_idle.get('detail')}"
             summary["halted"] = True
             print(
                 f"[hermes][idle-slo] {bot}: effectively paused — {_idle.get('detail')}",
@@ -1070,8 +1253,29 @@ def run_cycle(
             )
     except Exception:  # noqa: BLE001
         pass
+    # DD / failure_below book halt (config goal).
+    try:
+        _dd = book_drawdown_status(bot, cfg.get("goal") or {})
+        summary["book_dd"] = _dd
+        if not _dd.get("ok") and not _halted:
+            write_halt(bot, _dd.get("reason") or "dd_halt")
+            _halted, _halt_reason = True, str(_dd.get("reason") or "dd_halt")
+            summary["halted"] = True
+            print(f"[hermes][dd-halt] {bot}: {_dd.get('reason')}", flush=True)
+    except Exception:  # noqa: BLE001
+        pass
+    # Auto-clear recoverable idle/feed halts when SLOs recover.
+    try:
+        _rec = maybe_recover_halt(bot, feed=_feed, idle=_idle, price_ok=True)
+        summary["halt_recovery"] = _rec
+        if _rec.get("recovered"):
+            _halted, _halt_reason = entries_halted(bot)
+            summary["halted"] = _halted
+    except Exception:  # noqa: BLE001
+        pass
     # Sticky L21 flatline pauses (pair -> remaining cycles).
     flatline_pause: dict[str, int] = dict(getattr(run_cycle, "_flatline_pause", {}) or {})
+    mark_fails: dict[str, int] = dict(getattr(run_cycle, "_mark_fails", {}) or {})
     # [GUARD L62] resolve the price feed AFTER config so aggregate gets real pairs
     # (crypto WS subscribe list). Default is multi-source aggregator for live quotes.
     if fetch_fn is None:
@@ -1099,33 +1303,92 @@ def run_cycle(
         policy = PolicyEngine().evaluate(cycle, pairs, cortex=cortex)
     except Exception:  # noqa: BLE001 — fail-open: never block trading on policy I/O
         policy = None
+    # Policy rollback → concrete halt (not display-only).
+    if policy is not None and getattr(policy, "rollback", False) and not _halted:
+        write_halt(bot, "policy_rollback:mr_wr_breach")
+        _halted, _halt_reason = True, "policy_rollback:mr_wr_breach"
+        summary["halted"] = True
+    # Priority discovery: nudge reinvent sooner when many indicators are exiled.
+    if policy is not None and getattr(policy, "priority_discovery", False):
+        with contextlib.suppress(Exception):
+            now_prio = time.time()
+            for _p in pairs:
+                key = (bot, _p)
+                last = float(_DISCOVERY_LAST_INVENT.get(key) or 0.0)
+                if last and (now_prio - last) > 3600:
+                    _DISCOVERY_LAST_INVENT[key] = now_prio - DISCOVERY_REINVENT_INTERVAL_S
 
     for pair in pairs:
+        pos = open_positions.get(pair)
         # --- fetch (fail-soft; failures counted toward circuit breaker) -----
+        candle = None
+        fetch_failed = False
         try:
             candle = fetch_fn(pair)
         except Exception as exc:  # noqa: BLE001
+            fetch_failed = True
             consecutive_failures += 1
             summary["errors"] += 1
             health_registry["price_adapter"] = False
             _log_skip(bot, pair, cycle, f"fetch_error:{exc!r}")
             traceback.print_exc()
+            candle = None
+
+        if candle is None and pos is None:
+            if not fetch_failed:
+                consecutive_failures += 1
+                summary["errors"] += 1
+                _log_skip(bot, pair, cycle, "no_candle")
             continue
 
-        if candle is None:
-            # stale/empty feed — counted, not a hard crash
-            consecutive_failures += 1
-            summary["errors"] += 1
-            _log_skip(bot, pair, cycle, "no_candle")
+        price: float | None = None
+        if candle is not None:
+            try:
+                price = float(candle["price"])
+            except (TypeError, ValueError, KeyError):
+                price = None
+            if price is None and pos is None:
+                consecutive_failures += 1
+                summary["errors"] += 1
+                _log_skip(bot, pair, cycle, "no_candle")
+                continue
+
+        # EXIT-BEFORE-GUARD: always manage opens (even on fetch failure).
+        if pos is not None:
+            _handled, _lp, consecutive_failures = _try_manage_open(
+                bot,
+                pair,
+                cycle,
+                pos=pos,
+                price=price,
+                fetch_fn=fetch_fn,
+                history_fn=history_fn,
+                cortex=cortex,
+                reentry=reentry,
+                open_positions=open_positions,
+                summary=summary,
+                alert_fn=alert_fn,
+                chart_contexts=chart_contexts,
+                goal=cfg.get("goal"),
+                mark_fails=mark_fails,
+                price_history=price_history,
+                health_registry=health_registry,
+                consecutive_failures=consecutive_failures,
+            )
+            if _lp:
+                last_price = _lp
+            continue
+
+        if price is None:
             continue
 
         health_registry.setdefault("price_adapter", True)
-        price = float(candle["price"])
-        last_price = price
-        summary["prices"][pair] = price  # live price snapshot for dashboard push
+        consecutive_failures = 0  # good quote resets L24 streak
+        last_price = float(price)
+        summary["prices"][pair] = float(price)  # live price snapshot for dashboard push
         # Append to rolling history for the sparkline (cap at 60 ticks).
         ph = price_history.setdefault(pair, [])
-        ph.append(price)
+        ph.append(float(price))
         if len(ph) > 60:
             del ph[: len(ph) - 60]
 
@@ -1404,6 +1667,12 @@ def run_cycle(
             else:
                 sig = trad_sig if trad_sig is not None else gp_sig
 
+            # Halt blocks NEW entries only (exits still managed above).
+            # Check before no_signal logging so idle SLO is not polluted by halt.
+            if _halted:
+                _log_skip(bot, pair, cycle, _halt_reason or "halt")
+                summary["skips"] += 1
+                continue
             if sig is None:
                 _skip = _trad_skip or "no_signal"
                 if _skip == "no_signal":
@@ -1428,11 +1697,6 @@ def run_cycle(
                             f"{((ind.get('bb') or {}).get('upper', 0) - (ind.get('bb') or {}).get('lower', 0)) / max((ind.get('bb') or {}).get('middle') or 1, 1e-9):.6f}",
                             flush=True,
                         )
-                continue
-            # Halt blocks NEW entries only (exits still managed above).
-            if _halted:
-                _log_skip(bot, pair, cycle, _halt_reason or "halt")
-                summary["skips"] += 1
                 continue
             # Per-quote sanity before opening.
             _ok_px, _px_reason = price_sanity_pair(pair, price)
@@ -1604,6 +1868,10 @@ def run_cycle(
                 cortex=cortex,
             )
             size = float(_book["size"])
+            if size <= 0:
+                _log_skip(bot, pair, cycle, "size_zero")
+                summary["skips"] += 1
+                continue
             # HIF exit intelligence — stamp knobs only (no size / fill change).
             from hermes_core.engines.exit_intel import apply_exit_intel, exit_intel_enabled
 
@@ -1746,61 +2014,7 @@ def run_cycle(
             with contextlib.suppress(Exception):
                 cortex.record_entry(pair, _etype)
             summary["entries"].append(pair)
-        else:
-            # --- exit evaluation (S5) --------------------------------------
-            pos["held_cycles"] = pos.get("held_cycles", 0) + 1
-            pos["unrealised_pct"] = (price - pos["entry_price"]) / pos["entry_price"] * 100.0
-            # Soft-migrate positions opened before giveback/trail defaults so
-            # live opens immediately stop donating MFE to time_exit.
-            with contextlib.suppress(Exception):
-                from hermes_core.engines.exit import (
-                    DEFAULT_MFE_GIVEBACK_FRAC,
-                    DEFAULT_MFE_GIVEBACK_MIN_PCT,
-                )
-
-                if "mfe_giveback_min_pct" not in pos:
-                    pos["mfe_giveback_min_pct"] = DEFAULT_MFE_GIVEBACK_MIN_PCT
-                if "mfe_giveback_frac" not in pos:
-                    pos["mfe_giveback_frac"] = DEFAULT_MFE_GIVEBACK_FRAC
-                if "mfe_giveback_enabled" not in pos:
-                    pos["mfe_giveback_enabled"] = True
-                if pos.get("trailing_atr_mult") is None:
-                    pos["trailing_atr_mult"] = 1.5
-                if not pos.get("honor_current_stop"):
-                    pos["honor_current_stop"] = True
-                # Tighten legacy 288-cycle clocks in-flight (≤150).
-                te = pos.get("time_exit_cycles")
-                if te is not None and int(te) > 150:
-                    pos["time_exit_cycles"] = 150
-            # Always update peak MFE/MAE so mfe_giveback can fire; mfe_tracking
-            # flag is informational for dashboard (closes always log excursions).
-            with contextlib.suppress(Exception):
-                from hermes_core.engines.excursion import (
-                    mfe_tracking_enabled,
-                    update_position_excursions,
-                )
-
-                update_position_excursions(pos, pos["unrealised_pct"])
-                if mfe_tracking_enabled():
-                    pos["mfe_tracking"] = True
-            ex = evaluate_exit(pos, price, prices)
-            if ex is not None:
-                _process_exit(
-                    bot,
-                    pair,
-                    cycle,
-                    pos,
-                    price,
-                    ex,
-                    cortex=cortex,
-                    reentry=reentry,
-                    open_positions=open_positions,
-                    summary=summary,
-                    alert_fn=alert_fn,
-                    prices=prices,
-                    chart_context=chart_contexts.get(pair, context),
-                    goal=cfg.get("goal"),
-                )
+        # Open positions are managed at the top of the pair loop (exit-before-guard).
 
     # HIF Phase-4: skip + GP-shadow observational learning (shadow notes only).
     try:
@@ -1871,6 +2085,19 @@ def run_cycle(
     run_cycle._flatline_pause = {
         p: n for p, n in flatline_pause.items() if int(n) > 0 and p in pairs
     }
+    run_cycle._mark_fails = {
+        p: n for p, n in mark_fails.items() if int(n) > 0 and p in pairs
+    }
+    # Persist open book each cycle so restarts can resume exits.
+    with contextlib.suppress(Exception):
+        save_open_book(
+            bot,
+            open_positions=open_positions,
+            reentry=reentry,
+            mark_fails=mark_fails,
+            cycle=cycle,
+            consecutive_failures=consecutive_failures,
+        )
     if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
         # [GUARD L24] circuit open: caller should pause; reset the counter so a
         # single pause doesn't permanently lock the breaker closed.

@@ -5,10 +5,13 @@ Usage on volume:
   HERMES_BOT_NAME=forex HERMES_STATE_ROOT=/data python - <<'PY'
   ... paste or: uv run python -c \"from tools.start_soak_clock import main; main(['forex'])\"
   PY
+
+Refuses to stamp the clock unless self_audit go_nogo is True (or --force).
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 import time
@@ -35,6 +38,25 @@ def _state_dir(bot: str) -> Path:
             or "/data"
         )
         return root / bot / "state"
+
+
+def audit_go_nogo(bot: str) -> tuple[bool, dict]:
+    """Return (go_nogo, audit_payload) for one bot."""
+    try:
+        from hermes_core.engines.self_audit import run
+
+        report = run(bot)
+        payload = {
+            "go_nogo": bool(getattr(report, "go_nogo", False)),
+            "failed_checks": [
+                c.get("name")
+                for c in (getattr(report, "checks", None) or [])
+                if isinstance(c, dict) and not c.get("passed")
+            ],
+        }
+        return bool(payload["go_nogo"]), payload
+    except Exception as exc:  # noqa: BLE001
+        return False, {"error": repr(exc), "go_nogo": False}
 
 
 def write_soak_started(bot: str, *, note: str = "cortex_30d_ops") -> Path:
@@ -66,14 +88,55 @@ def rebuild_bot(bot: str) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    bots = argv if argv is not None else sys.argv[1:]
-    if not bots:
-        bots = ["forex", "gold", "crypto"]
-    for bot in bots:
-        info = rebuild_bot(bot)
-        marker = write_soak_started(bot)
-        print(json.dumps({"rebuild": info, "soak_started": str(marker)}, default=str))
-    return 0
+    parser = argparse.ArgumentParser(description="Stamp 30-day soak clock after go/no-go")
+    parser.add_argument("bots", nargs="*", default=["forex", "gold", "crypto"])
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Stamp even when self_audit go_nogo is False (ops escape hatch)",
+    )
+    parser.add_argument(
+        "--skip-rebuild",
+        action="store_true",
+        help="Only stamp the clock (no cortex rebuild)",
+    )
+    args = parser.parse_args(argv)
+
+    rc = 0
+    for bot in args.bots:
+        ok, audit = audit_go_nogo(bot)
+        if not ok and not args.force:
+            print(
+                json.dumps(
+                    {
+                        "bot": bot,
+                        "refused": True,
+                        "reason": "go_nogo_false",
+                        "failed_checks": audit.get("failed_checks") or audit.get("checks"),
+                        "hint": "Fix self_audit failures, then re-run; or pass --force",
+                    },
+                    default=str,
+                ),
+                flush=True,
+            )
+            rc = 1
+            continue
+        info = None if args.skip_rebuild else rebuild_bot(bot)
+        note = "cortex_30d_ops" if ok else "forced_despite_go_nogo"
+        marker = write_soak_started(bot, note=note)
+        print(
+            json.dumps(
+                {
+                    "rebuild": info,
+                    "soak_started": str(marker),
+                    "go_nogo": ok,
+                    "forced": bool(args.force and not ok),
+                },
+                default=str,
+            ),
+            flush=True,
+        )
+    return rc
 
 
 if __name__ == "__main__":

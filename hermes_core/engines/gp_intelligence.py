@@ -15,34 +15,66 @@ Two verified blueprint fixes are baked in:
     was NOT trained in is a regime mismatch -> weight-penalized, never culled.
 
 Functions (blueprint Phase 14 build target):
-  get_label(...) ; gp_entry_score(...) ; record_loss(pair) ; _update_indicator(...)
+  get_label(...) ; gp_entry_score(...) ; record_loss(pair) ; update_indicator(...)
 
 Contract (Section 6):
   GPIntelligence.score(pair, cond) -> float[-1, 1]
   GPIntelligence.should_suppress() -> (bool, reason)
+
+Score gate:
+  SCORE_GATE = 0.0 — fresh pairs stay at DEFAULT_GP_SCORE (0.0) and are NOT
+  suppressed (gate is strict ``score < SCORE_GATE``). After decisive win/loss
+  samples, ``state["scores"][pair].wr`` moves and the blended score follows;
+  sustained losses push score below the gate.
 """
 
 from __future__ import annotations
 
-import json
 import os
+import threading
 import time
 from pathlib import Path
 
+from hermes_core.state.atomic_json import atomic_write_json, load_json
 from hermes_core.state.paths import gp_state_path
 
 # ── gates ──────────────────────────────────────────────────────────────────
 DEFAULT_GP_SCORE = 0.0  # [GUARD L29] corrected from -0.3 (Problem 3)
-SCORE_GATE = 0.0  # entry allowed only if score >= this
+SCORE_GATE = 0.0  # entry allowed only if score >= this (strict < suppresses)
 LOCKOUT_AFTER = 3  # consecutive losses -> locked [L29]
 # Wall-clock unlock so a 3-loss streak cannot empty the ensemble for the whole soak.
 LOCKOUT_DECAY_S = int(os.getenv("GP_LOCKOUT_DECAY_S", str(6 * 3600)))
 CULL_WR = 0.40  # same-regime WR below this -> cull [Problem 4]
 CULL_MIN_SIGNALS = 50  # need this many same-regime signals before culling
 REGIME_MISMATCH_PENALTY = 0.5  # weight multiplier when used outside trained regime
+FLAT_PNL_EPS = 1e-6  # |pnl| below this is flat / neutral (not a loss)
+
+_STATE_LOCK = threading.RLock()
 
 # Optional test override (tests monkeypatch this module attribute).
 GP_STATE: Path | None = None
+
+
+def is_flat_pnl(pnl: float) -> bool:
+    """True when PnL is effectively flat (no win/loss for lockout or WR)."""
+    try:
+        return abs(float(pnl)) < FLAT_PNL_EPS
+    except (TypeError, ValueError):
+        return True
+
+
+def is_win_pnl(pnl: float) -> bool:
+    try:
+        return float(pnl) > FLAT_PNL_EPS
+    except (TypeError, ValueError):
+        return False
+
+
+def is_loss_pnl(pnl: float) -> bool:
+    try:
+        return float(pnl) < -FLAT_PNL_EPS
+    except (TypeError, ValueError):
+        return False
 
 
 def _gp_state_file(pair: str | None = None) -> Path:
@@ -53,18 +85,27 @@ def _gp_state_file(pair: str | None = None) -> Path:
 
 def _load_state(pair: str | None = None) -> dict:
     path = _gp_state_file(pair)
-    if path.exists():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return {}
-    return {}
+    raw = load_json(path, default={}, quarantine=True)
+    return raw if isinstance(raw, dict) else {}
 
 
 def _save_state(state: dict, pair: str | None = None) -> None:
     path = _gp_state_file(pair)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    try:
+        atomic_write_json(path, state, indent=2)
+    except OSError:
+        pass
+
+
+def _update_pair_score(state: dict, pair: str, *, win: bool) -> None:
+    """Bump rolling WR for ``pair`` so ``gp_entry_score`` reflects outcomes."""
+    scores = state.setdefault("scores", {})
+    rec = scores.setdefault(pair, {"wins": 0, "attempts": 0, "wr": 0.5})
+    rec["attempts"] = int(rec.get("attempts") or 0) + 1
+    if win:
+        rec["wins"] = int(rec.get("wins") or 0) + 1
+    attempts = max(1, int(rec["attempts"]))
+    rec["wr"] = float(rec.get("wins") or 0) / attempts
 
 
 def get_label(indicators: list[dict]) -> str:
@@ -99,7 +140,11 @@ def get_label(indicators: list[dict]) -> str:
 
 def gp_entry_score(pair: str, cond: dict | None = None) -> float:
     """Ensemble entry score in [-1, 1]. Returns DEFAULT_GP_SCORE (0.0) for a
-    fresh pair with no outcome data (the corrected neutral default)."""
+    fresh pair with no outcome data (the corrected neutral default).
+
+    After ``record_win`` / ``record_loss`` / ``record_outcome``, ``scores[pair].wr``
+    is updated and this blends to ``(wr - 0.5) * 2`` so the score gate can fire.
+    """
     state = _load_state(pair)
     rec = state.get("scores", {}).get(pair)
     if rec is None:
@@ -112,45 +157,66 @@ def gp_entry_score(pair: str, cond: dict | None = None) -> float:
 
 def record_loss(pair: str) -> None:
     """Record a losing GP entry; 3 consecutive losses -> locked."""
-    state = _load_state(pair)
-    seq = state.setdefault("loss_seq", {})
-    seq[pair] = seq.get(pair, 0) + 1
-    if seq[pair] >= LOCKOUT_AFTER:
-        state.setdefault("lockout_ts", {})[pair] = time.time()
-    _save_state(state, pair)
+    with _STATE_LOCK:
+        state = _load_state(pair)
+        seq = state.setdefault("loss_seq", {})
+        seq[pair] = seq.get(pair, 0) + 1
+        if seq[pair] >= LOCKOUT_AFTER:
+            state.setdefault("lockout_ts", {})[pair] = time.time()
+        _update_pair_score(state, pair, win=False)
+        _save_state(state, pair)
 
 
 def record_win(pair: str) -> None:
     """Record a winning GP entry; resets the consecutive-loss counter."""
-    state = _load_state(pair)
-    state.setdefault("loss_seq", {})[pair] = 0
-    state.setdefault("lockout_ts", {}).pop(pair, None)
-    _save_state(state, pair)
+    with _STATE_LOCK:
+        state = _load_state(pair)
+        state.setdefault("loss_seq", {})[pair] = 0
+        state.setdefault("lockout_ts", {}).pop(pair, None)
+        _update_pair_score(state, pair, win=True)
+        _save_state(state, pair)
+
+
+def record_outcome(pair: str, pnl: float) -> str:
+    """Route a closed PnL to win / loss / flat (flat-PnL neutrality).
+
+    Returns ``\"win\"``, ``\"loss\"``, or ``\"flat\"``. Flat (|pnl| < 1e-6) does
+    not touch ``loss_seq`` or rolling WR.
+    """
+    if is_flat_pnl(pnl):
+        return "flat"
+    if is_win_pnl(pnl):
+        record_win(pair)
+        return "win"
+    record_loss(pair)
+    return "loss"
 
 
 def is_locked(pair: str) -> bool:
     """True while consecutive losses >= LOCKOUT_AFTER and decay window not elapsed."""
-    state = _load_state(pair)
-    if state.get("loss_seq", {}).get(pair, 0) < LOCKOUT_AFTER:
-        return False
-    locked_at = state.get("lockout_ts", {}).get(pair)
-    if locked_at is None:
-        # Legacy lock without timestamp — start the decay clock now.
-        state.setdefault("lockout_ts", {})[pair] = time.time()
-        _save_state(state, pair)
+    with _STATE_LOCK:
+        state = _load_state(pair)
+        if state.get("loss_seq", {}).get(pair, 0) < LOCKOUT_AFTER:
+            return False
+        locked_at = state.get("lockout_ts", {}).get(pair)
+        if locked_at is None:
+            # Legacy lock without timestamp — start the decay clock now.
+            state.setdefault("lockout_ts", {})[pair] = time.time()
+            _save_state(state, pair)
+            return True
+        if (time.time() - float(locked_at)) >= max(1, int(LOCKOUT_DECAY_S)):
+            state.setdefault("loss_seq", {})[pair] = 0
+            state.setdefault("lockout_ts", {}).pop(pair, None)
+            _save_state(state, pair)
+            return False
         return True
-    if (time.time() - float(locked_at)) >= max(1, int(LOCKOUT_DECAY_S)):
-        state.setdefault("loss_seq", {})[pair] = 0
-        state.setdefault("lockout_ts", {}).pop(pair, None)
-        _save_state(state, pair)
-        return False
-    return True
 
 
 def should_suppress(pair: str, cond: dict | None = None) -> tuple[bool, str]:
     """Return (suppress?, human-readable reason).
 
     Suppresses when: locked (>=3 consecutive losses) OR score below the gate.
+    Fresh pairs score DEFAULT_GP_SCORE (0.0) which is not below SCORE_GATE.
     """
     if is_locked(pair):
         return True, f"locked: {LOCKOUT_AFTER}+ consecutive GP losses on {pair}"
@@ -181,12 +247,17 @@ def weight_for(ind: dict, regime: str) -> float:
 def _update_indicator(registry: list[dict], ind_id: str, outcome: float, regime: str) -> list[dict]:
     """Mutate an indicator in the registry with a new outcome in `regime`.
 
+    Matches ``id`` or ``name`` (entry credits fire by name). Flat outcomes
+    (|pnl| < FLAT_PNL_EPS) are ignored so they do not dilute same-regime WR.
+
     Tracks per-regime wins/signals. Returns the (possibly culled) registry.
     PROBLEM 4: cull only on same-regime WR < CULL_WR over >= CULL_MIN_SIGNALS;
     regime mismatch is flagged for weight-penalty, never culled here.
     """
+    if is_flat_pnl(outcome):
+        return registry
     for ind in registry:
-        if ind.get("id") != ind_id:
+        if ind.get("id") != ind_id and ind.get("name") != ind_id:
             continue
         by_regime = ind.setdefault("by_regime", {})
         bucket = by_regime.setdefault(regime, {"wins": 0, "signals": 0})
@@ -211,6 +282,13 @@ def _update_indicator(registry: list[dict], ind_id: str, outcome: float, regime:
     return registry
 
 
+def update_indicator(
+    registry: list[dict], ind_id: str, outcome: float, regime: str
+) -> list[dict]:
+    """Public wrapper for regime-cull updates (see ``_update_indicator``)."""
+    return _update_indicator(registry, ind_id, outcome, regime)
+
+
 class GPIntelligence:
     """Roadmap S14 contract wrapper."""
 
@@ -226,6 +304,9 @@ class GPIntelligence:
     def record_win(self, pair: str) -> None:
         record_win(pair)
 
+    def record_outcome(self, pair: str, pnl: float) -> str:
+        return record_outcome(pair, pnl)
+
     def is_locked(self, pair: str) -> bool:
         return is_locked(pair)
 
@@ -235,4 +316,4 @@ class GPIntelligence:
     def update_indicator(
         self, registry: list[dict], ind_id: str, outcome: float, regime: str
     ) -> list[dict]:
-        return _update_indicator(registry, ind_id, outcome, regime)
+        return update_indicator(registry, ind_id, outcome, regime)

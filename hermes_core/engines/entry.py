@@ -24,13 +24,13 @@ from dataclasses import dataclass, field
 from hermes_core.engines.chart_vision import hard_block, soft_block
 from hermes_core.indicators import compute_all
 
-# Session tokens resolved upstream by _get_session(): LDN/NY/ASIA/OTHER.
+# Session tokens resolved upstream by _get_session(): LDN/NY/ASIA/OTHER/LDN_NY.
 # Maps a strategy's session_filter to the allowed token set.
 _SESSION_MAP: dict[str, set[str]] = {
-    "london_only": {"LDN"},
-    "ny_only": {"NY"},
+    "london_only": {"LDN", "LDN_NY"},
+    "ny_only": {"NY", "LDN_NY"},
     "asian_only": {"ASIA"},
-    "24h": {"LDN", "NY", "ASIA", "OTHER"},
+    "24h": {"LDN", "NY", "ASIA", "OTHER", "LDN_NY"},
 }
 
 # Ensemble consensus values that forbid an MR long (L13).
@@ -122,7 +122,7 @@ def _vol_gate(strategy: dict, atr: float, last: float, vol_above: bool) -> bool:
 def _session_allowed(strategy: dict, session_token: str) -> bool:
     """[GUARD L04] MR/RSI entries only inside the strategy's session window."""
     filt = _session_filter(strategy)
-    allowed = _SESSION_MAP.get(filt, {"LDN", "NY", "ASIA", "OTHER"})
+    allowed = _SESSION_MAP.get(filt, {"LDN", "NY", "ASIA", "OTHER", "LDN_NY"})
     return session_token in allowed
 
 
@@ -537,11 +537,16 @@ def gp_ensemble_signal(
         win_rate = float(ind.get("win_rate", 0.5) or 0.5)
         penalty = float(ind.get("_shared_penalty", 1.0) or 1.0)
         # B10: a 'suppress' flag means the indicator has lost money on paper
-        # (>=4 GP entries, pnl<0, WR<0.4) — zero its weight so it cannot vote
-        # the ensemble into a trade. 'promote' keeps its weight.
+        # (enough GP entries, pnl<0, WR<0.4) — zero its weight so it cannot vote
+        # the ensemble into a trade. 'probe' soft-suppress shrinks weight instead
+        # (used when hard suppress would leave <2 votable formulas).
         if ind.get("live_flag") == "suppress":
             continue
+        if ind.get("culled"):
+            continue
         weight = max(fitness * win_rate * penalty, 0.1 * penalty)
+        if ind.get("live_flag") == "probe":
+            weight *= 0.25
         votes.append((sig * weight, weight, name))
 
     if len(votes) < min_active:

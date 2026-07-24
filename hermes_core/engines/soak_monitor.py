@@ -24,12 +24,13 @@ from pathlib import Path
 from typing import Any
 
 from hermes_core.env import get_env
+from hermes_core.engines.soak_controls import entries_halted
 from hermes_core.state.paths import bot_state_dir, current_bot
 
 VALID_BOTS = ("forex", "gold", "crypto")
 
-# How often the embedded runner thread evaluates (default 6h).
-SOAK_MONITOR_INTERVAL_S = int(get_env("SOAK_MONITOR_INTERVAL_S", str(6 * 3600)))
+# How often the embedded runner thread evaluates (default 5 min).
+SOAK_MONITOR_INTERVAL_S = int(get_env("SOAK_MONITOR_INTERVAL_S", "300"))
 # Weekly digest cadence (default 7d).
 SOAK_WEEKLY_DIGEST_S = int(get_env("SOAK_WEEKLY_DIGEST_S", str(7 * 86400)))
 # Alert thresholds.
@@ -155,6 +156,19 @@ def evaluate_alerts(snap: dict[str, Any]) -> list[dict[str, str]]:
     bot = str(snap.get("bot") or "?")
     alerts: list[dict[str, str]] = []
 
+    try:
+        halted, halt_reason = entries_halted(bot)
+    except Exception:  # noqa: BLE001
+        halted, halt_reason = False, ""
+    if halted:
+        alerts.append(
+            {
+                "key": "halt_active",
+                "level": "critical",
+                "message": f"[soak] {bot}: entries halted ({halt_reason or 'halt'})",
+            }
+        )
+
     hb_age = snap.get("heartbeat_age_s")
     if hb_age is None:
         alerts.append(
@@ -277,7 +291,7 @@ def format_weekly_digest(snap: dict[str, Any]) -> str:
 def _notify(message: str, *, bot: str, guard: str) -> bool:
     if not SOAK_MONITOR_NOTIFY:
         print(message, flush=True)
-        return False
+        return True  # print-only counts as sent
     try:
         from hermes_core.notify import send_text_alert
 
@@ -303,13 +317,19 @@ def run_once(bot: str | None = None, *, force_weekly: bool = False) -> dict[str,
     for a in alerts:
         if a["key"] in prev_keys:
             continue  # already notified for this open condition
-        _notify(a["message"], bot=b, guard=f"soak_{a['key'].split(':')[0]}")
-        sent.append(a["key"])
+        if _notify(a["message"], bot=b, guard=f"soak_{a['key'].split(':')[0]}"):
+            sent.append(a["key"])
+
+    # Only latch keys we have successfully notified (or still open from a prior
+    # successful notify). Failed Discord must not dedupe forever.
+    latched_keys = (prev_keys & new_keys) | set(sent)
 
     # Cleared alerts — one recovery note for criticals only.
     cleared = prev_keys - new_keys
     critical_cleared = [
-        k for k in cleared if k in {"heartbeat_missing", "heartbeat_stale", "go_nogo_red"}
+        k
+        for k in cleared
+        if k in {"heartbeat_missing", "heartbeat_stale", "go_nogo_red", "halt_active"}
     ]
     if critical_cleared:
         _notify(
@@ -324,14 +344,14 @@ def run_once(bot: str | None = None, *, force_weekly: bool = False) -> dict[str,
     weekly_sent = False
     if weekly_due:
         digest = format_weekly_digest(snap)
-        _notify(digest, bot=b, guard="soak_weekly")
-        weekly_sent = True
-        latch["last_weekly_digest_ts"] = now
+        if _notify(digest, bot=b, guard="soak_weekly"):
+            weekly_sent = True
+            latch["last_weekly_digest_ts"] = now
 
     latch.update(
         {
             "ts": now,
-            "active_alert_keys": sorted(new_keys),
+            "active_alert_keys": sorted(latched_keys),
             "last_snapshot": {
                 "go_nogo": snap.get("go_nogo"),
                 "heartbeat_age_s": snap.get("heartbeat_age_s"),

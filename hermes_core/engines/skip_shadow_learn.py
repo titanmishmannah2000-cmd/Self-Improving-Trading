@@ -380,7 +380,7 @@ def promote_skip_shadow_proposal(
         return {"status": "skip", "reason": "incomplete_proposal", "deployed": False}
 
     if auto_deploy is None:
-        auto_deploy = get_env("REFLECT_AUTO_DEPLOY", "1") != "0"
+        auto_deploy = get_env("REFLECT_AUTO_DEPLOY", "0") != "0"
 
     if strategy is None:
         try:

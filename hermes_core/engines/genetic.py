@@ -79,7 +79,7 @@ HORIZON_BINS = ("h_short", "h_med", "h_long")
 # results after LIVE_FEEDBACK_MIN_SAMPLES GP entries for an indicator, so a
 # single lucky/unlucky trade cannot flip the ranking (the overfitting trap the
 # audit flagged). Bonus is small + confidence-scaled so history still dominates.
-LIVE_FEEDBACK_MIN_SAMPLES = 4  # GP entries before live signal is trusted
+LIVE_FEEDBACK_MIN_SAMPLES = 20  # GP entries before live signal is trusted
 LIVE_FEEDBACK_BONUS = 0.05  # max additive bonus to fitness (~|corr| 0.15-0.85)
 LIVE_PNL_SCALE = 10.0  # % PnL at which the tanh bonus saturates
 LIVE_FEEDBACK_INTERVAL_S = int(
@@ -1155,8 +1155,8 @@ def discover(
     for idx, raw in enumerate(pop):
         n_eval += 1
         expr = _canonicalize(raw)
-        # Final constant polish on test-regime fitness (cheap local search).
-        expr = _polish_constants(expr, test, horizon, rng, tries=2)
+        # Polish constants on TRAIN (cheap local search), then evaluate on TEST.
+        expr = _polish_constants(expr, train, horizon, rng, tries=2)
         es = _expr_to_str(expr)
         key = _semantic_key(expr)
         if key in seen:
@@ -1181,7 +1181,7 @@ def discover(
             _n = min(len(sig_test), len(test) - horizon)
             if _n >= N_FOLDS * 15:
                 kfold_med, frac = _honest_oos(sig_test, test, horizon)
-                _kfold_ok = (frac >= 0.6) and (kfold_med >= OOS_FLOOR)
+                _kfold_ok = (frac >= 0.8) and (kfold_med >= OOS_FLOOR)
                 if not _kfold_ok:
                     rejects["kfold"] += 1
                     continue
@@ -1466,6 +1466,13 @@ def apply_live_feedback(pair: str, cortex) -> int:
             else:
                 ind["live_flag"] = "neutral"
             updated += 1
+        # Soft-suppress: never hard-suppress when that would leave <2 votable
+        # formulas for the pair — demote to probe (weight shrink) instead.
+        keep = [i for i in own if i.get("live_flag") != "suppress"]
+        if len(keep) < 2:
+            for i in own:
+                if i.get("live_flag") == "suppress":
+                    i["live_flag"] = "probe"
         # Re-rank by live_fitness (falls back to historical fitness) and persist.
         own.sort(key=lambda x: x.get("live_fitness", x.get("fitness", 0.0)), reverse=True)
         _save_discovered(pair, own)
@@ -1489,11 +1496,10 @@ def _discovered_dir(pair: str | None = None) -> Path:
 
 
 def _atomic_write_json(path: Path, data: object) -> None:
-    """Write JSON via temp+replace so readers never see a partial file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    """Write JSON via shared atomic helper (unique tmp: pid + time_ns)."""
+    from hermes_core.state.atomic_json import atomic_write_json as _aj
+
+    _aj(path, data, indent=2)
 
 
 # Invent write fencing: abandoned workers after timeout must not clobber a newer
@@ -1541,11 +1547,10 @@ def _save_discovery_pulse(pair: str, pulse: dict, *, write_token: int | None = N
     # Also merge into the aggregate pulse index used by the runner push
     # (per owning bot — not a global forex dump).
     index_path = _discovered_dir(pair) / "_discovery_pulse.json"
-    try:
-        index = json.loads(index_path.read_text(encoding="utf-8")) if index_path.exists() else {}
-        if not isinstance(index, dict):
-            index = {}
-    except (json.JSONDecodeError, OSError):
+    from hermes_core.state.atomic_json import load_json
+
+    index = load_json(index_path, default={}, quarantine=True)
+    if not isinstance(index, dict):
         index = {}
     index[pair] = pulse
     _atomic_write_json(index_path, index)
@@ -1574,11 +1579,10 @@ def load_discovery_pulse(pair: str) -> dict | None:
     path = _pulse_path(pair)
     if not path.exists():
         return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else None
-    except (json.JSONDecodeError, OSError):
-        return None
+    from hermes_core.state.atomic_json import load_json
+
+    data = load_json(path, default=None, quarantine=True)
+    return data if isinstance(data, dict) else None
 
 
 def load_discovery_pulses(pairs: list[str] | None = None) -> dict[str, dict]:
@@ -1592,16 +1596,15 @@ def load_discovery_pulses(pairs: list[str] | None = None) -> dict[str, dict]:
             index_paths.append(repo_root() / bot / "state" / "discovered" / "_discovery_pulse.json")
         index_paths.append(repo_root() / "state" / "discovered" / "_discovery_pulse.json")
     for index_path in index_paths:
-        try:
-            if not index_path.exists():
-                continue
-            raw = json.loads(index_path.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                for k, v in raw.items():
-                    if isinstance(v, dict):
-                        out[k] = v
-        except (json.JSONDecodeError, OSError):
+        if not index_path.exists():
             continue
+        from hermes_core.state.atomic_json import load_json
+
+        raw = load_json(index_path, default={}, quarantine=True)
+        if isinstance(raw, dict):
+            for k, v in raw.items():
+                if isinstance(v, dict):
+                    out[k] = v
     if pairs is not None:
         wanted = set(pairs)
         out = {k: v for k, v in out.items() if k in wanted}
@@ -1757,10 +1760,9 @@ def _discovered_path(pair: str) -> Path:
 def _read_indicators_file(path: Path) -> list[dict]:
     if not path.exists():
         return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return []
+    from hermes_core.state.atomic_json import load_json
+
+    data = load_json(path, default=[], quarantine=True)
     if isinstance(data, dict):
         data = data.get("indicators") or data.get("admitted") or []
     if not isinstance(data, list):

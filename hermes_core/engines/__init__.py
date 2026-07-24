@@ -65,8 +65,10 @@ from hermes_core.engines.gp_intelligence import (
     gp_entry_score,
     is_locked,
     record_loss,
+    record_outcome,
     record_win,
     should_suppress,
+    update_indicator,
     weight_for,
 )
 from hermes_core.engines.gp_invent_profile import invent_profile
@@ -191,8 +193,10 @@ __all__ = [
     "gp_entry_score",
     "is_locked",
     "record_loss",
+    "record_outcome",
     "record_win",
     "should_suppress",
+    "update_indicator",
     "weight_for",
     "Cortex",
     "Policy",

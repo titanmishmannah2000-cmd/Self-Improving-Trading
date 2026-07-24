@@ -163,13 +163,19 @@ def check_rr_guard(stop_pct, target_pct) -> bool:
     return (float(target_pct) / float(stop_pct)) >= RR_GUARD_MIN
 
 
-def compute_atr_stop(entry, atr, mult, floor_pct) -> float:
+def compute_atr_stop(entry, atr, mult, floor_pct, *, use_atr_floor: bool = True) -> float:
     """ATR-based stop price; stop distance is never tighter than floor_pct.
 
-    distance = max(atr*mult, floor_pct); returns entry - distance (long stop).
+    ``floor_pct`` is a percent of entry (YAML ``atr_floor_pct: 0.3`` → 0.3%).
+    When ``use_atr_floor`` is False, the floor is ignored.
+    Returns entry - distance (long stop).
     """
-    distance = max(float(atr) * float(mult), float(floor_pct))
-    return entry - distance
+    atr_distance = float(atr) * float(mult)
+    if not use_atr_floor:
+        return float(entry) - atr_distance
+    floor_distance = abs(float(entry)) * (float(floor_pct) / 100.0)
+    distance = max(atr_distance, floor_distance)
+    return float(entry) - distance
 
 
 def param_range_gate(strategy) -> tuple[bool, str | None]:

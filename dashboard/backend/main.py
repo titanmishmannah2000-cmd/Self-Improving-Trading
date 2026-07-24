@@ -223,6 +223,11 @@ def quick_test():
 # Rebuild marker: Force Railway to pick up the latest routes (discovered, cortex, audit endpoints)
 INGEST_TOKEN = os.getenv("INGEST_TOKEN", "")
 if not INGEST_TOKEN:
+    # Fail closed on Railway / when REQUIRE_INGEST_TOKEN=1; warn-only locally.
+    if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("REQUIRE_INGEST_TOKEN") == "1":
+        raise SystemExit(
+            "INGEST_TOKEN is required in production (set REQUIRE_INGEST_TOKEN=0 to override)"
+        )
     print("[WARN] INGEST_TOKEN not set — ingest endpoints are unprotected", flush=True)
 
 # DB lives on a Railway volume so it survives restarts/redeploys.

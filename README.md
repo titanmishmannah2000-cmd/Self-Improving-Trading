@@ -1,7 +1,7 @@
 # HERMES Trading — Paper-Trading Rebuild
 
 Production-grade paper-trading rebuild of the Hermes multi-bot self-trading system.
-**Live scope:** forex + gold. Crypto config is reference-only.
+**Live scope:** forex + gold + crypto (paper soak). Crypto runs alongside forex and gold in the paper soak.
 
 ## Start here
 
