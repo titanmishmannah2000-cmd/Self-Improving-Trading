@@ -80,7 +80,12 @@ CYCLE_SECONDS = 60  # 60s cadence
 # Discovery is expensive (GP evolution over price history); throttle per
 # (bot, pair) so it runs at most once per ~hour of wall-clock, or on first run.
 DISCOVERY_INTERVAL_S = int(get_env("DISCOVERY_INTERVAL_S", "3600"))
-_DISCOVERY_LAST: dict[tuple[str, str], float] = {}  # (bot, pair) -> last run epoch
+# When votable formulas already exist, still re-invent on this longer cadence
+# (default 6h). Without this, invent freezes forever on the first admit and
+# the Discovered UI never shows new exprs.
+DISCOVERY_REINVENT_INTERVAL_S = int(get_env("DISCOVERY_REINVENT_INTERVAL_S", str(6 * 3600)))
+_DISCOVERY_LAST: dict[tuple[str, str], float] = {}  # (bot, pair) -> last pass epoch
+_DISCOVERY_LAST_INVENT: dict[tuple[str, str], float] = {}  # (bot, pair) -> last full invent
 
 
 def _state_dir(bot: str) -> Path:
@@ -585,14 +590,14 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
     """Throttled GP discovery + live feedback for one pair (B10 closes the loop).
 
     On each throttled pass it:
-      1. (re)discovers indicators if none are stored yet;
-      2. ALWAYS applies live paper-PnL feedback (B10) so persisted indicators
-         are re-ranked toward realized results — this is what makes the GP
-         brain self-evolve rather than sit on its historical-correlation fitness.
+      1. Applies live paper-PnL feedback (B10) so persisted indicators re-rank;
+      2. Runs a full invent when this pair has no votable formulas for the
+         active invent regime, OR when ``DISCOVERY_REINVENT_INTERVAL_S`` has
+         elapsed since the last full invent (so the brain keeps searching for
+         NEW formulas instead of freezing on yesterday's admits).
 
     Runs at most once per DISCOVERY_INTERVAL_S of wall-clock per (bot, pair).
-    Persists admitted + re-ranked indicators to state/discovered/{pair}.json
-    (read by the dashboard + entry engine).
+    Persists admitted indicators to state/discovered/{pair}.json.
 
     CRITICAL: discovery does network + GP evolution and must NEVER block the
     heartbeat cycle. The heavy work runs in a thread with a hard timeout; if it
@@ -621,13 +626,18 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
     prof = invent_profile(bot, pair=pair)
     # Skip invent only when THIS pair already has S10-approved formulas on the
     # *current* invent regime (interval + horizon). Old daily/h60 crypto junk
-    # must not block a fresh 1h invent.
+    # must not block a fresh 1h invent. Re-invent still runs on the longer
+    # DISCOVERY_REINVENT_INTERVAL_S cadence so new exprs can appear.
     own = load_discovered_indicators(pair, include_shared=False)
-    discovered = has_votable_for_regime(
+    have_votable = has_votable_for_regime(
         own,
         interval=prof["interval"],
         horizon=prof["horizon"],
     )
+    reinvent_s = max(int(DISCOVERY_REINVENT_INTERVAL_S), int(DISCOVERY_INTERVAL_S))
+    last_invent = float(_DISCOVERY_LAST_INVENT.get(key) or 0.0)
+    reinvent_due = (now - last_invent) >= reinvent_s
+    should_invent = (not have_votable) or reinvent_due
 
     def _status_pulse(**extra) -> None:
         """Always leave a dashboard-visible invent pulse (even on skip/timeout)."""
@@ -648,6 +658,8 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
                 "best_oos": extra.get("best_oos"),
                 "status": extra.get("status") or "ok",
                 "reason": extra.get("reason"),
+                "reject_counts": extra.get("reject_counts"),
+                "seed": extra.get("seed"),
                 "map_elites": extra.get("map_elites")
                 or {
                     "filled": 0,
@@ -670,20 +682,26 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
         updated = apply_live_feedback(pair, cortex)
         if updated:
             _log.info("[discovery] %s: live feedback updated %d indicators", pair, updated)
-        # (Re)discover only when THIS pair has no votable own formulas yet
-        # for the active invent regime.
-        if discovered:
+        if not should_invent:
+            age_h = (now - last_invent) / 3600.0 if last_invent else -1.0
             _status_pulse(
                 status="skipped_have_formulas",
-                reason="votable formulas already on this invent regime",
-                admitted=0,
+                reason=(
+                    f"votable formulas on invent regime; "
+                    f"next reinvent in {max(0.0, reinvent_s - (now - last_invent)) / 3600.0:.1f}h "
+                    f"(age={age_h:.1f}h)"
+                ),
+                admitted=len(own) if isinstance(own, list) else 0,
             )
             return
+        # Time/pair-varying seed — fixed seed=7 recycled the same doomed candidates.
+        invent_seed = (int(now) ^ (hash((bot, pair, int(now) // 3600)) & 0xFFFFFFFF)) & 0xFFFFFFFF
         print(
             f"[hermes][discovery] {bot}/{pair}: invent start "
             f"{prof['interval']}/h={prof['horizon']} "
             f"gens={prof['generations']} pop={prof['pop_size']} "
-            f"timeout={prof['timeout_s']}s",
+            f"timeout={prof['timeout_s']}s seed={invent_seed} "
+            f"reinvent={have_votable}",
             flush=True,
         )
         hist = seed_history_interval_sync(
@@ -714,6 +732,7 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
             _status_pulse(
                 status="skipped_short_history",
                 reason=f"<{prof['min_bars']} {prof['interval']} bars",
+                seed=invent_seed,
             )
             return
         inds = gp_discover(
@@ -724,20 +743,57 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
             pop_size=int(prof["pop_size"]),
             n_islands=int(prof["n_islands"]),
             interval=str(prof["interval"]),
+            seed=int(invent_seed),
         )
+        _DISCOVERY_LAST_INVENT[key] = time.time()
+        # Reinvent merge: don't wipe prior votable formulas when a new run admits.
+        if inds and have_votable:
+            try:
+                from hermes_core.engines.genetic import (
+                    _save_discovered,
+                    indicator_expr,
+                )
+
+                prior = [i for i in (own or []) if indicator_expr(i)]
+                by_key: dict[str, dict] = {}
+                for row in prior + list(inds):
+                    k = str(row.get("expr") or row.get("expr_str") or "").strip()
+                    if not k:
+                        continue
+                    prev = by_key.get(k)
+                    if prev is None or float(row.get("oos_corr") or 0) >= float(
+                        prev.get("oos_corr") or 0
+                    ):
+                        by_key[k] = row
+                merged = sorted(
+                    by_key.values(),
+                    key=lambda x: float(x.get("oos_corr") or 0),
+                    reverse=True,
+                )[:10]
+                _save_discovered(pair, merged)
+                inds = merged
+            except Exception:  # noqa: BLE001 — keep discover()'s write on merge failure
+                pass
         _log.info("[discovery] %s: admitted=%d -> %s", pair, len(inds), _discovered_path(pair))
-        # discover() already writes a full pulse; tag bot for the dashboard.
+        # discover() already writes a full pulse; tag bot/seed for the dashboard.
         try:
             from hermes_core.engines.genetic import load_discovery_pulse
 
             existing = load_discovery_pulse(pair) or {}
             existing["_bot"] = bot
             existing["pair"] = pair
-            existing["status"] = "ok"
+            existing["status"] = "ok" if inds else "admit_zero"
             existing["admitted"] = len(inds)
+            existing["seed"] = invent_seed
+            if have_votable and not inds:
+                existing["reason"] = "reinvent_ran_admit_zero"
             _save_discovery_pulse(pair, existing)
         except Exception:  # noqa: BLE001
-            _status_pulse(status="ok", admitted=len(inds))
+            _status_pulse(
+                status="ok" if inds else "admit_zero",
+                admitted=len(inds),
+                seed=invent_seed,
+            )
 
     # Bound the work so a slow network/price API can't stall the trade loop.
     # Discovery runs in its own background thread; crypto gets a longer cap so
@@ -747,7 +803,8 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
         from concurrent.futures import TimeoutError as FuturesTimeout
 
         print(
-            f"[hermes][discovery] {bot}/{pair}: pass begin (have_votable={discovered})",
+            f"[hermes][discovery] {bot}/{pair}: pass begin "
+            f"(have_votable={have_votable} should_invent={should_invent})",
             flush=True,
         )
         with ThreadPoolExecutor(max_workers=1) as ex:

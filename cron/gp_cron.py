@@ -46,6 +46,12 @@ def main() -> None:
                     flush=True,
                 )
                 continue
+            # Vary seed each cron run so invent does not recycle the same exprs.
+            import time as _time
+
+            invent_seed = (
+                int(_time.time()) ^ (hash((bot, pair, int(_time.time()) // 3600)) & 0xFFFFFFFF)
+            ) & 0xFFFFFFFF
             inds = discover(
                 pair,
                 prices,
@@ -54,8 +60,12 @@ def main() -> None:
                 pop_size=int(prof["pop_size"]),
                 n_islands=int(prof["n_islands"]),
                 interval=str(prof["interval"]),
+                seed=int(invent_seed),
             )
-            print(f"[cron] gp_cron: {pair} -> {len(inds)} indicators", flush=True)
+            print(
+                f"[cron] gp_cron: {pair} -> {len(inds)} indicators (seed={invent_seed})",
+                flush=True,
+            )
         except Exception as exc:  # noqa: BLE001 — cron must not crash the job
             print(f"[cron] gp_cron: {pair} error -> {exc}", flush=True, file=sys.stderr)
 
