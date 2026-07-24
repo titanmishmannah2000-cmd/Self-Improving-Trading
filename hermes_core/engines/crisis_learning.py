@@ -295,12 +295,14 @@ def _novelty_baseline(crises: dict, exclude: str | None = None) -> float | None:
 
 
 def check_novel_regime(pair: str, prices: list[float], volumes: list[float] | None = None) -> dict:
-    """L21 flatline guard. If the current fingerprint is further than
-    NOVELTY_MULTIPLIER * median-known-distance from every known crisis, treat it
-    as a genuinely novel regime and pause the pair for FLATLINE_CYCLES.
+    """L21 flatline guard. Pause only for regimes far from *all* known crises.
 
-    Fail-closed: insufficient data -> no flatline (we don't halt on first sight).
+    Threshold is ``max(NOVEL_DISTANCE, NOVELTY_MULTIPLIER * median_nn)`` so a
+    tight crisis-only DB cannot mark ordinary range markets as novel (that was
+    blocking every pair on soak). Insufficient data -> no flatline.
     """
+    from hermes_core.env import get_env
+
     sig = _extract_crisis_features(prices, volumes)
     if sig is None:
         return {
@@ -321,18 +323,39 @@ def check_novel_regime(pair: str, prices: list[float], volumes: list[float] | No
 
     nearest = find_nearest_crisis(sig, top_n=1)
     dist = nearest[0][0] if nearest else 1.0
-    threshold = NOVELTY_MULTIPLIER * baseline
-    if dist > threshold:  # [GUARD L21] novel regime
+    # Absolute floor (F.3) prevents false positives when known crises cluster.
+    threshold = max(float(NOVEL_DISTANCE), float(NOVELTY_MULTIPLIER) * float(baseline))
+    novel = dist > threshold
+    # Pause is opt-out via env for soak ops; logging still records novelty.
+    pause_enabled = get_env("L21_FLATLINE", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+    if novel:
         _record_flatline(
-            pair, "NOVEL_REGIME", f"distance {dist:.3f} > {threshold:.3f} (3.0*median)"
+            pair,
+            "NOVEL_REGIME",
+            f"distance {dist:.3f} > {threshold:.3f} (max(NOVEL,{NOVELTY_MULTIPLIER}*median))",
         )
+        if pause_enabled:
+            return {
+                "novel": True,
+                "distance": round(dist, 4),
+                "median_baseline": round(baseline, 4),
+                "threshold": round(threshold, 4),
+                "pause_cycles": FLATLINE_CYCLES,
+                "flatlined": True,
+            }
         return {
             "novel": True,
             "distance": round(dist, 4),
             "median_baseline": round(baseline, 4),
             "threshold": round(threshold, 4),
-            "pause_cycles": FLATLINE_CYCLES,
-            "flatlined": True,
+            "pause_cycles": 0,
+            "flatlined": False,
+            "reason": "novel_log_only",
         }
     return {
         "novel": False,

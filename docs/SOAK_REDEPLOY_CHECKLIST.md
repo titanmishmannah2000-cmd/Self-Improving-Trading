@@ -10,8 +10,9 @@ Complete after the soak-readiness code is deployed. Do **not** start the 30-day 
 4. `PRICE_BACKEND=aggregate` (default). Keep GoldAPI for metals (no key).
 5. Set `DASHBOARD_API_URL` + `INGEST_TOKEN` on bots; `DASHBOARD_DB` / `DB_PATH` on dashboard (not a Windows path).
 6. Optional: `HALT_ENTRIES=1` to freeze new entries without killing the process; or touch `{bot}/state/halt`.
-7. `GP_PROMOTE=1` only when you want GP paper entries (shadow invent always runs).
-8. `GP_EXCLUDE_PAIRS` still seeds cold-start bans (`GBP/JPY,BTC/USD` by default).
+7. Optional: `L21_FLATLINE=0` to log novel-regime events without pausing entries (escape hatch if L21 over-fires).
+8. `GP_PROMOTE=1` only when you want GP paper entries (shadow invent always runs).
+9. `GP_EXCLUDE_PAIRS` still seeds cold-start bans (`GBP/JPY,BTC/USD` by default).
 
 ## Local / volume hygiene
 

@@ -89,6 +89,16 @@ def test_novel_regime_flatlines_and_logs():
     assert json.loads(lines[0])["reason"] == "NOVEL_REGIME"
 
 
+def test_calm_market_not_flatlined():
+    """Ordinary range markets must not trip L21 (soak false-positive guard)."""
+    prices = _known_series(n=120, start=1.14, drift=0.0, vol=0.0003, seed=11)
+    result = cl.check_novel_regime("EUR/USD", prices, None)
+    assert result["flatlined"] is False
+    assert result["pause_cycles"] == 0
+    # Distance may be "far" from crises in a soft sense, but under absolute floor.
+    assert result.get("threshold", 0) >= cl.NOVEL_DISTANCE
+
+
 def test_known_regime_not_flatlined():
     # a fingerprint identical to a KNOWN crisis is the opposite of novel ->
     # the L21 flatline guard must NOT trigger.
