@@ -1,0 +1,8 @@
+{"pair": "EUR/USD", "reason": "NOVEL_REGIME", "details": "distance 0.319 > 0.078 (3.0*median)", "ts": "2026-07-21T12:13:59.983064+00:00", "expires_in_cycles": 60}
+{"pair": "EUR/USD", "reason": "NOVEL_REGIME", "details": "distance 0.319 > 0.078 (3.0*median)", "ts": "2026-07-21T12:21:44.699468+00:00", "expires_in_cycles": 60}
+{"pair": "EUR/USD", "reason": "NOVEL_REGIME", "details": "distance 0.325 > 0.078 (3.0*median)", "ts": "2026-07-21T14:11:07.340560+00:00", "expires_in_cycles": 60}
+{"pair": "EUR/USD", "reason": "NOVEL_REGIME", "details": "distance 0.329 > 0.078 (3.0*median)", "ts": "2026-07-21T15:01:02.944718+00:00", "expires_in_cycles": 60}
+{"pair": "EUR/USD", "reason": "NOVEL_REGIME", "details": "distance 0.333 > 0.078 (3.0*median)", "ts": "2026-07-21T16:24:05.122602+00:00", "expires_in_cycles": 60}
+{"pair": "EUR/USD", "reason": "NOVEL_REGIME", "details": "distance 0.333 > 0.078 (3.0*median)", "ts": "2026-07-21T16:29:40.455549+00:00", "expires_in_cycles": 60}
+{"pair": "EUR/USD", "reason": "NOVEL_REGIME", "details": "distance 0.333 > 0.078 (3.0*median)", "ts": "2026-07-21T16:39:17.789707+00:00", "expires_in_cycles": 60}
+{"pair": "EUR/USD", "reason": "NOVEL_REGIME", "details": "distance 0.338 > 0.078 (3.0*median)", "ts": "2026-07-21T17:28:34.434469+00:00", "expires_in_cycles": 60}

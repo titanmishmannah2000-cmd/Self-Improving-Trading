@@ -1,0 +1,46 @@
+{
+  "suppressions": {
+    "EUR/USD": [
+      "gp_ensemble"
+    ]
+  },
+  "priority_discovery": false,
+  "probe_interval": 50,
+  "rollback": false,
+  "soft_weights": true,
+  "allocation": {
+    "EUR/USD": {
+      "mean_reversion": {
+        "weight": 1.0,
+        "mode": "soft",
+        "suppressed_soft": false,
+        "evidence_n": 6,
+        "wr": 1.0,
+        "reasons": [
+          "wr=1.00"
+        ]
+      },
+      "rsi_momentum": {
+        "weight": 1.0,
+        "mode": "soft",
+        "suppressed_soft": false,
+        "evidence_n": 0,
+        "wr": null,
+        "reasons": [
+          "neutral"
+        ]
+      },
+      "gp_ensemble": {
+        "weight": 0.0875,
+        "mode": "soft",
+        "suppressed_soft": true,
+        "evidence_n": 6,
+        "wr": 0.0,
+        "reasons": [
+          "wr=0.00",
+          "soft_suppress"
+        ]
+      }
+    }
+  }
+}

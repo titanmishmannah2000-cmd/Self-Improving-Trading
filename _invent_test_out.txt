@@ -1,0 +1,7 @@
+﻿............................F..........................                  [100%]
+================================== FAILURES ===================================
+E   AssertionError: assert None == 'gp_ensemble'
+D:\Self Improving Trading\tests\test_gp_entry.py:245: AssertionError: assert None == 'gp_ensemble'
+=========================== short test summary info ===========================
+FAILED tests/test_gp_entry.py::test_log_gp_shadow_writes_record - AssertionEr...
+1 failed, 54 passed in 3801.54s (1:03:21)

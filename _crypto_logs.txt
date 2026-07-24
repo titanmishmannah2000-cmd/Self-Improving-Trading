@@ -1,0 +1,9 @@
+﻿Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/593a8da7-a352-48ea-beaf-9fe72d2b362d/vol_ww85n4kjhlpdvlha
+   Building hermes-trading @ file:///app
+      Built hermes-trading @ file:///app
+Uninstalled 1 package in 1ms
+Installed 1 package in 0.65ms
+Starting Container
+[hermes] bot=crypto pairs=['BTC/USD', 'ETH/USD'] backend=aggregate
+[hermes][discovery] crypto/BTC/USD: discovered=0
+[hermes][discovery] crypto/ETH/USD: discovered=0

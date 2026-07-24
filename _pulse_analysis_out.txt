@@ -1,0 +1,29 @@
+File size: 220,037 bytes
+=== LOCAL FILE ===
+Top-level keys: ['ts', 'bots']
+Has totals key: False
+Bots keys: ['forex', 'gold']
+[forex]
+  closed_trades: None
+  open_count: None
+  len(recent_trades): 113
+  recent_trades with exit_reason: 113
+  unique ids among those with exit_reason: 113
+[gold]
+  closed_trades: None
+  open_count: None
+  len(recent_trades): 26
+  recent_trades with exit_reason: 26
+  unique ids among those with exit_reason: 26
+=== Top-level forex/gold/crypto trades ===
+forex: not present
+gold: not present
+crypto: not present
+=== Aggregates (old pulse method) ===
+Sum of closed with exit_reason across bots (recent_trades): 139
+Deduped unique closed ids across all bots: 139
+=== LIVE API /api/lifetime-summary ===
+API result keys: ['bots']
+  [forex] closed_trades: 113
+  [gold] closed_trades: 26
+Sum of closed_trades across bots: 139

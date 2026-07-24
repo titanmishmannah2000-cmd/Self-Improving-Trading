@@ -1,1 +1,0 @@
-{"pair": "EUR/USD", "variable": "rsi_period", "old": "14", "new": "12", "reasoning": "improve WR", "mode": "shadow"}
