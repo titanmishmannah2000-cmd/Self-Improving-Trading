@@ -23,6 +23,10 @@ def test_invent_timeout_does_not_join_hung_worker(monkeypatch, tmp_path):
     loop._DISCOVERY_LAST_INVENT.clear()
     loop._DISCOVERY_IN_FLIGHT.clear()
     loop._LAST_DISCOVERY_RUN.clear()
+    loop._DISCOVERY_TIMEOUT_STREAK.clear()
+    loop._DISCOVERY_TIMEOUT_COOLDOWN_UNTIL.clear()
+    loop._DISCOVERY_ADMIT_ZERO_STREAK.clear()
+    gen._INVENT_WRITE_TOKEN.clear()
 
     pulses: list[dict] = []
     release = threading.Event()
@@ -63,7 +67,7 @@ def test_invent_timeout_does_not_join_hung_worker(monkeypatch, tmp_path):
     monkeypatch.setattr(loop, "gp_discover", hung_discover)
     monkeypatch.setattr(
         "hermes_core.engines.genetic._save_discovery_pulse",
-        lambda p, pulse: pulses.append(dict(pulse)),
+        lambda p, pulse, write_token=None: pulses.append(dict(pulse)),
     )
 
     try:
@@ -73,11 +77,11 @@ def test_invent_timeout_does_not_join_hung_worker(monkeypatch, tmp_path):
         assert elapsed < 8.0, f"timeout path hung for {elapsed:.1f}s"
         assert any(p.get("status") == "timeout" for p in pulses)
         assert "forex" in loop._LAST_DISCOVERY_RUN
-        # While worker still blocked, a second pass must not spawn another invent.
-        loop._DISCOVERY_LAST.pop(key, None)
-        pulses.clear()
-        loop._maybe_discover("forex", pair, prices=[1.1] * 220)
-        assert any(p.get("status") == "in_flight" for p in pulses)
+        assert loop._DISCOVERY_TIMEOUT_STREAK.get(key, 0) >= 1
+        # Hard-abandon clears in_flight so the next cadence can invent again.
+        assert key not in loop._DISCOVERY_IN_FLIGHT
+        # Abandoned worker token was invalidated — a new begin token is current.
+        assert gen.invent_write_token_current(pair) >= 1
     finally:
         release.set()
         for _ in range(100):
@@ -94,7 +98,7 @@ def test_discover_early_exit_writes_pulse(monkeypatch, tmp_path):
     monkeypatch.setattr(
         gen,
         "_save_discovery_pulse",
-        lambda pair, pulse: pulses.append(dict(pulse)),
+        lambda pair, pulse, write_token=None: pulses.append(dict(pulse)),
     )
     out = gen.discover("EUR/USD", prices=[1.0] * 20, generations=1, pop_size=2)
     assert out == []
@@ -185,3 +189,196 @@ def test_seed_fixtures_never_returned_as_discoveries(monkeypatch, tmp_path):
     # at minimum seed fixture must not appear.
     rows = gen.load_discovered_indicators("EUR/USD", include_shared=False)
     assert all(not gen._is_dashboard_seed_fixture(r) for r in rows)
+
+
+def test_stale_write_token_cannot_clobber_pulse_or_discovered(monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_STATE_ROOT", str(tmp_path))
+    monkeypatch.setenv("HERMES_BOT_NAME", "forex")
+    gen._INVENT_WRITE_TOKEN.clear()
+    pair = "NZD/USD"
+    t1 = gen.begin_invent_write_token(pair)
+    gen._save_discovery_pulse(pair, {"status": "ok", "admitted": 1, "v": 1}, write_token=t1)
+    gen._save_discovered(
+        pair,
+        [{"expr": "roc20", "expr_str": "roc20", "oos_corr": 0.5, "backtest_approved": True}],
+        write_token=t1,
+    )
+    t2 = gen.begin_invent_write_token(pair)
+    assert t2 != t1
+    # Abandoned worker with t1 must not overwrite the newer book/pulse.
+    assert gen._save_discovery_pulse(pair, {"status": "stale", "v": 99}, write_token=t1) is None
+    assert gen._save_discovered(pair, [{"expr": "bad"}], write_token=t1) is None
+    pulse = gen.load_discovery_pulse(pair)
+    assert pulse and pulse.get("v") == 1
+    rows = gen.load_discovered_indicators(pair, include_shared=False)
+    assert rows and rows[0].get("expr") == "roc20"
+    # Current token still writes.
+    gen._save_discovery_pulse(pair, {"status": "ok", "v": 2}, write_token=t2)
+    assert (gen.load_discovery_pulse(pair) or {}).get("v") == 2
+
+
+def test_chronic_timeout_shrinks_then_cools_down(monkeypatch, tmp_path):
+    import threading
+
+    monkeypatch.setenv("HERMES_STATE_ROOT", str(tmp_path))
+    monkeypatch.setattr(loop, "DISCOVERY_INTERVAL_S", 1)
+    monkeypatch.setattr(loop, "DISCOVERY_REINVENT_INTERVAL_S", 1)
+    monkeypatch.setattr(loop, "DISCOVERY_TIMEOUT_SHRINK_AFTER", 2)
+    monkeypatch.setattr(loop, "DISCOVERY_TIMEOUT_SKIP_AFTER", 3)
+    monkeypatch.setattr(loop, "DISCOVERY_TIMEOUT_COOLDOWN_S", 3600)
+    loop._DISCOVERY_LAST.clear()
+    loop._DISCOVERY_LAST_INVENT.clear()
+    loop._DISCOVERY_IN_FLIGHT.clear()
+    loop._LAST_DISCOVERY_RUN.clear()
+    loop._DISCOVERY_TIMEOUT_STREAK.clear()
+    loop._DISCOVERY_TIMEOUT_COOLDOWN_UNTIL.clear()
+    loop._DISCOVERY_ADMIT_ZERO_STREAK.clear()
+    gen._INVENT_WRITE_TOKEN.clear()
+
+    pair = "CAD/USD"
+    key = ("forex", pair)
+    releases: list[threading.Event] = []
+    seen_gens: list[int] = []
+    pulses: list[dict] = []
+
+    def fake_profile(bot, pair=None):
+        return {
+            "interval": "1d",
+            "horizon": 10,
+            "generations": 40,
+            "pop_size": 40,
+            "n_islands": 2,
+            "timeout_s": 1,
+            "period": "1y",
+            "max_candles": 300,
+            "min_bars": 50,
+        }
+
+    def hung_discover(pair_arg, series, **kw):
+        seen_gens.append(int(kw.get("generations") or 0))
+        ev = threading.Event()
+        releases.append(ev)
+        ev.wait(timeout=120)
+        return []
+
+    monkeypatch.setattr("hermes_core.engines.gp_invent_profile.invent_profile", fake_profile)
+    monkeypatch.setattr(
+        "hermes_core.engines.gp_invent_profile.has_votable_for_regime",
+        lambda *a, **k: False,
+    )
+    monkeypatch.setattr(
+        "hermes_core.engines.genetic.load_discovered_indicators",
+        lambda *a, **k: [],
+    )
+    monkeypatch.setattr("hermes_core.engines.genetic.apply_live_feedback", lambda *a, **k: 0)
+    monkeypatch.setattr(
+        "hermes_core.adapters.price.seed_history_interval_sync",
+        lambda *a, **k: [{"price": 1.0 + i * 0.001} for i in range(220)],
+    )
+    monkeypatch.setattr(loop, "gp_discover", hung_discover)
+    monkeypatch.setattr(
+        "hermes_core.engines.genetic._save_discovery_pulse",
+        lambda p, pulse, write_token=None: pulses.append(dict(pulse)),
+    )
+
+    try:
+        # Three hard-abandoned timeouts → streak hits skip + cooldown.
+        for _ in range(3):
+            loop._DISCOVERY_LAST.pop(key, None)
+            loop._maybe_discover("forex", pair, prices=[1.1] * 220)
+            assert any(p.get("status") == "timeout" for p in pulses)
+            pulses.clear()
+
+        assert loop._DISCOVERY_TIMEOUT_STREAK.get(key, 0) >= 3
+        assert key in loop._DISCOVERY_TIMEOUT_COOLDOWN_UNTIL
+        # After shrink threshold, gens must be reduced from 40.
+        assert any(g < 40 for g in seen_gens)
+
+        # Next pass while cooled down should not invent.
+        n_before = len(seen_gens)
+        loop._DISCOVERY_LAST.pop(key, None)
+        loop._maybe_discover("forex", pair, prices=[1.1] * 220)
+        assert len(seen_gens) == n_before
+        assert any(p.get("status") == "chronic_timeout_backoff" for p in pulses)
+    finally:
+        for ev in releases:
+            ev.set()
+        time.sleep(0.05)
+        loop._DISCOVERY_IN_FLIGHT.discard(key)
+
+
+def test_admit_zero_streak_increments(monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_STATE_ROOT", str(tmp_path))
+    monkeypatch.setattr(loop, "DISCOVERY_INTERVAL_S", 1)
+    monkeypatch.setattr(loop, "DISCOVERY_REINVENT_INTERVAL_S", 1)
+    monkeypatch.setattr(loop, "DISCOVERY_ADMIT_ZERO_ALERT_AFTER", 0)  # no discord
+    loop._DISCOVERY_LAST.clear()
+    loop._DISCOVERY_LAST_INVENT.clear()
+    loop._DISCOVERY_IN_FLIGHT.clear()
+    loop._LAST_DISCOVERY_RUN.clear()
+    loop._DISCOVERY_TIMEOUT_STREAK.clear()
+    loop._DISCOVERY_TIMEOUT_COOLDOWN_UNTIL.clear()
+    loop._DISCOVERY_ADMIT_ZERO_STREAK.clear()
+    gen._INVENT_WRITE_TOKEN.clear()
+
+    pair = "CHF/USD"
+    key = ("forex", pair)
+
+    def fake_profile(bot, pair=None):
+        return {
+            "interval": "1d",
+            "horizon": 10,
+            "generations": 2,
+            "pop_size": 4,
+            "n_islands": 1,
+            "timeout_s": 30,
+            "period": "1y",
+            "max_candles": 300,
+            "min_bars": 50,
+        }
+
+    monkeypatch.setattr("hermes_core.engines.gp_invent_profile.invent_profile", fake_profile)
+    monkeypatch.setattr(
+        "hermes_core.engines.gp_invent_profile.has_votable_for_regime",
+        lambda *a, **k: False,
+    )
+    monkeypatch.setattr(
+        "hermes_core.engines.genetic.load_discovered_indicators",
+        lambda *a, **k: [],
+    )
+    monkeypatch.setattr("hermes_core.engines.genetic.apply_live_feedback", lambda *a, **k: 0)
+    monkeypatch.setattr(
+        "hermes_core.adapters.price.seed_history_interval_sync",
+        lambda *a, **k: [{"price": 1.0 + i * 0.001} for i in range(220)],
+    )
+    monkeypatch.setattr(loop, "gp_discover", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "hermes_core.engines.genetic._save_discovery_pulse",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr("hermes_core.engines.genetic.load_discovery_pulse", lambda *a, **k: {})
+
+    loop._maybe_discover("forex", pair, prices=[1.1] * 220)
+    assert loop._DISCOVERY_ADMIT_ZERO_STREAK.get(key) == 1
+    loop._DISCOVERY_LAST.pop(key, None)
+    loop._maybe_discover("forex", pair, prices=[1.1] * 220)
+    assert loop._DISCOVERY_ADMIT_ZERO_STREAK.get(key) == 2
+    # Admit success resets streak.
+    loop._DISCOVERY_LAST.pop(key, None)
+    monkeypatch.setattr(
+        loop,
+        "gp_discover",
+        lambda *a, **k: [
+            {
+                "expr": "roc20",
+                "expr_str": "roc20",
+                "oos_corr": 0.5,
+                "interval": "1d",
+                "horizon": 10,
+                "backtest_approved": True,
+            }
+        ],
+    )
+    monkeypatch.setattr("hermes_core.engines.genetic._save_discovered", lambda *a, **k: None)
+    loop._maybe_discover("forex", pair, prices=[1.1] * 220)
+    assert loop._DISCOVERY_ADMIT_ZERO_STREAK.get(key) == 0

@@ -1055,6 +1055,7 @@ def discover(
     horizon: int = 1,
     n_islands: int | None = None,
     interval: str = "1d",
+    write_token: int | None = None,
 ) -> list[dict]:
     """Evolve and admit indicators for `pair` (Phase B superior GP).
 
@@ -1065,6 +1066,9 @@ def discover(
     ``interval`` is the candle size of ``prices`` (must match live GP eval TF).
     Every admitted formula is tagged with ``interval`` + ``horizon`` so the
     ensemble only votes same-regime formulas together.
+
+    ``write_token`` fences disk writes so an abandoned invent after timeout
+    cannot clobber a newer invent pass.
     """
     rng = random.Random(seed)
     prices = list(prices)
@@ -1100,12 +1104,15 @@ def discover(
                     "status": status,
                     "reason": reason,
                     "reject_counts": {},
+                    "near_misses": [],
+                    "write_token": write_token,
                     "map_elites": {
                         "filled": 0,
                         "total_cells": len(_map_elites_cells()),
                         "coverage": 0.0,
                     },
                 },
+                write_token=write_token,
             )
 
     if len(prices) < SIGNAL_LOOKBACK:
@@ -1221,6 +1228,7 @@ def discover(
     existing_signals: list[list[float]] = []
     population: list[object] = []
     niches_used: set[str] = set()
+    near_misses: list[dict] = []
     for cand in front:
         expr = cand["expr_tree"]
         es = cand["expr_str"]
@@ -1249,6 +1257,16 @@ def discover(
             )
             if not bt.get("approved"):
                 rejects["s10"] += 1
+                near_misses.append(
+                    {
+                        "expr": es,
+                        "oos_corr": cand["oos_corr"],
+                        "perm_pvalue": cand["perm_pvalue"],
+                        "s10_reason": str(bt.get("reason") or "")[:240],
+                        "horizon": horizon,
+                        "interval": interval,
+                    }
+                )
                 continue
             niche = {
                 "horizon": horizon,
@@ -1296,6 +1314,9 @@ def discover(
             rejects["admit_error"] += 1
             continue
 
+    near_misses.sort(key=lambda m: float(m.get("oos_corr") or 0), reverse=True)
+    near_misses = near_misses[:5]
+
     cov = (
         _map_elites_coverage(archive)
         if archive
@@ -1326,8 +1347,14 @@ def discover(
         "niches_used": sorted(k for k in niches_used if k),
         "map_elites": cov,
         "reject_counts": rejects,
+        "near_misses": near_misses,
+        "write_token": write_token,
+        "status": "ok" if admitted else "admit_zero",
     }
-    _save_discovery_pulse(pair, pulse)
+    _save_discovery_pulse(pair, pulse, write_token=write_token)
+    if near_misses:
+        with contextlib.suppress(Exception):
+            _save_near_misses(pair, near_misses, write_token=write_token)
 
     if admitted:
         # Merge with prior votable so reinvent never briefly empties the book
@@ -1353,10 +1380,10 @@ def discover(
                 key=lambda x: float(x.get("oos_corr") or 0),
                 reverse=True,
             )[: max(top_k, 10)]
-            _save_discovered(pair, merged)
+            _save_discovered(pair, merged, write_token=write_token)
             admitted = merged
         except Exception:  # noqa: BLE001
-            _save_discovered(pair, admitted)
+            _save_discovered(pair, admitted, write_token=write_token)
     return admitted
 
 
@@ -1470,12 +1497,46 @@ def _atomic_write_json(path: Path, data: object) -> None:
     tmp.replace(path)
 
 
+# Invent write fencing: abandoned workers after timeout must not clobber a newer
+# invent pass. Call ``begin_invent_write_token`` when starting invent; pass the
+# returned token into discover/saves. A later begin() invalidates prior tokens.
+_INVENT_WRITE_TOKEN: dict[str, int] = {}
+
+
+def begin_invent_write_token(pair: str) -> int:
+    """Bump and return the active write token for ``pair`` (invalidates prior)."""
+    nxt = int(_INVENT_WRITE_TOKEN.get(pair, 0)) + 1
+    _INVENT_WRITE_TOKEN[pair] = nxt
+    return nxt
+
+
+def invent_write_token_current(pair: str) -> int:
+    return int(_INVENT_WRITE_TOKEN.get(pair, 0))
+
+
+def _invent_token_allows(pair: str, write_token: int | None) -> bool:
+    """None = control-plane write (always allowed). Else must match current."""
+    if write_token is None:
+        return True
+    return int(write_token) == int(_INVENT_WRITE_TOKEN.get(pair, 0))
+
+
 def _pulse_path(pair: str) -> Path:
     return _discovered_dir(pair) / f"_pulse_{_pair_safe(pair)}.json"
 
 
-def _save_discovery_pulse(pair: str, pulse: dict) -> Path:
-    """Persist the latest discovery-run pulse for dashboard surfacing."""
+def _near_miss_path(pair: str) -> Path:
+    return _discovered_dir(pair) / f"_near_miss_{_pair_safe(pair)}.json"
+
+
+def _save_discovery_pulse(pair: str, pulse: dict, *, write_token: int | None = None) -> Path | None:
+    """Persist the latest discovery-run pulse for dashboard surfacing.
+
+    When ``write_token`` is set and no longer current, skip the write so an
+    abandoned invent thread cannot overwrite a newer pass.
+    """
+    if not _invent_token_allows(pair, write_token):
+        return None
     path = _pulse_path(pair)
     _atomic_write_json(path, pulse)
     # Also merge into the aggregate pulse index used by the runner push
@@ -1489,6 +1550,24 @@ def _save_discovery_pulse(pair: str, pulse: dict) -> Path:
         index = {}
     index[pair] = pulse
     _atomic_write_json(index_path, index)
+    return path
+
+
+def _save_near_misses(
+    pair: str, misses: list[dict], *, write_token: int | None = None
+) -> Path | None:
+    """Persist top S10 near-misses for invent health (not votable)."""
+    if not _invent_token_allows(pair, write_token):
+        return None
+    path = _near_miss_path(pair)
+    _atomic_write_json(
+        path,
+        {
+            "pair": pair,
+            "ts": datetime.now(UTC).isoformat(),
+            "near_misses": misses,
+        },
+    )
     return path
 
 
@@ -1690,12 +1769,15 @@ def _read_indicators_file(path: Path) -> list[dict]:
     return [x for x in data if isinstance(x, dict)]
 
 
-def _save_discovered(pair: str, inds: list[dict]) -> Path:
+def _save_discovered(pair: str, inds: list[dict], *, write_token: int | None = None) -> Path | None:
     """Persist admitted indicators to the canonical underscore path.
 
     Always writes ``expr`` + ``expr_str`` (identical) for entry + dashboard.
     Drops the raw ``_expr`` tree (not JSON-serialisable). Returns the path written.
+    Skips the write when ``write_token`` is stale (abandoned invent).
     """
+    if not _invent_token_allows(pair, write_token):
+        return None
     clean = []
     for ind in inds:
         row = _normalize_indicator(

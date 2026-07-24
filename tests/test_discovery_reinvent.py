@@ -13,6 +13,9 @@ def test_reinvent_due_when_votable_and_interval_elapsed(monkeypatch, tmp_path):
     loop._DISCOVERY_LAST_INVENT.clear()
     loop._DISCOVERY_IN_FLIGHT.clear()
     loop._LAST_DISCOVERY_RUN.clear()
+    loop._DISCOVERY_TIMEOUT_STREAK.clear()
+    loop._DISCOVERY_TIMEOUT_COOLDOWN_UNTIL.clear()
+    loop._DISCOVERY_ADMIT_ZERO_STREAK.clear()
 
     calls: list[dict] = []
 

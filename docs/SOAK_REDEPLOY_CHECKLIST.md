@@ -45,13 +45,14 @@ Require `go_nogo: true` for forex, gold, and crypto (heartbeat age &lt; 10m, non
 
 ## Discovery soak watch-outs (post-hardening)
 
-- Invent timeout abandons the waiter (does **not** hang the discovery daemon);
-  `status=timeout` / `in_flight` pulses are normal under load — chronic forever
-  timeout means raise `timeout_s` or shrink gens/pop for that bot.
+- Invent timeout abandons the waiter (does **not** hang the discovery daemon).
+  After repeated timeouts the invent budget auto-shrinks, then skips invent for
+  `DISCOVERY_TIMEOUT_COOLDOWN_S` (`status=chronic_timeout_backoff`).
+- Abandoned invent writes are fenced by `write_token` — a newer invent pass
+  cannot be clobbered by a late worker.
+- `admit_zero` is still possible under strict S10; pulses include `near_misses`
+  + `admit_zero_streak` (Discord soft-alert every `DISCOVERY_ADMIT_ZERO_ALERT_AFTER`).
 - GP lockout unlocks after `GP_LOCKOUT_DECAY_S` (default 6h); exile reinstates
   after `EXILE_DECAY_S` (default 7d) even without 100-entry recovery.
 - `hypotheses_kb.jsonl` auto-rotates past `HYPOTHESES_KB_MAX_LINES`; hygiene
-  also rotates on `--` default run.
-- Residual risks still not fully eliminated: abandoned invent threads can
-  briefly race a later pass; S10 remain strict so `admit_zero` is expected
-  often; classical entries should carry the soak if GP stays in shadow.
+  also rotates on default run.

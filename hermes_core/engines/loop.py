@@ -84,6 +84,13 @@ DISCOVERY_INTERVAL_S = int(get_env("DISCOVERY_INTERVAL_S", "3600"))
 # (default 6h). Without this, invent freezes forever on the first admit and
 # the Discovered UI never shows new exprs.
 DISCOVERY_REINVENT_INTERVAL_S = int(get_env("DISCOVERY_REINVENT_INTERVAL_S", str(6 * 3600)))
+# After this many consecutive invent timeouts, shrink the search budget.
+DISCOVERY_TIMEOUT_SHRINK_AFTER = int(get_env("DISCOVERY_TIMEOUT_SHRINK_AFTER", "2"))
+# After this many consecutive invent timeouts, skip invent for a cooldown window.
+DISCOVERY_TIMEOUT_SKIP_AFTER = int(get_env("DISCOVERY_TIMEOUT_SKIP_AFTER", "4"))
+DISCOVERY_TIMEOUT_COOLDOWN_S = int(get_env("DISCOVERY_TIMEOUT_COOLDOWN_S", "3600"))
+# Soft Discord alert when admit_zero streaks this high (0 disables).
+DISCOVERY_ADMIT_ZERO_ALERT_AFTER = int(get_env("DISCOVERY_ADMIT_ZERO_ALERT_AFTER", "5"))
 _DISCOVERY_LAST: dict[tuple[str, str], float] = {}  # (bot, pair) -> last pass epoch
 _DISCOVERY_LAST_INVENT: dict[tuple[str, str], float] = {}  # (bot, pair) -> last full invent
 # Per-bot wall-clock of last discovery pass (any outcome) — surfaces on heartbeat
@@ -92,6 +99,9 @@ _LAST_DISCOVERY_RUN: dict[str, float] = {}
 # In-flight invents: timeout abandons the waiter but the worker may still run;
 # skip spawning a second invent for the same (bot, pair) until it finishes.
 _DISCOVERY_IN_FLIGHT: set[tuple[str, str]] = set()
+_DISCOVERY_TIMEOUT_STREAK: dict[tuple[str, str], int] = {}
+_DISCOVERY_TIMEOUT_COOLDOWN_UNTIL: dict[tuple[str, str], float] = {}
+_DISCOVERY_ADMIT_ZERO_STREAK: dict[tuple[str, str], int] = {}
 
 
 def _state_dir(bot: str) -> Path:
@@ -620,6 +630,7 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
         _discovered_path,
         _save_discovery_pulse,
         apply_live_feedback,
+        begin_invent_write_token,
         load_discovered_indicators,
     )
     from hermes_core.engines.gp_invent_profile import (
@@ -648,8 +659,25 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
     reinvent_due = (now - last_invent) >= reinvent_s
     should_invent = (not have_votable) or reinvent_due
 
+    # Adaptive invent budget after chronic timeouts (shrink search / extend cap).
+    timeout_streak = int(_DISCOVERY_TIMEOUT_STREAK.get(key) or 0)
+    gens = int(prof["generations"])
+    pop = int(prof["pop_size"])
+    islands = int(prof["n_islands"])
+    timeout_s = int(prof["timeout_s"])
+    if timeout_streak >= max(1, DISCOVERY_TIMEOUT_SHRINK_AFTER):
+        shrink = 2 ** min(timeout_streak - DISCOVERY_TIMEOUT_SHRINK_AFTER + 1, 2)
+        gens = max(8, gens // shrink)
+        pop = max(12, pop // shrink)
+        islands = 1
+        timeout_s = min(timeout_s + 120 * min(timeout_streak, 3), int(timeout_s * 1.75) + 60)
+
     def _status_pulse(**extra) -> None:
-        """Always leave a dashboard-visible invent pulse (even on skip/timeout)."""
+        """Always leave a dashboard-visible invent pulse (even on skip/timeout).
+
+        Control-plane pulses omit write_token so they always land; invent-worker
+        pulses pass write_token so abandoned threads cannot clobber newer passes.
+        """
         try:
             pulse = {
                 "pair": pair,
@@ -658,9 +686,9 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
                 "ts": datetime.now(UTC).isoformat(),
                 "interval": prof["interval"],
                 "horizon": prof["horizon"],
-                "generations": prof["generations"],
-                "pop_size": prof["pop_size"],
-                "n_islands": prof["n_islands"],
+                "generations": extra.get("generations", gens),
+                "pop_size": extra.get("pop_size", pop),
+                "n_islands": extra.get("n_islands", islands),
                 "candidates_unique": extra.get("candidates_unique"),
                 "candidates_gated": extra.get("candidates_gated"),
                 "admitted": int(extra.get("admitted") or 0),
@@ -668,7 +696,10 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
                 "status": extra.get("status") or "ok",
                 "reason": extra.get("reason"),
                 "reject_counts": extra.get("reject_counts"),
+                "near_misses": extra.get("near_misses"),
                 "seed": extra.get("seed"),
+                "timeout_streak": timeout_streak,
+                "admit_zero_streak": int(_DISCOVERY_ADMIT_ZERO_STREAK.get(key) or 0),
                 "map_elites": extra.get("map_elites")
                 or {
                     "filled": 0,
@@ -676,15 +707,51 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
                     "coverage": 0.0,
                 },
                 "lexicase_cases": extra.get("lexicase_cases"),
+                "write_token": extra.get("write_token"),
             }
-            _save_discovery_pulse(pair, pulse)
+            _save_discovery_pulse(
+                pair,
+                pulse,
+                write_token=extra.get("write_token_fence"),
+            )
         except Exception:  # noqa: BLE001 — pulse must never break invent
             pass
 
     def _mark_discovery_run() -> None:
         _LAST_DISCOVERY_RUN[bot] = time.time()
 
-    def _work() -> None:
+    def _note_timeout() -> None:
+        streak = int(_DISCOVERY_TIMEOUT_STREAK.get(key) or 0) + 1
+        _DISCOVERY_TIMEOUT_STREAK[key] = streak
+        if streak >= max(1, DISCOVERY_TIMEOUT_SKIP_AFTER):
+            _DISCOVERY_TIMEOUT_COOLDOWN_UNTIL[key] = time.time() + max(
+                60, int(DISCOVERY_TIMEOUT_COOLDOWN_S)
+            )
+
+    def _note_invent_finished(admitted_n: int, *, write_token: int) -> None:
+        from hermes_core.engines.genetic import invent_write_token_current
+
+        # Late finish after hard-abandon (token bumped on timeout) — ignore.
+        if int(write_token) != int(invent_write_token_current(pair)):
+            return
+        _DISCOVERY_TIMEOUT_STREAK[key] = 0
+        _DISCOVERY_TIMEOUT_COOLDOWN_UNTIL.pop(key, None)
+        if admitted_n > 0:
+            _DISCOVERY_ADMIT_ZERO_STREAK[key] = 0
+            return
+        streak = int(_DISCOVERY_ADMIT_ZERO_STREAK.get(key) or 0) + 1
+        _DISCOVERY_ADMIT_ZERO_STREAK[key] = streak
+        alert_after = int(DISCOVERY_ADMIT_ZERO_ALERT_AFTER)
+        if alert_after > 0 and streak >= alert_after and streak % alert_after == 0:
+            with contextlib.suppress(Exception):
+                from hermes_core.notify import send_text_alert
+
+                send_text_alert(
+                    f"[discovery] {bot}/{pair}: admit_zero streak={streak} "
+                    f"(S10 strict; check near_misses pulse / classical fills)"
+                )
+
+    def _work(write_token: int) -> None:
         import logging as _logging
 
         _log = _logging.getLogger("hermes.discovery")
@@ -706,14 +773,26 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
                 admitted=len(own) if isinstance(own, list) else 0,
             )
             return
+        cool_until = float(_DISCOVERY_TIMEOUT_COOLDOWN_UNTIL.get(key) or 0.0)
+        if cool_until > time.time():
+            _status_pulse(
+                status="chronic_timeout_backoff",
+                reason=(
+                    f"skip invent until cooldown "
+                    f"({max(0.0, cool_until - time.time()) / 60.0:.1f}m left); "
+                    f"timeout_streak={timeout_streak}"
+                ),
+            )
+            return
         # Time/pair-varying seed — fixed seed=7 recycled the same doomed candidates.
         invent_seed = (int(now) ^ (hash((bot, pair, int(now) // 3600)) & 0xFFFFFFFF)) & 0xFFFFFFFF
         print(
             f"[hermes][discovery] {bot}/{pair}: invent start "
             f"{prof['interval']}/h={prof['horizon']} "
-            f"gens={prof['generations']} pop={prof['pop_size']} "
-            f"timeout={prof['timeout_s']}s seed={invent_seed} "
-            f"reinvent={have_votable}",
+            f"gens={gens} pop={pop} islands={islands} "
+            f"timeout={timeout_s}s seed={invent_seed} "
+            f"reinvent={have_votable} timeout_streak={timeout_streak} "
+            f"write_token={write_token}",
             flush=True,
         )
         hist = seed_history_interval_sync(
@@ -745,19 +824,23 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
                 status="skipped_short_history",
                 reason=f"<{prof['min_bars']} {prof['interval']} bars",
                 seed=invent_seed,
+                write_token=write_token,
+                write_token_fence=write_token,
             )
             return
         inds = gp_discover(
             pair,
             series,
             horizon=int(prof["horizon"]),
-            generations=int(prof["generations"]),
-            pop_size=int(prof["pop_size"]),
-            n_islands=int(prof["n_islands"]),
+            generations=gens,
+            pop_size=pop,
+            n_islands=islands,
             interval=str(prof["interval"]),
             seed=int(invent_seed),
+            write_token=write_token,
         )
         _DISCOVERY_LAST_INVENT[key] = time.time()
+        _note_invent_finished(len(inds), write_token=write_token)
         # Reinvent merge: don't wipe prior votable formulas when a new run admits.
         if inds and have_votable:
             try:
@@ -782,7 +865,7 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
                     key=lambda x: float(x.get("oos_corr") or 0),
                     reverse=True,
                 )[:10]
-                _save_discovered(pair, merged)
+                _save_discovered(pair, merged, write_token=write_token)
                 inds = merged
             except Exception:  # noqa: BLE001 — keep discover()'s write on merge failure
                 pass
@@ -797,14 +880,22 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
             existing["status"] = "ok" if inds else "admit_zero"
             existing["admitted"] = len(inds)
             existing["seed"] = invent_seed
+            existing["write_token"] = write_token
+            existing["timeout_streak"] = 0
+            existing["admit_zero_streak"] = int(_DISCOVERY_ADMIT_ZERO_STREAK.get(key) or 0)
+            existing["generations"] = gens
+            existing["pop_size"] = pop
+            existing["n_islands"] = islands
             if have_votable and not inds:
                 existing["reason"] = "reinvent_ran_admit_zero"
-            _save_discovery_pulse(pair, existing)
+            _save_discovery_pulse(pair, existing, write_token=write_token)
         except Exception:  # noqa: BLE001
             _status_pulse(
                 status="ok" if inds else "admit_zero",
                 admitted=len(inds),
                 seed=invent_seed,
+                write_token=write_token,
+                write_token_fence=write_token,
             )
 
     # Bound the work so a slow network/price API can't stall the discovery
@@ -820,36 +911,52 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
         _DISCOVERY_LAST[key] = time.time()
         return
 
+    # Fence disk writes for this invent attempt. Beginning a new token invalidates
+    # any abandoned prior worker for this pair.
+    write_token = begin_invent_write_token(pair) if should_invent else 0
+
     try:
         from concurrent.futures import ThreadPoolExecutor
         from concurrent.futures import TimeoutError as FuturesTimeout
 
         print(
             f"[hermes][discovery] {bot}/{pair}: pass begin "
-            f"(have_votable={have_votable} should_invent={should_invent})",
+            f"(have_votable={have_votable} should_invent={should_invent} "
+            f"timeout_streak={timeout_streak})",
             flush=True,
         )
         _DISCOVERY_IN_FLIGHT.add(key)
 
         def _work_guarded() -> None:
             try:
-                _work()
+                _work(write_token)
             finally:
                 _DISCOVERY_IN_FLIGHT.discard(key)
 
         ex = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"invent-{bot}")
+        # Use (possibly stretched) timeout_s when inventing; short cap otherwise.
+        wait_s = timeout_s if should_invent else min(30, timeout_s)
         try:
             fut = ex.submit(_work_guarded)
-            fut.result(timeout=int(prof["timeout_s"]))
+            fut.result(timeout=int(wait_s))
         except FuturesTimeout:
             msg = (
                 f"[discovery] {bot}/{pair}: error -> TimeoutError after "
-                f"{prof['timeout_s']}s (worker abandoned, not joined)"
+                f"{wait_s}s (worker abandoned, not joined)"
             )
             print(msg, flush=True)
+            if should_invent:
+                _note_timeout()
+                # Hard-abandon: fence late writes + unblock the invent loop so the
+                # next cadence can spawn a shrunk/backoff pass.
+                begin_invent_write_token(pair)
+                _DISCOVERY_IN_FLIGHT.discard(key)
             _status_pulse(
                 status="timeout",
-                reason=f"invent exceeded {prof['timeout_s']}s",
+                reason=f"invent exceeded {wait_s}s (streak={_DISCOVERY_TIMEOUT_STREAK.get(key, 0)})",
+                generations=gens,
+                pop_size=pop,
+                n_islands=islands,
             )
             _mark_discovery_run()
             # Throttle retries so we don't spam while the abandoned worker runs.
@@ -873,7 +980,7 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
     # Confirm invent regime in bot stdout (even when admitted=0).
     print(
         f"[hermes][discovery] {bot}/{pair}: invent={prof['interval']}/h={prof['horizon']} "
-        f"timeout={prof['timeout_s']}s done",
+        f"timeout={timeout_s}s gens={gens} pop={pop} done",
         flush=True,
     )
 
