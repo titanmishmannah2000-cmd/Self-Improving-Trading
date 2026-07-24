@@ -1303,11 +1303,23 @@ def run_cycle(
         policy = PolicyEngine().evaluate(cycle, pairs, cortex=cortex)
     except Exception:  # noqa: BLE001 — fail-open: never block trading on policy I/O
         policy = None
-    # Policy rollback → concrete halt (not display-only).
-    if policy is not None and getattr(policy, "rollback", False) and not _halted:
-        write_halt(bot, "policy_rollback:mr_wr_breach")
-        _halted, _halt_reason = True, "policy_rollback:mr_wr_breach"
-        summary["halted"] = True
+    # Policy rollback = fleet MR WR breach. PolicyEngine already hard-suppresses
+    # mean_reversion on every pair; do NOT halt the whole bot (GP/momentum must
+    # keep trading). Alert once per process when rollback first latches.
+    if policy is not None and getattr(policy, "rollback", False):
+        summary["policy_rollback"] = True
+        if not getattr(run_cycle, "_policy_rollback_alerted", False):
+            run_cycle._policy_rollback_alerted = True
+            with contextlib.suppress(Exception):
+                from hermes_core.notify import send_text_alert
+
+                send_text_alert(
+                    f"[policy] {bot}: MR WR breach — mean_reversion benched "
+                    f"(GP/momentum still live)",
+                    bot=bot,
+                    pair="*",
+                    guard="policy_rollback",
+                )
     # Priority discovery: nudge reinvent sooner when many indicators are exiled.
     if policy is not None and getattr(policy, "priority_discovery", False):
         with contextlib.suppress(Exception):
@@ -1712,13 +1724,19 @@ def run_cycle(
             _etype = sig.meta.get("entry_type") or getattr(sig, "type", None) or "mean_reversion"
             _suppressed = bool(policy is not None and policy.is_suppressed(pair, _etype))
             # HIF Phase-2: soft weights turn L35 benches into size shrinks.
-            # Flag OFF → hard skip (legacy). Flag ON → never skip for policy.
+            # Flag OFF → hard skip (legacy). Flag ON → never skip for policy —
+            # EXCEPT fleet MR rollback, which must hard-bench mean_reversion.
             _soft = False
             try:
                 _soft = soft_weights_enabled()
             except Exception:  # noqa: BLE001
                 _soft = False
-            if _suppressed and not _soft:
+            _rollback_hard = bool(
+                policy is not None
+                and getattr(policy, "rollback", False)
+                and _etype == "mean_reversion"
+            )
+            if _suppressed and (not _soft or _rollback_hard):
                 _log_skip(bot, pair, cycle, f"policy_suppress:{_etype}")
                 summary["skips"] += 1
                 continue

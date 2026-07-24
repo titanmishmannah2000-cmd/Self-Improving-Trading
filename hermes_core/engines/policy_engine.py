@@ -12,7 +12,9 @@ Suppression rules (blueprint ENGINE 9 / Phase 15):
   * WRs are evaluated PER PAIR (a bleeding pair must not bench the fleet)
   * priority_discovery = True if >=2 indicators exiled fleet-wide
   * probe_interval = 10 if cortex has <5 entries
-  * rollback flag if MR WR < 30% AND >=10 trades (fleet-level)
+  * rollback flag if MR WR < 30% AND >=10 decisive trades (fleet-level):
+    hard-suppress mean_reversion on every pair (do NOT halt the bot — GP /
+    momentum must keep trading during paper soak)
 
 HIF Phase-2: when SOFT_WEIGHTS=1 the loop treats suppressions as size weights
 (see expert_weights.py) instead of hard skips. Policy still records the L35
@@ -153,13 +155,15 @@ class PolicyEngine:
             )
         probe_interval = 10 if n_entries < PROBE_CORTEX_THRESHOLD else 50
 
-        # Rollback remains fleet-level (overall MR health).
+        # Rollback remains fleet-level (overall MR health). Count only
+        # decisive (non-flat) closes so the n gate matches entry_type_wr.
         mr_wr = cortex.entry_type_wr("mean_reversion")
         n_trades = sum(
             1
             for e in getattr(cortex, "_entries", [])
             if e.get("type") == "mean_reversion"
             and e.get("outcome") is not None
+            and e.get("outcome") != "flat"
             and not e.get("partial")
         )
         rollback = (
@@ -167,6 +171,10 @@ class PolicyEngine:
             and mr_wr < ROLLBACK_MR_WR
             and n_trades >= ROLLBACK_MIN_TRADES
         )
+        # Bench MR everywhere on rollback — keep GP/momentum alive.
+        if rollback:
+            for pair in pairs:
+                suppressions.setdefault(pair, set()).add("mean_reversion")
 
         soft = soft_weights_enabled()
         allocation: dict[str, dict] = {}

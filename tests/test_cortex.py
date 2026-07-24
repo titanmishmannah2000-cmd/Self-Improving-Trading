@@ -185,6 +185,27 @@ def test_policy_suppressions_are_per_pair():
     assert pol.is_suppressed("EUR/USD", "mean_reversion") is False
 
 
+def test_rollback_benches_mr_on_all_pairs_not_halt():
+    """Fleet MR WR <30% with n>=10 → rollback + MR suppressed everywhere.
+
+    GP must remain unspressed by the rollback path itself (bot stays live).
+    """
+    c = dc.Cortex()
+    # 2/20 = 10% MR WR fleet-wide
+    for i in range(20):
+        c.record_outcome("EUR/USD", "mean_reversion", 1.0 if i < 2 else -1.0)
+    for i in range(10):
+        c.record_outcome("GBP/USD", "gp_ensemble", 1.0 if i < 5 else -1.0)
+
+    pol = pe.PolicyEngine().evaluate(10, ["EUR/USD", "GBP/USD", "AUD/USD"], c)
+    assert pol.rollback is True
+    for pair in ("EUR/USD", "GBP/USD", "AUD/USD"):
+        assert pol.is_suppressed(pair, "mean_reversion") is True
+    # GP not auto-benched solely by rollback (GBP has 50% GP WR — below 50%
+    # SUPPRESS_MR threshold already covered; ensure gp_ensemble not in rollback set)
+    assert pol.is_suppressed("GBP/USD", "gp_ensemble") is False
+
+
 def test_entry_type_wr_pair_scope():
     c = dc.Cortex()
     for _ in range(10):
