@@ -185,6 +185,24 @@ def _record_flatline(pair: str, reason: str, details: str = "") -> dict:
     }
     with log_path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, default=str) + "\n")
+    # Alert when the same pair hits NOVEL_REGIME repeatedly (soak ops #26).
+    if reason == "NOVEL_REGIME":
+        try:
+            recent = 0
+            for line in log_path.read_text(encoding="utf-8").splitlines()[-40:]:
+                if not line.strip():
+                    continue
+                rec = json.loads(line)
+                if rec.get("pair") == pair and rec.get("reason") == "NOVEL_REGIME":
+                    recent += 1
+            if recent >= 3:
+                print(
+                    f"[hermes][flatline-alert] {pair}: NOVEL_REGIME x{recent} "
+                    f"(details={details})",
+                    flush=True,
+                )
+        except Exception:  # noqa: BLE001 — alert must never break trading
+            pass
     return entry
 
 

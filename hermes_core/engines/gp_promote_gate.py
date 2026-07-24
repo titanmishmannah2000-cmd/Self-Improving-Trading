@@ -340,6 +340,13 @@ def observe_shadow(
         return None
     if px <= 0:
         return None
+    # Reject cross-pair scale contamination (e.g. EUR pending at 116.5).
+    try:
+        from hermes_core.engines.soak_controls import pair_price_scale_ok
+        if not pair_price_scale_ok(pair, px):
+            return None
+    except Exception:  # noqa: BLE001 — never block shadow on sanity import
+        pass
 
     st = ensure_seeded(bot, state=state)
     rec = _pair_rec(st, pair)
@@ -350,7 +357,17 @@ def observe_shadow(
         age = now - float(pending.get("ts") or 0.0)
         entry = float(pending.get("price") or 0.0)
         direc = int(pending.get("direction") or 0)
-        if entry > 0 and direc in (-1, 1) and age >= shadow_horizon_s():
+        # Drop contaminated pending entries instead of settling nonsense PnL.
+        try:
+            from hermes_core.engines.soak_controls import pair_price_scale_ok
+            if entry > 0 and not pair_price_scale_ok(pair, entry):
+                rec["pending_shadow"] = None
+                rec["last_reason"] = "dropped_bad_scale_pending"
+                save_state(bot, st)
+                pending = None
+        except Exception:  # noqa: BLE001
+            pass
+        if isinstance(pending, dict) and entry > 0 and direc in (-1, 1) and age >= shadow_horizon_s():
             pnl = (px / entry - 1.0) * 100.0 * direc
             rec["pending_shadow"] = None
             save_state(bot, st)

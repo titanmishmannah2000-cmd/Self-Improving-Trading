@@ -45,11 +45,13 @@ ALL_DOMAINS = [
     "performance-drift",
 ]
 
+_REPO = Path(__file__).resolve().parents[2]
 PROJECTS = {
-    "forex": Path("D:/projects/hermes-forex"),
-    "gold": Path("D:/projects/hermes-gold"),
-    "dashboard-api": Path("D:/projects/hermes-dashboard-api"),
-    "dashboard-web": Path("D:/projects/dashboard/frontend"),
+    "forex": _REPO / "forex",
+    "gold": _REPO / "gold",
+    "crypto": _REPO / "crypto",
+    "dashboard-api": _REPO / "dashboard" / "backend",
+    "dashboard-web": _REPO / "dashboard" / "frontend",
     "audit": _HERE,
 }
 

@@ -238,9 +238,18 @@ def test_log_gp_shadow_writes_record(tmp_path, monkeypatch):
         lambda *a, **k: prices,
     )
 
-    loop._log_gp_shadow("goldbot", "EUR/USD", prices, strategy)
+    # Clear throttle so a prior test cannot suppress this write.
+    loop._GP_SHADOW_LAST.clear()
+    # Use FX-scale prices so promote-gate scale checks stay valid.
+    prices = [1.05 + 0.0002 * i for i in range(110)] + [1.08 + 0.0005 * j for j in range(10)]
+    monkeypatch.setattr(
+        "hermes_core.engines.entry.gp_invent_prices",
+        lambda *a, **k: prices,
+    )
 
-    rec_path = tmp_path / "goldbot" / "gp_shadow.jsonl"
+    loop._log_gp_shadow("forex", "EUR/USD", prices, strategy)
+
+    rec_path = tmp_path / "forex" / "gp_shadow.jsonl"
     assert rec_path.exists()
     lines = rec_path.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1

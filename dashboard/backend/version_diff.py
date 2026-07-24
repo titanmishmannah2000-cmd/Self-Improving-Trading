@@ -17,9 +17,11 @@ _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
 from findings_store import _get_conn, insert_finding, get_latest_run, list_findings, get_finding, update_finding_status, _ts
 
+_REPO = Path(__file__).resolve().parents[2]
 STRATEGY_DIRS = {
-    "forex": Path("D:/projects/hermes-forex/state/strategies"),
-    "gold": Path("D:/projects/hermes-gold/state/strategies"),
+    "forex": _REPO / "forex" / "state" / "strategies",
+    "gold": _REPO / "gold" / "state" / "strategies",
+    "crypto": _REPO / "crypto" / "state" / "strategies",
 }
 
 VERSION_HISTORY_DIR = _HERE / "version_snapshots"

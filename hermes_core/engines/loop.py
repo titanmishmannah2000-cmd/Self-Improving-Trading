@@ -35,7 +35,19 @@ def _now_iso() -> str:
 from hermes_core.adapters import make_default_fetch
 from hermes_core.config import load_config, load_strategy_for_pair, state_root
 from hermes_core.engines.decision_cortex import Cortex
-from hermes_core.engines.entry import evaluate_entry, _entry_rsi_threshold
+from hermes_core.engines.entry import (
+    evaluate_entry,
+    evaluate_entry_detailed,
+    _entry_rsi_threshold,
+)
+from hermes_core.engines.soak_controls import (
+    ensure_state_files,
+    entries_halted,
+    feed_error_rate,
+    price_sanity_book,
+    price_sanity_pair,
+    write_halt,
+)
 from hermes_core.engines.exit import evaluate_exit
 from hermes_core.engines.genetic import discover as gp_discover
 from hermes_core.engines.policy_engine import PolicyEngine, soft_weights_enabled
@@ -713,6 +725,10 @@ def run_cycle(
     oversold_pairs = 0            # RSI-confluence count, accumulated across pairs this cycle
     # consecutive_failures is carried in (persists across cycles for the L24 breaker)
     try:
+        ensure_state_files(bot)
+    except Exception:  # noqa: BLE001 — bootstrap must never block the cycle
+        pass
+    try:
         cfg = load_config(bot)
     except Exception:  # noqa: BLE001 — config load is a hard boundary
         health_registry["config"] = False
@@ -724,6 +740,18 @@ def run_cycle(
 
     health_registry["config"] = True
     pairs = cfg.get("pairs", [])
+    _halted, _halt_reason = entries_halted(bot)
+    summary["halted"] = _halted
+    # Feed SLO: auto-halt when recent skips are dominated by feed/chart errors.
+    try:
+        _feed = feed_error_rate(_state_dir(bot) / "skips.jsonl")
+        summary["feed_slo"] = _feed
+        if not _feed.get("ok") and not _halted:
+            write_halt(bot, f"feed_slo:rate={_feed.get('rate')}")
+            _halted, _halt_reason = True, "halt:feed_slo"
+            summary["halted"] = True
+    except Exception:  # noqa: BLE001
+        pass
     # [GUARD L62] resolve the price feed AFTER config so aggregate gets real pairs
     # (crypto WS subscribe list). Default is multi-source aggregator for live quotes.
     if fetch_fn is None:
@@ -903,9 +931,11 @@ def run_cycle(
 
             # Prefer pre-scanned multi-pair count so XAU sees XAG the same cycle.
             _os_count = max(int(oversold_pairs), int(oversold_total))
-            trad_sig = evaluate_entry(
-                pair, prices, strategy, context, ensemble,
-                _os_count, vol_above, reentry, cycle, session_token,
+            trad_sig, _trad_skip = evaluate_entry_detailed(
+                prices, strategy, pair=pair, context=context,
+                ensemble_consensus=ensemble, oversold_pairs=_os_count,
+                vol_above=vol_above, reentry=reentry, current_cycle=cycle,
+                session_token=session_token,
             )
             gp_sig = None
             # GP promote gate: expectancy-driven per-pair ban/unban (seeds from
@@ -1015,8 +1045,43 @@ def run_cycle(
                 sig = trad_sig if trad_sig is not None else gp_sig
 
             if sig is None:
-                _log_skip(bot, pair, cycle, "no_signal")
+                _skip = _trad_skip or "no_signal"
+                if _skip == "no_signal":
+                    _skip = "no_signal"
+                elif not _skip.startswith(("session", "rsi", "vol", "quality",
+                                           "chart", "cooldown", "ensemble", "other")):
+                    _skip = f"no_signal:{_skip}"
+                else:
+                    # Keep structured sub-reason; prefix for dashboard filters.
+                    _skip = f"no_signal:{_skip}"
+                _log_skip(bot, pair, cycle, _skip)
                 summary["skips"] += 1
+                # Gold diagnostics: snapshot why metals stay idle.
+                if bot == "gold":
+                    try:
+                        print(
+                            f"[hermes][gold-diag] {pair} cycle={cycle} "
+                            f"skip={_skip} rsi={ind.get('rsi')} "
+                            f"adx={ind.get('adx')} session={session_token} "
+                            f"bb_bw="
+                            f"{((ind.get('bb') or {}).get('upper', 0) - (ind.get('bb') or {}).get('lower', 0)) / max((ind.get('bb') or {}).get('middle') or 1, 1e-9):.6f}",
+                            flush=True,
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+                continue
+            # Halt blocks NEW entries only (exits still managed above).
+            if _halted:
+                _log_skip(bot, pair, cycle, _halt_reason or "halt")
+                summary["skips"] += 1
+                continue
+            # Per-quote sanity before opening.
+            _ok_px, _px_reason = price_sanity_pair(pair, price)
+            if not _ok_px:
+                _log_skip(bot, pair, cycle, _px_reason)
+                summary["skips"] += 1
+                write_halt(bot, _px_reason)
+                _halted, _halt_reason = True, _px_reason
                 continue
             # [GUARD L35] policy may bench GP or MR when the other type is clearly better.
             # Prefer meta.entry_type; fall back to Signal.type so momentum is never
@@ -1372,6 +1437,14 @@ def run_cycle(
 
     # --- heartbeat every cycle without exception --------------------------
     status = "ok" if consecutive_failures == 0 else "degraded"
+    _book_ok, _book_reason = price_sanity_book(
+        summary.get("prices") or {}, price_history,
+    )
+    if not _book_ok:
+        status = "degraded"
+        summary["price_sanity"] = _book_reason
+        write_halt(bot, _book_reason)
+        summary["halted"] = True
     write_heartbeat(bot, cycle, consecutive_failures, last_price,
                     status=status, health=dict(health_registry),
                     chart_contexts=chart_contexts, regimes=regimes,

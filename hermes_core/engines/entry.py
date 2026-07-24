@@ -159,24 +159,44 @@ def evaluate_entry(
     ``session_token`` (from _get_session) and ``current_cycle``; tests pass them
     directly for determinism.
     """
+    sig, _reason = evaluate_entry_detailed(
+        prices, strategy, pair=pair, context=context,
+        ensemble_consensus=ensemble_consensus, oversold_pairs=oversold_pairs,
+        vol_above=vol_above, reentry=reentry, current_cycle=current_cycle,
+        session_token=session_token,
+    )
+    return sig
+
+
+def evaluate_entry_detailed(
+    prices: list[float],
+    strategy: dict,
+    *,
+    pair: str = "",
+    context: str = "",
+    ensemble_consensus: str = "neutral",
+    oversold_pairs: int = 0,
+    vol_above: bool = False,
+    reentry: dict | None = None,
+    current_cycle: int = 0,
+    session_token: str = "LDN",
+) -> tuple[Signal | None, str]:
+    """Like ``evaluate_entry`` but returns ``(signal, skip_reason)``.
+
+    ``skip_reason`` is empty when a Signal is returned; otherwise one of
+    session / quality / vol / rsi / chart / cooldown / ensemble / other.
+    """
     if not prices or not strategy:
-        return None
+        return None, "other:missing_prices_or_strategy"
 
-    # [GUARD L14] chart hard-block: vision flagged this asset as untradeable.
     if hard_block(context):
-        return None
-
-    # [GUARD L16] chart soft-filter: a low-quality "sell" -> skip (weaker than L14).
+        return None, "chart:hard_block"
     if soft_block(context):
-        return None
-
-    # [GUARD L04] session window
+        return None, "chart:soft_block"
     if not _session_allowed(strategy, session_token):
-        return None
-
-    # [GUARD L15]/[GUARD L23] re-entry cooldown
+        return None, "session"
     if _cooldown_active(reentry, pair, current_cycle):
-        return None
+        return None, "cooldown"
 
     ind = compute_all(prices)
     rsi = ind["rsi"]
@@ -189,47 +209,51 @@ def evaluate_entry(
     size = strategy.get("position_size_r", 0.1)
 
     if stype == "mean_reversion":
-        # [GUARD L13] ensemble-context skip — the v06->v07 cliff guard.
         if ensemble_consensus in _BEARISH_CONSENSUS:
-            return None
+            return None, "ensemble:bearish"
         at_band = last <= bb["lower"]
         oversold = rsi <= threshold
-        calm = adx < 25  # range regime favours reversion
-        if at_band and oversold and calm:
-            quality = (1 - rsi / 100.0) * 0.6 + 0.4
-            return Signal(
-                "mean_reversion", round(quality, 4), size, pair,
-                {
-                    "rsi": rsi,
-                    "adx": adx,
-                    "bb_lower": bb["lower"],
-                    "entry_type": "mean_reversion",
-                    "rsi_threshold": threshold,
-                },
-            )
-        return None
+        calm = adx < 25
+        if not at_band:
+            return None, "rsi:not_at_bb_lower"
+        if not oversold:
+            return None, "rsi:not_oversold"
+        if not calm:
+            return None, "rsi:adx_not_calm"
+        quality = (1 - rsi / 100.0) * 0.6 + 0.4
+        return Signal(
+            "mean_reversion", round(quality, 4), size, pair,
+            {
+                "rsi": rsi,
+                "adx": adx,
+                "bb_lower": bb["lower"],
+                "entry_type": "mean_reversion",
+                "rsi_threshold": threshold,
+            },
+        ), ""
 
     if stype == "rsi_momentum":
-        # [GUARD L18] multi-pair confluence gate (YAML entry.min_oversold_pairs)
         min_pairs = _min_oversold_pairs(strategy)
         if oversold_pairs < min_pairs:
-            return None
+            return None, "rsi:confluence"
         oversold = rsi <= threshold
-        if oversold and _vol_gate(strategy, ind["atr"], last, vol_above):
-            quality = 0.5 + min(oversold_pairs, 5) * 0.1
-            return Signal(
-                "rsi_momentum", round(quality, 4), size, pair,
-                {
-                    "rsi": rsi,
-                    "oversold_pairs": oversold_pairs,
-                    "min_oversold_pairs": min_pairs,
-                    "entry_type": "rsi_momentum",
-                    "rsi_threshold": threshold,
-                },
-            )
-        return None
+        if not oversold:
+            return None, "rsi:not_oversold"
+        if not _vol_gate(strategy, ind["atr"], last, vol_above):
+            return None, "vol"
+        quality = 0.5 + min(oversold_pairs, 5) * 0.1
+        return Signal(
+            "rsi_momentum", round(quality, 4), size, pair,
+            {
+                "rsi": rsi,
+                "oversold_pairs": oversold_pairs,
+                "min_oversold_pairs": min_pairs,
+                "entry_type": "rsi_momentum",
+                "rsi_threshold": threshold,
+            },
+        ), ""
 
-    return None
+    return None, "other:unknown_strategy_type"
 
 
 # ── GP ensemble (discovered-indicator) SHADOW entry ─────────────────────────
@@ -443,15 +467,18 @@ def gp_ensemble_signal(pair: str, prices: list[float],
 
     banned = exiled_ids or set()
     votes = []  # (weighted_direction, weight, name)
+    regime_miss = 0
     for ind in inds:
         name = ind.get("name", "?")
         # [GUARD L36] cortex-exiled indicators cannot vote the ensemble.
         if name in banned:
             continue
         # Same-type only: candle TF + forward horizon must match invent profile.
+        # Untagged / wrong-regime formulas are skipped loudly (no silent vote).
         if not indicator_matches_regime(
             ind, interval=req_interval, horizon=req_horizon,
         ):
+            regime_miss += 1
             continue
         # Prefer expr; fall back to expr_str/name only when GP-grammar-valid
         # (skips dashboard seeds like ta.rsi(close,14)).
@@ -495,6 +522,13 @@ def gp_ensemble_signal(pair: str, prices: list[float],
         votes.append((sig * weight, weight, name))
 
     if len(votes) < min_active:
+        if regime_miss and not votes:
+            # Loud fail: formulas on disk but none share invent regime tags.
+            print(
+                f"[hermes][gp] {pair}: {regime_miss} indicators skipped "
+                f"(regime mismatch vs {req_interval}|h{req_horizon})",
+                flush=True,
+            )
         return None
 
     active_indicators = [v[2] for v in votes]

@@ -91,8 +91,15 @@ def _coerce(key: str, value: Any, fallback: Any) -> Any:
 def invent_profile(bot: str | None = None, *, pair: str | None = None) -> dict[str, Any]:
     """Resolved invent settings for ``bot`` (or the bot that owns ``pair``)."""
     name = (bot or (bot_for_pair(pair) if pair else None) or "forex").strip().lower()
+    # Unknown bot labels (e.g. legacy "goldbot" in tests) must resolve via pair
+    # so invent TF/horizon match the formulas on disk.
+    if name not in BOT_INVENT_DEFAULTS:
+        name = (bot_for_pair(pair) if pair else None) or "forex"
+        name = str(name).strip().lower()
+        if name not in BOT_INVENT_DEFAULTS:
+            name = "forex"
     out = deepcopy(_BASE)
-    out.update(deepcopy(BOT_INVENT_DEFAULTS.get(name, BOT_INVENT_DEFAULTS["forex"])))
+    out.update(deepcopy(BOT_INVENT_DEFAULTS[name]))
 
     try:
         from hermes_core.config import load_config

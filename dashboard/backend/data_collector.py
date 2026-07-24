@@ -20,12 +20,14 @@ from io import StringIO
 from pathlib import Path
 from typing import Optional
 
-# On Railway, there are no D:/projects/ paths. Fall back to bundled copies or current dir.
-PROJECTS_ROOT = Path("D:/projects")
+# Prefer repo-relative / env paths; never require Windows D:/projects.
 RAILWAY_BUNDLE = Path(__file__).parent.parent / "bot_code"
-
-if not PROJECTS_ROOT.exists():
-    # Running on Railway — source code not available
+_env_root = os.getenv("HERMES_PROJECTS_ROOT") or os.getenv("HERMES_STATE_ROOT")
+if _env_root and Path(_env_root).exists():
+    PROJECTS_ROOT = Path(_env_root)
+elif (Path(__file__).resolve().parents[2]).exists():
+    PROJECTS_ROOT = Path(__file__).resolve().parents[2]  # repo root
+else:
     PROJECTS_ROOT = RAILWAY_BUNDLE
 
 BOT_PATHS = {}

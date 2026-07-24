@@ -51,6 +51,22 @@ HISTORY_MIN_BARS = 50
 # crypto pairs served by a live websocket stream (Coinbase public WS, free RT)
 _CRYPTO_PAIRS = {"BTC/USD", "ETH/USD"}
 _METAL_PAIRS = frozenset({"XAU/USD", "XAG/USD"})
+_FX_PAIRS = frozenset({"EUR/USD", "GBP/USD", "AUD/USD", "GBP/JPY"})
+
+
+def _is_synthetic_fx_quote(pair: str, candle: dict | None) -> bool:
+    """True for placeholder quotes (live_prices ``*-x`` / price==1.0 stubs).
+
+    The full FX stub-ladder check (1.10–1.13 cycling across majors) lives in
+    ``soak_controls.price_sanity_book`` so a lone ~1.10 EUR print is not killed.
+    """
+    if not candle or pair not in _FX_PAIRS:
+        return False
+    try:
+        px = float(candle.get("price"))
+    except (TypeError, ValueError):
+        return True
+    return abs(px - 1.0) < 1e-12
 
 
 # ── source adapters ───────────────────────────────────────────────────────────
@@ -589,7 +605,11 @@ class PriceAggregator:
         prices, any_up = await self._poll(pair)
         if not prices:
             # [GUARD L61] all sources down -> fail soft, serve last-good if fresh
-            return self._last_good.get(pair)
+            # BUT never recycle synthetic FX stub quotes (1.0 / 1.1x ladder).
+            prev = self._last_good.get(pair)
+            if prev is not None and _is_synthetic_fx_quote(pair, prev):
+                return None
+            return prev
 
         consensus = self._consensus(prices)
         # Spread check: delayed free sources (Alpha Vantage ~15min, yfinance) can
@@ -668,8 +688,13 @@ class PriceAggregator:
         try:
             candle = self._run_fetch(pair)
         except Exception:  # noqa: BLE001 — fail-soft; [GUARD L61]
-            return self._last_good.get(pair)
+            prev = self._last_good.get(pair)
+            if prev is not None and _is_synthetic_fx_quote(pair, prev):
+                return None
+            return prev
         if candle is None:
+            return None
+        if _is_synthetic_fx_quote(pair, candle):
             return None
         if (time.time() - float(candle.get("ts", 0))) > self.stale_s:
             return None  # [L01] stale
@@ -766,7 +791,7 @@ class PriceAggregator:
             return external[-max_candles:]
         if len(buf) >= 2:
             return buf[-max_candles:]
-        if live is not None:
+        if live is not None and not _is_synthetic_fx_quote(pair, live):
             return [live]
         return []
 

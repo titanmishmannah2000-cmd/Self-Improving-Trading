@@ -30,6 +30,15 @@ def flat_price_guard(indicators: dict, prices: list[float]) -> tuple[bool, str]:
     return False, ""
 
 
+# Rolling bw samples for soak ops (measure before retuning BB_BW_MIN).
+_BW_SAMPLES: list[float] = []
+_BW_SAMPLE_MAX = 500
+
+
+def bb_bandwidth_samples() -> list[float]:
+    return list(_BW_SAMPLES)
+
+
 def bb_bandwidth_guard(bb: dict, threshold: float = BB_BW_MIN) -> tuple[bool, str]:
     """[GUARD L03] Skip MR when Bollinger bandwidth is too narrow for edge."""
     middle = float(bb.get("middle", 0) or 0)
@@ -38,6 +47,12 @@ def bb_bandwidth_guard(bb: dict, threshold: float = BB_BW_MIN) -> tuple[bool, st
     upper = float(bb.get("upper", middle))
     lower = float(bb.get("lower", middle))
     bw = (upper - lower) / middle
+    try:
+        _BW_SAMPLES.append(float(bw))
+        if len(_BW_SAMPLES) > _BW_SAMPLE_MAX:
+            del _BW_SAMPLES[: len(_BW_SAMPLES) - _BW_SAMPLE_MAX]
+    except Exception:  # noqa: BLE001
+        pass
     if bw < threshold:
         return True, f"bb_bandwidth:{bw:.6f}"
     return False, ""

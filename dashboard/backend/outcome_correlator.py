@@ -11,6 +11,7 @@ Usage:
 """
 
 import json
+import os
 import sqlite3
 import sys
 from datetime import datetime, timezone, timedelta
@@ -21,7 +22,11 @@ _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
 from findings_store import _get_conn, list_findings, get_finding
 
-DASHBOARD_DB_PATH = Path("D:/projects/hermes-dashboard-api/data/trading.db")
+DASHBOARD_DB_PATH = Path(
+    os.getenv("DASHBOARD_DB")
+    or os.getenv("DB_PATH")
+    or "/data/hermes.db"
+)
 
 
 # ── Keyword → Finding mapping ─────────────────────────────────────────────

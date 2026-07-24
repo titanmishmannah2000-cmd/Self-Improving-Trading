@@ -1049,6 +1049,19 @@ def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
     archive: dict = {}
     seen: set[str] = set()
     n_eval = 0
+    rejects = {
+        "short_signal": 0,
+        "oos_floor": 0,
+        "perm": 0,
+        "kfold": 0,
+        "eval_error": 0,
+        "redundancy": 0,
+        "novelty": 0,
+        "pool_lift": 0,
+        "s10": 0,
+        "admit_error": 0,
+        "duplicate_key": 0,
+    }
     for idx, raw in enumerate(pop):
         n_eval += 1
         expr = _canonicalize(raw)
@@ -1057,24 +1070,29 @@ def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
         es = _expr_to_str(expr)
         key = _semantic_key(expr)
         if key in seen:
+            rejects["duplicate_key"] += 1
             continue
         seen.add(key)
         try:
             sig_test = _signal_for_expr(expr, test)
             if len(sig_test) < 20:
+                rejects["short_signal"] += 1
                 continue
             oos = _compute_fitness(sig_test, test, horizon)
             if oos < OOS_FLOOR:
+                rejects["oos_floor"] += 1
                 continue
             p_val, _real_c, null_mean = _permutation_pvalue(
                 sig_test, test, horizon, n_perm=200, seed=seed)
             if p_val >= PERM_PVALUE_FLOOR:
+                rejects["perm"] += 1
                 continue
             _n = min(len(sig_test), len(test) - horizon)
             if _n >= N_FOLDS * 15:
                 kfold_med, frac = _honest_oos(sig_test, test, horizon)
                 _kfold_ok = (frac >= 0.6) and (kfold_med >= OOS_FLOOR)
                 if not _kfold_ok:
+                    rejects["kfold"] += 1
                     continue
             win_rate, total_pnl = _compute_signal_stats(sig_test, test, horizon)
             max_dd = _max_drawdown_pct(sig_test, test, horizon)
@@ -1103,6 +1121,7 @@ def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
             if MAP_ELITES_ENABLED:
                 _map_elites_insert(archive, cand)
         except Exception:
+            rejects["eval_error"] += 1
             continue
 
     # 3) Prefer MAP-Elites elites (diverse niches), fallback to Pareto front.
@@ -1126,11 +1145,14 @@ def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
         sig_test = cand["sig"]
         try:
             if redundancy_check(sig_test, existing_signals) == "REJECTED":
+                rejects["redundancy"] += 1
                 continue
             if not _novelty_ok(expr, population):
+                rejects["novelty"] += 1
                 continue
             lift = _marginal_pool_lift(sig_test, existing_signals, test, horizon)
             if lift < POOL_LIFT_FLOOR:
+                rejects["pool_lift"] += 1
                 continue
             from hermes_core.engines.backtest import backtest_gp_indicator
             bt = backtest_gp_indicator(
@@ -1138,6 +1160,7 @@ def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
                 horizon=horizon, interval=interval,
             )
             if not bt.get("approved"):
+                rejects["s10"] += 1
                 continue
             niche = {
                 "horizon": horizon,
@@ -1184,6 +1207,7 @@ def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
             if len(admitted) >= top_k:
                 break
         except Exception:
+            rejects["admit_error"] += 1
             continue
 
     cov = _map_elites_coverage(archive) if archive else {
@@ -1208,6 +1232,7 @@ def discover(pair: str, prices: list[float], volumes: list[float] | None = None,
         "best_oos": max((c["oos_corr"] for c in candidates), default=0.0),
         "niches_used": sorted(k for k in niches_used if k),
         "map_elites": cov,
+        "reject_counts": rejects,
     }
     _save_discovery_pulse(pair, pulse)
 
@@ -1303,19 +1328,22 @@ def apply_live_feedback(pair: str, cortex) -> int:
         return 0
 
 
-def _discovered_dir() -> Path:
+def _discovered_dir(pair: str | None = None) -> Path:
     if DISCOVERED_DIR is not None:
         DISCOVERED_DIR.mkdir(parents=True, exist_ok=True)
         return DISCOVERED_DIR
-    # Canonical discovered folder (parent of EUR_USD.json).
+    # Prefer the owning bot's discovered folder for ``pair`` (crypto pulses
+    # must not land under forex/state/discovered).
     try:
+        if pair:
+            return _state_discovered_path(pair).parent
         return _state_discovered_path("EUR/USD").parent
     except Exception:
         return repo_root() / "state" / "discovered"
 
 
 def _pulse_path(pair: str) -> Path:
-    return _discovered_dir() / f"_pulse_{_pair_safe(pair)}.json"
+    return _discovered_dir(pair) / f"_pulse_{_pair_safe(pair)}.json"
 
 
 def _save_discovery_pulse(pair: str, pulse: dict) -> Path:
@@ -1323,8 +1351,9 @@ def _save_discovery_pulse(pair: str, pulse: dict) -> Path:
     path = _pulse_path(pair)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(pulse, indent=2), encoding="utf-8")
-    # Also merge into the aggregate pulse index used by the runner push.
-    index_path = _discovered_dir() / "_discovery_pulse.json"
+    # Also merge into the aggregate pulse index used by the runner push
+    # (per owning bot — not a global forex dump).
+    index_path = _discovered_dir(pair) / "_discovery_pulse.json"
     try:
         index = json.loads(index_path.read_text(encoding="utf-8")) if index_path.exists() else {}
         if not isinstance(index, dict):
@@ -1348,16 +1377,26 @@ def load_discovery_pulse(pair: str) -> dict | None:
 
 
 def load_discovery_pulses(pairs: list[str] | None = None) -> dict[str, dict]:
-    """Load pulses for `pairs` (or all pairs found in the aggregate index)."""
-    index_path = _discovered_dir() / "_discovery_pulse.json"
+    """Load pulses for `pairs` (or all pairs found in per-bot aggregate indexes)."""
     out: dict[str, dict] = {}
-    try:
-        if index_path.exists():
+    index_paths: list[Path] = []
+    if DISCOVERED_DIR is not None:
+        index_paths.append(DISCOVERED_DIR / "_discovery_pulse.json")
+    else:
+        for bot in ("forex", "gold", "crypto"):
+            index_paths.append(repo_root() / bot / "state" / "discovered" / "_discovery_pulse.json")
+        index_paths.append(repo_root() / "state" / "discovered" / "_discovery_pulse.json")
+    for index_path in index_paths:
+        try:
+            if not index_path.exists():
+                continue
             raw = json.loads(index_path.read_text(encoding="utf-8"))
             if isinstance(raw, dict):
-                out = {k: v for k, v in raw.items() if isinstance(v, dict)}
-    except (json.JSONDecodeError, OSError):
-        out = {}
+                for k, v in raw.items():
+                    if isinstance(v, dict):
+                        out[k] = v
+        except (json.JSONDecodeError, OSError):
+            continue
     if pairs is not None:
         wanted = set(pairs)
         out = {k: v for k, v in out.items() if k in wanted}
