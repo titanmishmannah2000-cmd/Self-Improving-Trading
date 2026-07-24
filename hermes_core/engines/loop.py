@@ -35,6 +35,7 @@ def _now_iso() -> str:
 
 from hermes_core.adapters import make_default_fetch
 from hermes_core.config import load_config, load_strategy_for_pair, state_root
+from hermes_core.engines.crisis_learning import check_novel_regime
 from hermes_core.engines.decision_cortex import Cortex
 from hermes_core.engines.entry import (
     _entry_rsi_threshold,
@@ -65,6 +66,7 @@ from hermes_core.engines.soak_controls import (
     ensure_state_files,
     entries_halted,
     feed_error_rate,
+    idle_skip_slo,
     price_sanity_book,
     price_sanity_pair,
     write_halt,
@@ -834,8 +836,29 @@ def run_cycle(
             write_halt(bot, f"feed_slo:rate={_feed.get('rate')}")
             _halted, _halt_reason = True, "halt:feed_slo"
             summary["halted"] = True
+            print(
+                f"[hermes][feed-slo] {bot}: auto-halt rate={_feed.get('rate')}",
+                flush=True,
+            )
     except Exception:  # noqa: BLE001
         pass
+    # Pause detector (#25): all recent skips idle/feed for hours → effectively paused.
+    try:
+        _idle_hours = {"crypto": 4.0, "gold": 8.0, "forex": 6.0}.get(bot, 6.0)
+        _idle = idle_skip_slo(_state_dir(bot) / "skips.jsonl", hours=_idle_hours)
+        summary["idle_slo"] = _idle
+        if _idle.get("effectively_paused") and not _halted:
+            write_halt(bot, f"idle_slo:{_idle.get('detail')}")
+            _halted, _halt_reason = True, "halt:idle_slo"
+            summary["halted"] = True
+            print(
+                f"[hermes][idle-slo] {bot}: effectively paused — {_idle.get('detail')}",
+                flush=True,
+            )
+    except Exception:  # noqa: BLE001
+        pass
+    # Sticky L21 flatline pauses (pair -> remaining cycles).
+    flatline_pause: dict[str, int] = dict(getattr(run_cycle, "_flatline_pause", {}) or {})
     # [GUARD L62] resolve the price feed AFTER config so aggregate gets real pairs
     # (crypto WS subscribe list). Default is multi-source aggregator for live quotes.
     if fetch_fn is None:
@@ -924,6 +947,28 @@ def run_cycle(
             _log_skip(bot, pair, cycle, flat_reason)
             summary["skips"] += 1
             continue
+
+        # [GUARD L21] novel-regime flatline: pause NEW entries for N cycles (#26).
+        # Exits for open positions still run below. Fail-soft on short history.
+        try:
+            remaining = int(flatline_pause.get(pair) or 0)
+            if remaining <= 0 and len(prices) >= 60:
+                _nov = check_novel_regime(pair, prices)
+                if _nov.get("flatlined"):
+                    remaining = int(_nov.get("pause_cycles") or 0)
+                    flatline_pause[pair] = remaining
+                    summary.setdefault("flatlined", {})[pair] = _nov
+            if remaining > 0:
+                flatline_pause[pair] = remaining - 1
+                if flatline_pause[pair] <= 0:
+                    flatline_pause.pop(pair, None)
+                # Only block new entries; open positions continue to exit logic.
+                if open_positions.get(pair) is None:
+                    _log_skip(bot, pair, cycle, "flatline:NOVEL_REGIME")
+                    summary["skips"] += 1
+                    continue
+        except Exception:  # noqa: BLE001 — L21 must never crash the cycle
+            pass
 
         # NOTE: GP discovery is intentionally NOT called here. It is a slow,
         # network-backed, periodic job (see _runner._discovery_loop) that runs
@@ -1610,6 +1655,9 @@ def run_cycle(
         for p in set(price_history) | set(getattr(run_cycle, "_price_history", {}) or {})
     }
     run_cycle._regimes = dict(regimes)
+    run_cycle._flatline_pause = {
+        p: n for p, n in flatline_pause.items() if int(n) > 0 and p in pairs
+    }
     if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
         # [GUARD L24] circuit open: caller should pause; reset the counter so a
         # single pause doesn't permanently lock the breaker closed.

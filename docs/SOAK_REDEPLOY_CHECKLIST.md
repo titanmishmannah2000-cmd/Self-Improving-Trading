@@ -34,6 +34,9 @@ Require `go_nogo: true` for forex, gold, and crypto (heartbeat age &lt; 10m, non
 ## During the 30 days
 
 - Weekly: WR, expectancy, DD, admit rate, skip mix, heartbeat age.
-- Auto-halt triggers: synthetic prices, feed-error spike, or manual `halt` file.
+- Auto-halt triggers: synthetic prices, feed-error spike, idle/pause SLO
+  (all recent skips are `no_signal`/feed/BB for hours), or manual `halt` file.
+- L21 novel-regime flatline pauses **new entries** for 60 cycles and appends
+  `{bot}/state/flatline_log.jsonl` (alert after 3× `NOVEL_REGIME` on a pair).
 - DD past config `max_drawdown` / `failure_below` → halt and investigate.
 - Expect **clean data + possible mild paper edge**, not guaranteed profit.

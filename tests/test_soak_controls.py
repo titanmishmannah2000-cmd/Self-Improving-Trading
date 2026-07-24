@@ -129,3 +129,43 @@ def test_self_audit_archive_orphan(tmp_path, monkeypatch):
         import shutil
 
         shutil.rmtree(repo_root() / "goldbot", ignore_errors=True)
+
+
+def test_idle_skip_slo_detects_paused(tmp_path):
+    import json
+    import time
+
+    from hermes_core.engines.soak_controls import idle_skip_slo
+
+    p = tmp_path / "skips.jsonl"
+    now = time.time()
+    lines = [json.dumps({"ts": now - 60, "reason": "no_signal:rsi"}) for _ in range(25)]
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    out = idle_skip_slo(p, hours=6.0)
+    assert out["effectively_paused"] is True
+
+
+def test_flatline_blocks_new_entries(tmp_path, monkeypatch):
+    """L21 novel-regime pause skips entries while exits remain available."""
+    monkeypatch.setenv("HERMES_STATE_ROOT", str(tmp_path))
+    monkeypatch.delenv("HALT_ENTRIES", raising=False)
+    ensure_state_files("forex")
+    clear_halt("forex")
+
+    # Force flatline pause sticky state without needing a real novel signature.
+    run_cycle._flatline_pause = {"EUR/USD": 3}
+    open_positions = {}
+    feed = FakeFeed()
+    hist = [{"price": 1.08 + i * 0.0001} for i in range(80)]
+    summary = run_cycle(
+        "forex",
+        1,
+        fetch_fn=feed,
+        history_fn=lambda pair: hist,
+        now_fn=lambda: 12 * 3600,
+        open_positions=open_positions,
+    )
+    assert summary.get("entries") == []
+    # Pause counter should have decremented and persisted.
+    assert int(getattr(run_cycle, "_flatline_pause", {}).get("EUR/USD", 0)) == 2
+    run_cycle._flatline_pause = {}

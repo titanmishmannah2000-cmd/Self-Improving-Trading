@@ -51,20 +51,28 @@ def _check(name: str, passed: bool, detail: str = "", *, critical: bool = True) 
 
 
 def _archive_pollution_refs(state_dir: Path) -> list[str]:
-    """Flag configs that point at polluted archive files."""
+    """Flag live pointers / mis-homed files that reference polluted archives."""
     bad: list[str] = []
+    # Live runtime files must not themselves be polluted archives.
+    for rel in ("trades.jsonl", "hypotheses.jsonl", "skips.jsonl", "gp_shadow.jsonl"):
+        p = state_dir / rel
+        if p.exists() and "polluted" in p.name.lower():
+            bad.append(str(p))
+    # Live non-archive JSON/YAML must not embed paths to *polluted* archives.
     for p in state_dir.rglob("*"):
         if not p.is_file():
             continue
-        name = p.name
-        if "polluted" in name and "archive" in p.parts:
-            # Presence of archives is OK; only fail if a live pointer exists.
+        if "archive" in p.parts:
             continue
-    # Live files must not be polluted archives themselves.
-    for rel in ("trades.jsonl", "hypotheses.jsonl", "skips.jsonl"):
-        p = state_dir / rel
-        if p.exists() and "polluted" in p.name:
-            bad.append(str(p))
+        if p.suffix.lower() not in {".json", ".yaml", ".yml", ".jsonl", ".txt"}:
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        low = text.lower()
+        if "polluted" in low and "archive" in low:
+            bad.append(f"live_pointer:{p}")
     # goldbot orphan is a hard fail when auditing any bot (shared deploy smell).
     orphan = repo_root() / "goldbot" / "state" / "gp_promote_gate.json"
     if orphan.exists():
@@ -150,13 +158,14 @@ def run(bot: str | None = None) -> Report:
         )
     )
 
-    idle = idle_skip_slo(state_dir / "skips.jsonl")
+    idle_hours = {"crypto": 4.0, "gold": 8.0, "forex": 6.0}.get(b, 6.0)
+    idle = idle_skip_slo(state_dir / "skips.jsonl", hours=idle_hours)
     checks.append(
         _check(
             "not_effectively_paused",
             not bool(idle.get("effectively_paused")),
-            str(idle.get("detail")),
-            critical=False,
+            f"hours={idle_hours} {idle.get('detail')}",
+            critical=True,
         )
     )
 
@@ -339,7 +348,7 @@ def run(bot: str | None = None) -> Report:
     )
 
     critical_ok = all(c["passed"] for c in checks if c.get("critical", True))
-    # Go/no-go: criticals + heartbeat + price sanity + trades file + archive
+    # Go/no-go: criticals + heartbeat + price sanity + trades + archive + pause
     must = {
         "config_load",
         "state_dir",
@@ -347,6 +356,7 @@ def run(bot: str | None = None) -> Report:
         "price_sanity",
         "trades_file",
         "archive_isolated",
+        "not_effectively_paused",
     }
     go = all(c["passed"] for c in checks if c["name"] in must)
     return Report(bot=b, ok=critical_ok, go_nogo=go, checks=checks)

@@ -5,6 +5,8 @@ stub heartbeats under ``bots/*/state``, deletes the ``goldbot/`` promote-gate
 orphan, bootstraps canonical trade books, resets reflection latches, and
 optionally rebuilds cortex/policy from post-scrub trades only.
 
+All mutable bot paths honor ``HERMES_STATE_ROOT`` via ``bot_state_dir``.
+
 Usage:
   python tools/state_hygiene.py
   python tools/state_hygiene.py --rebuild-learning
@@ -16,12 +18,19 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import sys
 import time
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from hermes_core.config.loader import repo_root, state_root  # noqa: E402
+from hermes_core.state.paths import bot_state_dir  # noqa: E402
+
 BOTS = ("forex", "gold", "crypto")
 
 
@@ -32,31 +41,41 @@ def _stamp() -> str:
 def quarantine_legacy_state() -> list[str]:
     """Move legacy root ``state/`` runtime artifacts into archive."""
     actions: list[str] = []
-    legacy = ROOT / "state"
-    if not legacy.exists():
-        return actions
-    arch = legacy / "archive" / f"quarantine_{_stamp()}"
-    arch.mkdir(parents=True, exist_ok=True)
-    for name in (
-        "trades.jsonl",
-        "skips.jsonl",
-        "heartbeat.json",
-        "policy.json",
-        "flatline_log.jsonl",
-        "dashboard.db",
-    ):
-        src = legacy / name
-        if src.exists():
-            dst = arch / name
-            shutil.move(str(src), str(dst))
-            actions.append(f"quarantined {src} -> {dst}")
+    # Prefer volume root; also scrub repo-local ``state/`` leftovers.
+    roots = []
+    sr = state_root()
+    roots.append(sr / "state")
+    rr = repo_root() / "state"
+    if rr.resolve() != (sr / "state").resolve():
+        roots.append(rr)
+    for legacy in roots:
+        if not legacy.exists():
+            continue
+        arch = legacy / "archive" / f"quarantine_{_stamp()}"
+        arch.mkdir(parents=True, exist_ok=True)
+        for name in (
+            "trades.jsonl",
+            "skips.jsonl",
+            "heartbeat.json",
+            "policy.json",
+            "flatline_log.jsonl",
+            "dashboard.db",
+            "hypotheses.jsonl",
+            "gp_shadow.jsonl",
+        ):
+            src = legacy / name
+            if src.exists():
+                dst = arch / name
+                shutil.move(str(src), str(dst))
+                actions.append(f"quarantined {src} -> {dst}")
     return actions
 
 
 def remove_stubs() -> list[str]:
     actions: list[str] = []
     for bot in BOTS:
-        bdir = ROOT / "bots" / bot / "state"
+        # Image/seed stubs under bots/*/state
+        bdir = repo_root() / "bots" / bot / "state"
         for p in bdir.glob("live_prices_*.json"):
             p.unlink(missing_ok=True)
             actions.append(f"removed stub {p}")
@@ -70,15 +89,21 @@ def remove_stubs() -> list[str]:
                     actions.append(f"removed stub heartbeat {hb}")
             except (OSError, json.JSONDecodeError):
                 pass
+        # Same under volume bot state if present
+        vdir = bot_state_dir(bot)
+        for p in vdir.glob("live_prices_*.json"):
+            p.unlink(missing_ok=True)
+            actions.append(f"removed stub {p}")
     return actions
 
 
 def remove_goldbot_orphan() -> list[str]:
     actions: list[str] = []
-    orphan = ROOT / "goldbot"
-    if orphan.exists():
-        shutil.rmtree(orphan)
-        actions.append(f"removed orphan {orphan}")
+    for base in (repo_root(), state_root()):
+        orphan = base / "goldbot"
+        if orphan.exists():
+            shutil.rmtree(orphan)
+            actions.append(f"removed orphan {orphan}")
     return actions
 
 
@@ -101,7 +126,7 @@ def purge_seed_discovered() -> list[str]:
     """Remove dashboard seed fixtures (ta.*/mom) from runtime discovered dirs."""
     actions: list[str] = []
     for bot in BOTS:
-        d = ROOT / bot / "state" / "discovered"
+        d = bot_state_dir(bot) / "discovered"
         if not d.exists():
             continue
         for p in d.rglob("*.json"):
@@ -134,10 +159,45 @@ def purge_seed_discovered() -> list[str]:
     return actions
 
 
+def clean_hypotheses_books() -> list[str]:
+    """Archive polluted hypothesis lines from volume (+ seed) books (#27)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "clean_hypotheses", ROOT / "tools" / "clean_hypotheses.py"
+    )
+    if spec is None or spec.loader is None:
+        return ["clean_hypotheses: import failed"]
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    actions: list[str] = []
+    stamp = _stamp()
+    targets: list[Path] = []
+    for bot in BOTS:
+        targets.append(bot_state_dir(bot) / "hypotheses.jsonl")
+        targets.append(repo_root() / "bots" / bot / "state" / "hypotheses.jsonl")
+    legacy = state_root() / "state" / "hypotheses.jsonl"
+    targets.append(legacy)
+    seen: set[Path] = set()
+    for path in targets:
+        try:
+            key = path.resolve()
+        except OSError:
+            key = path
+        if key in seen or not path.exists():
+            continue
+        seen.add(key)
+        kept, archived = mod.clean_file(path, stamp)
+        if archived:
+            actions.append(f"cleaned hypotheses {path}: kept={kept} archived={archived}")
+    return actions
+
+
 def rebuild_learning(bot: str = "forex") -> list[str]:
     """Rebuild cortex + neutral policy from post-scrub trades only."""
     actions: list[str] = []
-    state = ROOT / bot / "state"
+    state = bot_state_dir(bot)
     trades = state / "trades.jsonl"
     cortex_path = state / "cortex" / "cortex_memory.json"
     cortex_path.parent.mkdir(parents=True, exist_ok=True)
@@ -198,7 +258,7 @@ def rebuild_learning(bot: str = "forex") -> list[str]:
 def rotate_skips(max_keep: int = 5000) -> list[str]:
     actions: list[str] = []
     for bot in BOTS:
-        path = ROOT / bot / "state" / "skips.jsonl"
+        path = bot_state_dir(bot) / "skips.jsonl"
         if not path.exists():
             continue
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -224,18 +284,27 @@ def rotate_skips(max_keep: int = 5000) -> list[str]:
 
 
 def set_soak_sessions_24h() -> list[str]:
-    """Set runtime (+ seed) forex sessions to 24h for paper soak."""
+    """Set runtime (+ seed) strategy sessions to 24h for paper soak."""
     actions: list[str] = []
     import yaml  # type: ignore
 
-    targets = []
-    for base in (
-        ROOT / "forex" / "state" / "strategies",
-        ROOT / "bots" / "forex" / "state" / "strategies",
-    ):
-        if base.exists():
-            targets.extend(base.glob("*.yaml"))
+    targets: list[Path] = []
+    for bot in BOTS:
+        for base in (
+            bot_state_dir(bot) / "strategies",
+            repo_root() / "bots" / bot / "state" / "strategies",
+        ):
+            if base.exists():
+                targets.extend(base.glob("*.yaml"))
+    seen: set[Path] = set()
     for path in targets:
+        try:
+            key = path.resolve()
+        except OSError:
+            key = path
+        if key in seen:
+            continue
+        seen.add(key)
         try:
             data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         except Exception:
@@ -266,6 +335,7 @@ def main() -> None:
     actions += remove_goldbot_orphan()
     actions += bootstrap_canonical()
     actions += purge_seed_discovered()
+    actions += clean_hypotheses_books()
     if not args.no_sessions_24h and args.sessions_24h:
         actions += set_soak_sessions_24h()
     if args.rebuild_learning:

@@ -210,7 +210,10 @@ def idle_skip_slo(skips_path: Path, *, hours: float = 6.0, window: int = 500) ->
     badish = sum(
         1
         for r in reasons
-        if r == "no_signal" or r.startswith(_FEED_SKIP_PREFIXES) or r.startswith("bb_bandwidth")
+        if r == "no_signal"
+        or r.startswith("no_signal:")
+        or r.startswith(_FEED_SKIP_PREFIXES)
+        or r.startswith("bb_bandwidth")
     )
     paused = badish == len(reasons)
     return {
