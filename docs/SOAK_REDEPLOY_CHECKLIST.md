@@ -34,8 +34,12 @@ Require `go_nogo: true` for forex, gold, and crypto (heartbeat age &lt; 10m, non
 
 ## During the 30 days
 
-- Weekly: WR, expectancy, DD, admit rate, skip mix, heartbeat age,
-  `last_discovery_run_ts` / invent pulse `status`+`reject_counts`.
+- Automated: each bot runs `soak_monitor` (every `SOAK_MONITOR_INTERVAL_S`,
+  default 6h) and Discord-alerts on heartbeat staleness, go/no-go RED,
+  invent `chronic_timeout_backoff`, stale pulses, and high `admit_zero_streak`.
+  A weekly Discord digest summarizes pulse `status` / `admitted` /
+  `near_misses` / `admit_zero_streak` + heartbeat age even when healthy.
+- Manual weekly (optional): confirm Discord digest arrived; skim WR / DD.
 - Auto-halt triggers: synthetic prices, feed-error spike, idle/pause SLO
   (all recent skips are `no_signal`/feed/BB for hours), or manual `halt` file.
 - L21 novel-regime flatline pauses **new entries** for 60 cycles and appends
@@ -56,3 +60,9 @@ Require `go_nogo: true` for forex, gold, and crypto (heartbeat age &lt; 10m, non
   after `EXILE_DECAY_S` (default 7d) even without 100-entry recovery.
 - `hypotheses_kb.jsonl` auto-rotates past `HYPOTHESES_KB_MAX_LINES`; hygiene
   also rotates on default run.
+
+Manual one-shot:
+```bash
+python -m cron.soak_monitor
+SOAK_MONITOR_FORCE_WEEKLY=1 python -m cron.soak_monitor
+```
