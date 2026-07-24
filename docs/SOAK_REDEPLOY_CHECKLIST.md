@@ -28,9 +28,9 @@ This quarantines legacy `state/` runtime files, removes `live_prices_*.json` stu
 On Railway (image must include `tools/`):
 
 ```bash
-railway ssh -s forex -- python tools/start_soak_clock.py forex
-railway ssh -s gold -- python tools/start_soak_clock.py gold
-railway ssh -s crypto -- python tools/start_soak_clock.py crypto
+railway ssh -s forex -- uv run python tools/start_soak_clock.py forex
+railway ssh -s gold -- uv run python tools/start_soak_clock.py gold
+railway ssh -s crypto -- uv run python tools/start_soak_clock.py crypto
 ```
 
 ## Go / no-go

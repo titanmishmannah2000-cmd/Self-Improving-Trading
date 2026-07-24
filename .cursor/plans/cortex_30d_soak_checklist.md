@@ -46,7 +46,8 @@ Track every inventory item from the Cortex audit. Status: done / ops-pending.
 - [x] Redeploy forex / gold / crypto / dashboard from source (`railway redeploy --from-source`)
 - [x] `Dockerfile` copies `tools/` so volume ops scripts exist in the image
 - [x] Start 30-day paper clock markers via `tools/start_soak_clock.py` → `{bot}/state/soak_started.json`
-- [ ] After image with `tools/` is live: SSH each service and run `python tools/start_soak_clock.py <bot>` against `/data` (volume truth)
+- [x] After image with `tools/` is live: SSH each service and run `uv run python tools/start_soak_clock.py <bot>` against `/data` (volume truth)
+  - forex rebuilt **65** closes; gold **29**; crypto **33**; `soak_started.json` written on each volume (2026-07-24)
 
 ## Tests to re-run after further edits
 
