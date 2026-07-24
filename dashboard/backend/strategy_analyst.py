@@ -17,13 +17,12 @@ import json
 import math
 import os
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
-from findings_store import _get_conn, insert_finding, get_latest_run, _ts
+from findings_store import _get_conn, get_latest_run, insert_finding
 
 DASHBOARD_API_URL = os.environ.get(
     "DASHBOARD_API_URL",
@@ -64,6 +63,7 @@ Rules:
 def fetch_dashboard_data() -> dict:
     """Fetch current dashboard state for strategy analysis."""
     import httpx
+
     data = {}
     try:
         r = httpx.get(f"{DASHBOARD_API_URL}/api/overview", timeout=15)
@@ -84,7 +84,7 @@ def get_trailing_metrics(hours: int = 168) -> dict:
     """
     conn = _get_conn()
     try:
-        since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        since = (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
         rows = conn.execute(
             """SELECT bot, pair, metric, value, recorded_at
                FROM monitor_metrics
@@ -99,9 +99,7 @@ def get_trailing_metrics(hours: int = 168) -> dict:
             pair = r["pair"] or "__global__"
             metric = r["metric"]
             grouped.setdefault(bot, {}).setdefault(pair, {}).setdefault(metric, [])
-            grouped[bot][pair][metric].append({
-                "value": r["value"], "ts": r["recorded_at"]
-            })
+            grouped[bot][pair][metric].append({"value": r["value"], "ts": r["recorded_at"]})
         return grouped
     finally:
         conn.close()
@@ -113,7 +111,7 @@ def compute_trends(metrics: dict) -> list[dict]:
     Returns a list of dicts, each describing one notable trend.
     """
     trends = []
-    now_ts = datetime.now(timezone.utc)
+    now_ts = datetime.now(UTC)
 
     for bot, pairs in metrics.items():
         for pair, metric_data in pairs.items():
@@ -138,7 +136,11 @@ def compute_trends(metrics: dict) -> list[dict]:
                 older_mean = sum(older_vals) / len(older_vals)
 
                 # Compute standard deviation for older period
-                variance = sum((v - older_mean) ** 2 for v in older_vals) / (len(older_vals) - 1) if len(older_vals) > 1 else 0
+                variance = (
+                    sum((v - older_mean) ** 2 for v in older_vals) / (len(older_vals) - 1)
+                    if len(older_vals) > 1
+                    else 0
+                )
                 older_std = math.sqrt(variance) if variance > 0 else 0.001
 
                 # Calculate z-score of recent vs older
@@ -149,7 +151,9 @@ def compute_trends(metrics: dict) -> list[dict]:
                     continue
 
                 direction = "increased" if z_score > 0 else "decreased"
-                pct_change = ((recent_mean - older_mean) / abs(older_mean) * 100) if older_mean != 0 else 0
+                pct_change = (
+                    ((recent_mean - older_mean) / abs(older_mean) * 100) if older_mean != 0 else 0
+                )
 
                 # Classify the metric type for better descriptions
                 metric_labels = {
@@ -165,20 +169,26 @@ def compute_trends(metrics: dict) -> list[dict]:
                 }
                 label = metric_labels.get(metric, metric)
 
-                trends.append({
-                    "bot": bot,
-                    "pair": pair_label,
-                    "metric": metric,
-                    "label": label,
-                    "recent_mean": round(recent_mean, 3),
-                    "older_mean": round(older_mean, 3),
-                    "pct_change": round(pct_change, 1),
-                    "direction": direction,
-                    "z_score": round(z_score, 2),
-                    "recent_count": len(recent_vals),
-                    "older_count": len(older_vals),
-                    "severity": "HIGH" if abs(z_score) > 2.5 else "MEDIUM" if abs(z_score) > 2.0 else "LOW",
-                })
+                trends.append(
+                    {
+                        "bot": bot,
+                        "pair": pair_label,
+                        "metric": metric,
+                        "label": label,
+                        "recent_mean": round(recent_mean, 3),
+                        "older_mean": round(older_mean, 3),
+                        "pct_change": round(pct_change, 1),
+                        "direction": direction,
+                        "z_score": round(z_score, 2),
+                        "recent_count": len(recent_vals),
+                        "older_count": len(older_vals),
+                        "severity": "HIGH"
+                        if abs(z_score) > 2.5
+                        else "MEDIUM"
+                        if abs(z_score) > 2.0
+                        else "LOW",
+                    }
+                )
 
     return trends
 
@@ -204,21 +214,25 @@ def analyze_and_generate(trends: list[dict], dashboard_data: dict) -> list[dict]
         ob = dashboard_data["overview"].get("bots", {})
         for bot_name, bot in ob.items():
             hb = bot.get("heartbeat", {})
-            dashboard_context += f"\n{bot_name}: cycle={hb.get('cycle','?')} status={hb.get('status','?')}"
+            dashboard_context += (
+                f"\n{bot_name}: cycle={hb.get('cycle', '?')} status={hb.get('status', '?')}"
+            )
             reg = hb.get("regimes", {})
             if reg:
                 dashboard_context += f" regimes={reg}"
 
     user_prompt = (
-        f"Analyze these 7-day metric trends for the Hermes trading system:\n\n"
-        f"Notable trends (|z| > 1.5):\n" + "\n".join(trend_summary[:20]) +
-        f"\n\nCurrent dashboard state:{dashboard_context}\n\n"
+        "Analyze these 7-day metric trends for the Hermes trading system:\n\n"
+        "Notable trends (|z| > 1.5):\n"
+        + "\n".join(trend_summary[:20])
+        + f"\n\nCurrent dashboard state:{dashboard_context}\n\n"
         f"Identify strategic issues: performance degradation, regime mismatches, "
         f"or configuration opportunities. Be specific with numbers."
     )
 
     try:
         import httpx
+
         api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         if not api_key:
             env_path = _HERE / ".env"
@@ -269,17 +283,14 @@ def analyze_and_generate(trends: list[dict], dashboard_data: dict) -> list[dict]
 def run_analysis(verbose: bool = True) -> list[dict]:
     """Full strategy analysis pipeline. Returns created findings."""
     if verbose:
-        print(f"\n{'='*40}")
-        print(f"STRATEGY ANALYST — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
-        print(f"{'='*40}")
+        print(f"\n{'=' * 40}")
+        print(f"STRATEGY ANALYST — {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
+        print(f"{'=' * 40}")
 
     # 1. Get trailing metrics
     metrics = get_trailing_metrics(hours=168)
     total_points = sum(
-        len(points)
-        for bot in metrics.values()
-        for pair in bot.values()
-        for points in pair.values()
+        len(points) for bot in metrics.values() for pair in bot.values() for points in pair.values()
     )
     if verbose:
         print(f"Loaded {total_points} metric data points")
@@ -304,17 +315,21 @@ def run_analysis(verbose: bool = True) -> list[dict]:
 
     # 5. Store findings
     latest_run = get_latest_run()
-    audit_run_id = latest_run["id"] if latest_run else f"strat-{datetime.now(timezone.utc).strftime('%Y%m%d%H')}"
+    audit_run_id = (
+        latest_run["id"] if latest_run else f"strat-{datetime.now(UTC).strftime('%Y%m%d%H')}"
+    )
 
     stored = []
     for f in findings:
-        pair_str = f" [{f.get('pair')}]" if f.get("pair") else ""
+        f" [{f.get('pair')}]" if f.get("pair") else ""
         description = f.get("description", f.get("title", ""))
         finding = insert_finding(
             domain="performance-drift",
             finding_type=f.get("type", "UPGRADE"),
             severity=f.get("severity", "MEDIUM"),
-            location=f"strategy_analyst/{f.get('pair','all')}" if f.get("pair") else "strategy_analyst/all",
+            location=f"strategy_analyst/{f.get('pair', 'all')}"
+            if f.get("pair")
+            else "strategy_analyst/all",
             description=f"[Strategy] {f.get('title', '')}: {description[:200]}",
             trading_impact=f"Recommendation: {f.get('recommendation', 'Review configuration')}",
             suggested_fix=f.get("recommendation", "Review metrics in dashboard"),
@@ -323,7 +338,7 @@ def run_analysis(verbose: bool = True) -> list[dict]:
         )
         stored.append(finding)
         if verbose:
-            print(f"  📊 [{f.get('severity','MEDIUM')}] {f.get('title','?')[:80]}")
+            print(f"  📊 [{f.get('severity', 'MEDIUM')}] {f.get('title', '?')[:80]}")
 
     return stored
 

@@ -54,7 +54,10 @@ def test_pair_expert_weights_marks_suppressed(tmp_path, monkeypatch):
         c.record_outcome("EUR/USD", "gp_ensemble", -1.0)
 
     weights = pair_expert_weights(
-        "EUR/USD", c, {"gp_ensemble"}, enabled=True,
+        "EUR/USD",
+        c,
+        {"gp_ensemble"},
+        enabled=True,
     )
     assert weights["gp_ensemble"]["suppressed_soft"] is True
     assert weights["gp_ensemble"]["weight"] < weights["mean_reversion"]["weight"]

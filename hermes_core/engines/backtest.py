@@ -48,12 +48,12 @@ import numpy as np
 from hermes_core.config import load_strategy_for_pair
 from hermes_core.state.paths import hypotheses_kb_path
 
-OOS_FRACTION = 0.3           # last 30% is the holdout set
-OOS_DELTA_OK = -0.2          # [GUARD L53] OOS must not lose more than -0.2%
-HIST_DELTA_OK = -0.1         # Phase 1 historical delta floor
-CRISIS_DELTA_OK = 0.5        # crisis fail is fatal unless delta >= 0.5
-CRISIS_DD_LIMIT = 0.20       # [GUARD L53] crisis max-drawdown ceiling
-OOS_CORR_MIN = 0.15          # 99th-percentile OOS correlation floor (L53)
+OOS_FRACTION = 0.3  # last 30% is the holdout set
+OOS_DELTA_OK = -0.2  # [GUARD L53] OOS must not lose more than -0.2%
+HIST_DELTA_OK = -0.1  # Phase 1 historical delta floor
+CRISIS_DELTA_OK = 0.5  # crisis fail is fatal unless delta >= 0.5
+CRISIS_DD_LIMIT = 0.20  # [GUARD L53] crisis max-drawdown ceiling
+OOS_CORR_MIN = 0.15  # 99th-percentile OOS correlation floor (L53)
 
 # Optional test override (tests monkeypatch this module attribute).
 KB_PATH: Path | None = None
@@ -77,14 +77,19 @@ def _default_fetch(pair: str) -> list[float]:  # pragma: no cover - needs networ
 
     for interval, period in (("5m", "60d"), ("1d", "2y")):
         try:
-            hist = seed_history_interval_sync(
-                pair, interval=interval, period=period, max_candles=500,
-            ) or []
+            hist = (
+                seed_history_interval_sync(
+                    pair,
+                    interval=interval,
+                    period=period,
+                    max_candles=500,
+                )
+                or []
+            )
         except Exception:  # noqa: BLE001 — fail-soft into next interval
             hist = []
         closes = [
-            float(c["price"]) for c in hist
-            if isinstance(c, dict) and c.get("price") is not None
+            float(c["price"]) for c in hist if isinstance(c, dict) and c.get("price") is not None
         ]
         if len(closes) >= 10:
             return closes
@@ -213,18 +218,15 @@ def _entry_signal(
     sessions = _bar_sessions(n, candle_ts) if apply_session else ["LDN"] * n
     ensembles = (
         _ensemble_series(prices, strategy, pair, injected=ensemble_consensus)
-        if apply_ensemble else ["neutral"] * (n - 1)
+        if apply_ensemble
+        else ["neutral"] * (n - 1)
     )
 
     sig = [0.0] * (n - 1)
     for i in range(min_lookback, n - 1):
         if apply_session and not _session_allowed(strategy, sessions[i]):
             continue
-        if (
-            apply_ensemble
-            and strat_type == "mean_reversion"
-            and ensembles[i] in _BEARISH_CONSENSUS
-        ):
+        if apply_ensemble and strat_type == "mean_reversion" and ensembles[i] in _BEARISH_CONSENSUS:
             continue
         ind = compute_all(prices[: i + 1])
         last = prices[i]
@@ -247,14 +249,20 @@ def _mr_signal(prices: list[float], strat_type: str, win: int = 10) -> list[floa
     return _entry_signal(prices, strat_type, threshold=30.0)
 
 
-def _simulate(prices: list[float], strat_type: str, threshold: float,
-              stop_pct: float, target_pct: float, *,
-              strategy: dict | None = None,
-              pair: str = "EUR/USD",
-              candle_ts: list[float] | None = None,
-              ensemble_consensus: str | list[str] | None = None,
-              relax_adx: bool = False,
-              apply_cooldown: bool = True) -> dict:
+def _simulate(
+    prices: list[float],
+    strat_type: str,
+    threshold: float,
+    stop_pct: float,
+    target_pct: float,
+    *,
+    strategy: dict | None = None,
+    pair: str = "EUR/USD",
+    candle_ts: list[float] | None = None,
+    ensemble_consensus: str | list[str] | None = None,
+    relax_adx: bool = False,
+    apply_cooldown: bool = True,
+) -> dict:
     """Backtest entries with live BB/RSI/ADX + session/ensemble/cooldown gates.
 
     Stop-loss exits arm a re-entry cooldown (L15/L23). Target/flat exits do not
@@ -266,9 +274,14 @@ def _simulate(prices: list[float], strat_type: str, threshold: float,
     if len(prices) < 10:
         return {"pnl": 0.0, "wr": 0.0, "entries": 0, "max_dd": 0.0}
     raw = _entry_signal(
-        prices, strat_type, threshold,
-        strategy=strategy, pair=pair, candle_ts=candle_ts,
-        ensemble_consensus=ensemble_consensus, relax_adx=relax_adx,
+        prices,
+        strat_type,
+        threshold,
+        strategy=strategy,
+        pair=pair,
+        candle_ts=candle_ts,
+        ensemble_consensus=ensemble_consensus,
+        relax_adx=relax_adx,
     )
     p = np.asarray(prices, dtype=float)
     n = len(p)
@@ -297,8 +310,12 @@ def _simulate(prices: list[float], strat_type: str, threshold: float,
     wins = int(np.count_nonzero(tm > 0))
     entries = int(tm.size)
     wr = wins / entries * 100.0
-    return {"pnl": round(float(cum[-1]), 4), "wr": round(wr, 1),
-            "entries": entries, "max_dd": round(float(dd.max()), 4)}
+    return {
+        "pnl": round(float(cum[-1]), 4),
+        "wr": round(wr, 1),
+        "entries": entries,
+        "max_dd": round(float(dd.max()), 4),
+    }
 
 
 def _strategy_signal(
@@ -313,8 +330,12 @@ def _strategy_signal(
 ) -> list[float]:
     """Phase-0 directional signal (live entry core + session/ensemble)."""
     return _entry_signal(
-        prices, strat_type, threshold,
-        strategy=strategy, pair=pair, candle_ts=candle_ts,
+        prices,
+        strat_type,
+        threshold,
+        strategy=strategy,
+        pair=pair,
+        candle_ts=candle_ts,
         ensemble_consensus=ensemble_consensus,
     )
 
@@ -325,19 +346,25 @@ def _classify_regime(prices: list[float]) -> str:
     rets = [(prices[i] / prices[i - 1] - 1) for i in range(1, len(prices))]
     vol = math.sqrt(sum(r * r for r in rets) / len(rets)) * math.sqrt(24)
     trend = (prices[-1] / prices[0] - 1) * 100.0
-    if vol > 0.4:                      # [GUARD L53] crisis = high realized vol
+    if vol > 0.4:  # [GUARD L53] crisis = high realized vol
         return "crisis"
     if abs(trend) < 1.0:
         return "range"
     return "trend"
 
 
-def _crisis_backtest(prices: list[float], strat_type: str, threshold: float,
-                     stop_pct: float, target_pct: float, *,
-                     strategy: dict | None = None,
-                     pair: str = "EUR/USD",
-                     candle_ts: list[float] | None = None,
-                     ensemble_consensus: str | list[str] | None = None) -> dict:
+def _crisis_backtest(
+    prices: list[float],
+    strat_type: str,
+    threshold: float,
+    stop_pct: float,
+    target_pct: float,
+    *,
+    strategy: dict | None = None,
+    pair: str = "EUR/USD",
+    candle_ts: list[float] | None = None,
+    ensemble_consensus: str | list[str] | None = None,
+) -> dict:
     """Crisis stress: a change must survive a high-vol drawdown regime.
 
     Uses the same BB/RSI + session/ensemble entry triggers as live, but relaxes
@@ -347,16 +374,25 @@ def _crisis_backtest(prices: list[float], strat_type: str, threshold: float,
     if _classify_regime(prices) != "crisis":
         return {"approved": True, "reason": "not a crisis window"}
     res = _simulate(
-        prices, strat_type, threshold, stop_pct, target_pct,
-        strategy=strategy, pair=pair, candle_ts=candle_ts,
-        ensemble_consensus=ensemble_consensus, relax_adx=True,
+        prices,
+        strat_type,
+        threshold,
+        stop_pct,
+        target_pct,
+        strategy=strategy,
+        pair=pair,
+        candle_ts=candle_ts,
+        ensemble_consensus=ensemble_consensus,
+        relax_adx=True,
         apply_cooldown=False,  # stress the stop itself, not re-entry spacing
     )
     approved = res["max_dd"] <= CRISIS_DD_LIMIT
-    return {"approved": approved,
-            "reason": f"crisis DD {res['max_dd']:.3f} <= {CRISIS_DD_LIMIT}"
-                      if approved else
-                      f"crisis DD {res['max_dd']:.3f} > {CRISIS_DD_LIMIT}"}
+    return {
+        "approved": approved,
+        "reason": f"crisis DD {res['max_dd']:.3f} <= {CRISIS_DD_LIMIT}"
+        if approved
+        else f"crisis DD {res['max_dd']:.3f} > {CRISIS_DD_LIMIT}",
+    }
 
 
 def _forward_returns_pct(prices: list[float], horizon: int = 1) -> list[float]:
@@ -364,14 +400,12 @@ def _forward_returns_pct(prices: list[float], horizon: int = 1) -> list[float]:
     h = max(1, int(horizon))
     if len(prices) <= h:
         return []
-    return [
-        ((prices[i + h] / prices[i]) - 1.0) * 100.0
-        for i in range(len(prices) - h)
-    ]
+    return [((prices[i + h] / prices[i]) - 1.0) * 100.0 for i in range(len(prices) - h)]
 
 
-def _permutation_pvalue(signal: list[float], prices: list[float],
-                        horizon: int = 1, n_perm: int = 200, seed: int = 0):
+def _permutation_pvalue(
+    signal: list[float], prices: list[float], horizon: int = 1, n_perm: int = 200, seed: int = 0
+):
     """Permutation null-test for a candidate's OOS correlation.
 
     Shuffles the forward-return order n_perm times (signal fixed), recomputes
@@ -385,7 +419,7 @@ def _permutation_pvalue(signal: list[float], prices: list[float],
     forward = _forward_returns_pct(prices, horizon)
     if len(forward) < 20:
         return 1.0, 0.0, 0.0
-    sig = signal[:len(forward)]
+    sig = signal[: len(forward)]
     if len(sig) < 20:
         return 1.0, 0.0, 0.0
     n = len(sig)
@@ -419,8 +453,7 @@ def _permutation_pvalue(signal: list[float], prices: list[float],
     return round(p, 4), round(real_corr, 4), round(null_mean, 4)
 
 
-def phase0_corr(signal: list[float], prices: list[float],
-                horizon: int = 1) -> float:
+def phase0_corr(signal: list[float], prices: list[float], horizon: int = 1) -> float:
     """OOS correlation of the candidate signal vs forward returns (Phase 0 gate).
 
     ``horizon`` is the invent forward horizon in candles (default 1 = next bar).
@@ -430,7 +463,7 @@ def phase0_corr(signal: list[float], prices: list[float],
     forward = _forward_returns_pct(prices, horizon)
     if len(forward) < 20:
         return 0.0
-    sig = signal[:len(forward)]
+    sig = signal[: len(forward)]
     n = len(sig)
     ms = sum(sig) / n
     mr = sum(forward) / n
@@ -461,8 +494,12 @@ def _kb_hit(pair: str, param: str, old_val, new_val) -> dict | None:
             if not line.strip():
                 continue
             rec = json.loads(line)
-            if (rec.get("pair") == pair and rec.get("param") == param
-                    and rec.get("old") == old_val and rec.get("new") == new_val):
+            if (
+                rec.get("pair") == pair
+                and rec.get("param") == param
+                and rec.get("old") == old_val
+                and rec.get("new") == new_val
+            ):
                 return rec
     except (OSError, json.JSONDecodeError):
         pass
@@ -474,11 +511,20 @@ def _kb_record(pair: str, param: str, old_val, new_val, approved: bool, reason: 
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with open(path, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps({
-                "pair": pair, "param": param, "old": old_val, "new": new_val,
-                "approved": approved, "reason": reason,
-                "ts": __import__("time").time(),
-            }) + "\n")
+            fh.write(
+                json.dumps(
+                    {
+                        "pair": pair,
+                        "param": param,
+                        "old": old_val,
+                        "new": new_val,
+                        "approved": approved,
+                        "reason": reason,
+                        "ts": __import__("time").time(),
+                    }
+                )
+                + "\n"
+            )
     except OSError:
         pass
 
@@ -529,8 +575,12 @@ def backtest_with_history(
     # KB short-circuit: a previously-rejected proposal is not re-run.
     cached = _kb_hit(pair, param, old_val, new_val)
     if cached is not None and not cached.get("approved", False):
-        return {"approved": False, "reason": f"KB hit (prior rejection): {cached['reason']}",
-                "phases": {}, "kb_hit": True}
+        return {
+            "approved": False,
+            "reason": f"KB hit (prior rejection): {cached['reason']}",
+            "phases": {},
+            "kb_hit": True,
+        }
 
     if strategy is None:
         strategy = load_strategy_for_pair(pair, bot)
@@ -564,7 +614,9 @@ def backtest_with_history(
         return verdict
 
     sim_kw = dict(
-        strategy=strategy, pair=pair, candle_ts=candle_ts,
+        strategy=strategy,
+        pair=pair,
+        candle_ts=candle_ts,
         ensemble_consensus=ensemble_consensus,
     )
 
@@ -582,29 +634,53 @@ def backtest_with_history(
     elif isinstance(ensemble_consensus, str):
         oos_ens = ensemble_consensus
     signal = _strategy_signal(
-        prices, strat_type, threshold, strategy=strategy, pair=pair,
-        candle_ts=candle_ts, ensemble_consensus=ensemble_consensus,
+        prices,
+        strat_type,
+        threshold,
+        strategy=strategy,
+        pair=pair,
+        candle_ts=candle_ts,
+        ensemble_consensus=ensemble_consensus,
     )
     oos_signal = _strategy_signal(
-        oos_prices, strat_type, threshold, strategy=strategy, pair=pair,
-        candle_ts=oos_ts, ensemble_consensus=oos_ens,
+        oos_prices,
+        strat_type,
+        threshold,
+        strategy=strategy,
+        pair=pair,
+        candle_ts=oos_ts,
+        ensemble_consensus=oos_ens,
     )
     oos_corr = phase0_corr(oos_signal, oos_prices)
     oos_kw = dict(
-        strategy=strategy, pair=pair, candle_ts=oos_ts,
+        strategy=strategy,
+        pair=pair,
+        candle_ts=oos_ts,
         ensemble_consensus=oos_ens,
     )
     oos_old = _simulate(
-        oos_prices, strat_type, threshold, old_stop, old_target, **oos_kw,
+        oos_prices,
+        strat_type,
+        threshold,
+        old_stop,
+        old_target,
+        **oos_kw,
     )
     oos_new = _simulate(
-        oos_prices, strat_type, threshold, new_stop, new_target, **oos_kw,
+        oos_prices,
+        strat_type,
+        threshold,
+        new_stop,
+        new_target,
+        **oos_kw,
     )
     oos_delta = oos_new["pnl"] - oos_old["pnl"]
     oos_approved = oos_corr >= OOS_CORR_MIN and oos_delta > OOS_DELTA_OK
     phases["phase0_oos"] = {
-        "corr": oos_corr, "delta": round(oos_delta, 4),
-        "corr_ok": oos_corr >= OOS_CORR_MIN, "delta_ok": oos_delta > OOS_DELTA_OK,
+        "corr": oos_corr,
+        "delta": round(oos_delta, 4),
+        "corr_ok": oos_corr >= OOS_CORR_MIN,
+        "delta_ok": oos_delta > OOS_DELTA_OK,
     }
     if not oos_approved:
         reasons.append(f"OOS FAIL: corr={oos_corr} (>= {OOS_CORR_MIN}) delta={oos_delta} (>-0.2)")
@@ -620,7 +696,12 @@ def backtest_with_history(
 
     # Phase 1.5 — crisis stress
     crisis = _crisis_backtest(
-        prices, strat_type, threshold, new_stop, new_target, **sim_kw,
+        prices,
+        strat_type,
+        threshold,
+        new_stop,
+        new_target,
+        **sim_kw,
     )
     phases["phase1_5_crisis"] = crisis
     if not crisis.get("approved", True) and delta < CRISIS_DELTA_OK:
@@ -630,7 +711,10 @@ def backtest_with_history(
     p_val, real_corr, null_mean = _permutation_pvalue(signal, prices)
     perm_ok = p_val < 0.05
     phases["phase2_perm"] = {
-        "p": p_val, "real_corr": real_corr, "null_mean": null_mean, "ok": perm_ok,
+        "p": p_val,
+        "real_corr": real_corr,
+        "null_mean": null_mean,
+        "ok": perm_ok,
     }
 
     # Phase 3 — alpha decomposition (luck vs skill estimate)
@@ -662,13 +746,22 @@ def backtest_with_history(
 
     verdict = {
         "approved": approved,
-        "param": param, "old": old_val, "new": new_val,
-        "old_pnl": old_res["pnl"], "new_pnl": new_res["pnl"],
-        "old_wr": old_res["wr"], "new_wr": new_res["wr"],
-        "entries": old_res["entries"], "alpha": alpha, "regime": regime,
-        "oos_corr": oos_corr, "oos_delta": round(oos_delta, 4),
-        "p_value": p_val, "reason": " | ".join(reasons),
-        "phases": phases, "kb_hit": False,
+        "param": param,
+        "old": old_val,
+        "new": new_val,
+        "old_pnl": old_res["pnl"],
+        "new_pnl": new_res["pnl"],
+        "old_wr": old_res["wr"],
+        "new_wr": new_res["wr"],
+        "entries": old_res["entries"],
+        "alpha": alpha,
+        "regime": regime,
+        "oos_corr": oos_corr,
+        "oos_delta": round(oos_delta, 4),
+        "p_value": p_val,
+        "reason": " | ".join(reasons),
+        "phases": phases,
+        "kb_hit": False,
     }
     _kb_record(pair, param, old_val, new_val, approved, verdict["reason"])
     return verdict
@@ -678,19 +771,21 @@ def backtest_with_history(
 def _gp_tree_from_expr(expr) -> object:
     """Accept a raw genetic tree or a GP infix string; return an eval tree."""
     from hermes_core.engines.genetic import FEATURES
+
     if isinstance(expr, tuple):
         return expr
     if isinstance(expr, str) and expr in FEATURES:
         return expr
     if isinstance(expr, str):
         from hermes_core.engines.entry import _gp_parse
+
         return _gp_parse(expr)
     raise TypeError(f"unsupported GP expr type: {type(expr)!r}")
 
 
-def _simulate_gp(prices: list[float], signal: list[float],
-                 stop_pct: float, target_pct: float,
-                 horizon: int = 1) -> dict:
+def _simulate_gp(
+    prices: list[float], signal: list[float], stop_pct: float, target_pct: float, horizon: int = 1
+) -> dict:
     """Trade simulation for a GP continuous signal.
 
     Holds for ``horizon`` candles (invent forward horizon). Direction follows
@@ -707,7 +802,7 @@ def _simulate_gp(prices: list[float], signal: list[float],
     sig = np.asarray(signal[:n], dtype=float)
     p = np.asarray(prices[: n + h], dtype=float)
     mu = float(np.mean(sig))
-    move = (p[h: n + h] - p[:n]) / np.maximum(p[:n], 1e-12) * 100.0
+    move = (p[h : n + h] - p[:n]) / np.maximum(p[:n], 1e-12) * 100.0
     # Signed corr vs invent-horizon forward returns → trade polarity.
     fwd = np.asarray(_forward_returns_pct(list(p[: n + h]), h)[:n], dtype=float)
     m = min(len(sig), len(fwd), len(move))
@@ -740,24 +835,27 @@ def _simulate_gp(prices: list[float], signal: list[float],
     }
 
 
-def _crisis_backtest_gp(prices: list[float], signal: list[float],
-                        stop_pct: float, target_pct: float,
-                        horizon: int = 1) -> dict:
+def _crisis_backtest_gp(
+    prices: list[float], signal: list[float], stop_pct: float, target_pct: float, horizon: int = 1
+) -> dict:
     if _classify_regime(prices) != "crisis":
         return {"approved": True, "reason": "not a crisis window"}
     res = _simulate_gp(prices, signal, stop_pct, target_pct, horizon=horizon)
     approved = res["max_dd"] <= CRISIS_DD_LIMIT
     return {
         "approved": approved,
-        "reason": (f"crisis DD {res['max_dd']:.3f} <= {CRISIS_DD_LIMIT}"
-                   if approved else
-                   f"crisis DD {res['max_dd']:.3f} > {CRISIS_DD_LIMIT}"),
+        "reason": (
+            f"crisis DD {res['max_dd']:.3f} <= {CRISIS_DD_LIMIT}"
+            if approved
+            else f"crisis DD {res['max_dd']:.3f} > {CRISIS_DD_LIMIT}"
+        ),
     }
 
 
 def _align_gp_signal(tree, prices: list[float]) -> list[float]:
     """Evaluate GP tree to a bar-aligned signal series (len ~= len(prices)-lookback)."""
     from hermes_core.engines.genetic import _signal_for_expr
+
     return _signal_for_expr(tree, prices)
 
 
@@ -798,7 +896,9 @@ def backtest_gp_indicator(
         return {
             "approved": False,
             "reason": f"KB hit (prior rejection): {cached['reason']}",
-            "phases": {}, "kb_hit": True, "expr": expr_key,
+            "phases": {},
+            "kb_hit": True,
+            "expr": expr_key,
         }
 
     if strategy is None:
@@ -813,8 +913,10 @@ def backtest_gp_indicator(
         prices = fetch_prices(pair)
     if not prices or len(prices) < 60:
         verdict = {
-            "approved": False, "reason": "insufficient price history",
-            "phases": {}, "expr": expr_key,
+            "approved": False,
+            "reason": "insufficient price history",
+            "phases": {},
+            "expr": expr_key,
         }
         _kb_record(pair, kb_param, "", expr_key, False, verdict["reason"])
         return verdict
@@ -824,16 +926,20 @@ def backtest_gp_indicator(
         signal = _align_gp_signal(tree, prices)
     except Exception as exc:  # noqa: BLE001
         verdict = {
-            "approved": False, "reason": f"expr eval failed: {exc}",
-            "phases": {}, "expr": expr_key,
+            "approved": False,
+            "reason": f"expr eval failed: {exc}",
+            "phases": {},
+            "expr": expr_key,
         }
         _kb_record(pair, kb_param, "", expr_key, False, verdict["reason"])
         return verdict
 
     if len(signal) < 20:
         verdict = {
-            "approved": False, "reason": "GP signal too short",
-            "phases": {}, "expr": expr_key,
+            "approved": False,
+            "reason": "GP signal too short",
+            "phases": {},
+            "expr": expr_key,
         }
         _kb_record(pair, kb_param, "", expr_key, False, verdict["reason"])
         return verdict
@@ -859,7 +965,7 @@ def backtest_gp_indicator(
     try:
         oos_signal_raw = _align_gp_signal(tree, oos_prices)
     except Exception:  # noqa: BLE001
-        oos_sig = bar_signal[max(0, oos_idx - 1):] if oos_idx > 0 else bar_signal
+        oos_sig = bar_signal[max(0, oos_idx - 1) :] if oos_idx > 0 else bar_signal
         oos_signal_raw = oos_sig
     oos_corr = phase0_corr(
         oos_signal_raw if len(oos_signal_raw) >= 20 else bar_signal,
@@ -867,23 +973,32 @@ def backtest_gp_indicator(
         horizon=h,
     )
     oos_res = _simulate_gp(
-        oos_prices, oos_signal_raw, stop_pct, target_pct, horizon=h,
+        oos_prices,
+        oos_signal_raw,
+        stop_pct,
+        target_pct,
+        horizon=h,
     )
     oos_delta = oos_res["pnl"] - 0.0
     oos_approved = oos_corr >= OOS_CORR_MIN and oos_delta > OOS_DELTA_OK
     phases["phase0_oos"] = {
-        "corr": oos_corr, "delta": round(oos_delta, 4),
-        "corr_ok": oos_corr >= OOS_CORR_MIN, "delta_ok": oos_delta > OOS_DELTA_OK,
-        "horizon": h, "interval": iv,
+        "corr": oos_corr,
+        "delta": round(oos_delta, 4),
+        "corr_ok": oos_corr >= OOS_CORR_MIN,
+        "delta_ok": oos_delta > OOS_DELTA_OK,
+        "horizon": h,
+        "interval": iv,
     }
     if not oos_approved:
-        reasons.append(
-            f"OOS FAIL: corr={oos_corr} (>= {OOS_CORR_MIN}) delta={oos_delta} (>-0.2)"
-        )
+        reasons.append(f"OOS FAIL: corr={oos_corr} (>= {OOS_CORR_MIN}) delta={oos_delta} (>-0.2)")
 
     # Phase 1 — historical vs flat baseline
     full_res = _simulate_gp(
-        aligned_prices, signal, stop_pct, target_pct, horizon=h,
+        aligned_prices,
+        signal,
+        stop_pct,
+        target_pct,
+        horizon=h,
     )
     delta = full_res["pnl"] - 0.0
     hist_ok = delta > HIST_DELTA_OK
@@ -893,7 +1008,11 @@ def backtest_gp_indicator(
 
     # Phase 1.5 — crisis
     crisis = _crisis_backtest_gp(
-        aligned_prices, signal, stop_pct, target_pct, horizon=h,
+        aligned_prices,
+        signal,
+        stop_pct,
+        target_pct,
+        horizon=h,
     )
     phases["phase1_5_crisis"] = crisis
     if not crisis.get("approved", True) and delta < CRISIS_DELTA_OK:
@@ -901,11 +1020,16 @@ def backtest_gp_indicator(
 
     # Phase 2 — permutation (same horizon as invent)
     p_val, real_corr, null_mean = _permutation_pvalue(
-        bar_signal, aligned_prices, horizon=h,
+        bar_signal,
+        aligned_prices,
+        horizon=h,
     )
     perm_ok = p_val < 0.05
     phases["phase2_perm"] = {
-        "p": p_val, "real_corr": real_corr, "null_mean": null_mean, "ok": perm_ok,
+        "p": p_val,
+        "real_corr": real_corr,
+        "null_mean": null_mean,
+        "ok": perm_ok,
         "horizon": h,
     }
     if not perm_ok:
@@ -924,6 +1048,7 @@ def backtest_gp_indicator(
     if existing_signals:
         try:
             from hermes_core.engines.genetic import redundancy_check
+
             if redundancy_check(signal, existing_signals) == "REJECTED":
                 redundant = True
         except Exception:  # noqa: BLE001
@@ -948,15 +1073,23 @@ def backtest_gp_indicator(
 
     verdict = {
         "approved": approved,
-        "param": kb_param, "old": "", "new": expr_key,
+        "param": kb_param,
+        "old": "",
+        "new": expr_key,
         "expr": expr_key,
-        "pnl": full_res["pnl"], "wr": full_res["wr"],
-        "entries": full_res["entries"], "alpha": alpha, "regime": regime,
-        "oos_corr": oos_corr, "oos_delta": round(oos_delta, 4),
-        "p_value": p_val, "reason": " | ".join(reasons),
-        "phases": phases, "kb_hit": False,
-        "horizon": h, "interval": iv,
+        "pnl": full_res["pnl"],
+        "wr": full_res["wr"],
+        "entries": full_res["entries"],
+        "alpha": alpha,
+        "regime": regime,
+        "oos_corr": oos_corr,
+        "oos_delta": round(oos_delta, 4),
+        "p_value": p_val,
+        "reason": " | ".join(reasons),
+        "phases": phases,
+        "kb_hit": False,
+        "horizon": h,
+        "interval": iv,
     }
     _kb_record(pair, kb_param, "", expr_key, approved, verdict["reason"])
     return verdict
-

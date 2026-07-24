@@ -46,8 +46,12 @@ def test_count_oversold():
 
 def test_disabled_passthrough():
     out = apply_mom_range_guard(
-        0.4, enabled=False, entry_type="rsi_momentum",
-        regime="range", oversold_count=1, gp_agree=False,
+        0.4,
+        enabled=False,
+        entry_type="rsi_momentum",
+        regime="range",
+        oversold_count=1,
+        gp_agree=False,
     )
     assert out["mom_guard_action"] == "disabled"
     assert out["size"] == pytest.approx(0.4)
@@ -55,8 +59,12 @@ def test_disabled_passthrough():
 
 def test_non_momentum_passthrough():
     out = apply_mom_range_guard(
-        0.4, enabled=True, entry_type="gp_ensemble",
-        regime="range", oversold_count=1, gp_agree=False,
+        0.4,
+        enabled=True,
+        entry_type="gp_ensemble",
+        regime="range",
+        oversold_count=1,
+        gp_agree=False,
     )
     assert out["mom_guard_action"] == "full"
     assert out["size"] == pytest.approx(0.4)
@@ -64,8 +72,12 @@ def test_non_momentum_passthrough():
 
 def test_range_benches_unconfirmed_momentum():
     out = apply_mom_range_guard(
-        0.4, enabled=True, entry_type="rsi_momentum",
-        regime="range", oversold_count=1, gp_agree=False,
+        0.4,
+        enabled=True,
+        entry_type="rsi_momentum",
+        regime="range",
+        oversold_count=1,
+        gp_agree=False,
     )
     assert out["mom_guard_action"] == "bench"
     assert out["size"] == 0.0
@@ -73,8 +85,12 @@ def test_range_benches_unconfirmed_momentum():
 
 def test_range_allows_dual_metal_confluence():
     out = apply_mom_range_guard(
-        0.4, enabled=True, entry_type="rsi_momentum",
-        regime="range", oversold_count=2, gp_agree=False,
+        0.4,
+        enabled=True,
+        entry_type="rsi_momentum",
+        regime="range",
+        oversold_count=2,
+        gp_agree=False,
     )
     assert out["mom_guard_action"] == "full"
     assert out["mom_guard_confirmed"] is True
@@ -83,16 +99,24 @@ def test_range_allows_dual_metal_confluence():
 
 def test_range_allows_gp_agree():
     out = apply_mom_range_guard(
-        0.4, enabled=True, entry_type="rsi_momentum",
-        regime="range", oversold_count=1, gp_agree=True,
+        0.4,
+        enabled=True,
+        entry_type="rsi_momentum",
+        regime="range",
+        oversold_count=1,
+        gp_agree=True,
     )
     assert out["mom_guard_action"] == "full"
 
 
 def test_trend_unconfirmed_probes():
     out = apply_mom_range_guard(
-        0.4, enabled=True, entry_type="rsi_momentum",
-        regime="trend", oversold_count=1, gp_agree=False,
+        0.4,
+        enabled=True,
+        entry_type="rsi_momentum",
+        regime="trend",
+        oversold_count=1,
+        gp_agree=False,
     )
     assert out["mom_guard_action"] == "probe"
     assert out["size"] == pytest.approx(0.4 * PROBE_SIZE_FRACTION)

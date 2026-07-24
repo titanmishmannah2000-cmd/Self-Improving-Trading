@@ -13,9 +13,9 @@ from __future__ import annotations
 from hermes_core.env import get_env
 
 # Score blend weights (sum = 1.0)
-W_EDGE = 0.45      # Bayesian p or raw WR
-W_QUALITY = 0.35   # Signal.quality 0..1
-W_EXPERT = 0.20    # soft expert weight 0..1 (1.0 if soft weights off)
+W_EDGE = 0.45  # Bayesian p or raw WR
+W_QUALITY = 0.35  # Signal.quality 0..1
+W_EXPERT = 0.20  # soft expert weight 0..1 (1.0 if soft weights off)
 
 
 def entry_ranking_enabled() -> bool:
@@ -103,8 +103,11 @@ def rank_candidates(candidates: list[dict]) -> dict:
     return {
         "winner": winner,
         "ranked": [
-            {"entry_type": c.get("entry_type"), "score": c.get("score"),
-             "components": c.get("components")}
+            {
+                "entry_type": c.get("entry_type"),
+                "score": c.get("score"),
+                "components": c.get("components"),
+            }
             for c in ranked
         ],
         "reason": reason,

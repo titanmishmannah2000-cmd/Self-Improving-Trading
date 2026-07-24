@@ -41,9 +41,9 @@ REENTRY_COOLDOWN_CYCLES = 30  # L15 / L23
 
 @dataclass
 class Signal:
-    type: str                 # "mean_reversion" | "rsi_momentum"
-    quality: float            # 0..1 composite quality score
-    size: float               # position size fraction (from strategy)
+    type: str  # "mean_reversion" | "rsi_momentum"
+    quality: float  # 0..1 composite quality score
+    size: float  # position size fraction (from strategy)
     pair: str = ""
     meta: dict = field(default_factory=dict)
 
@@ -55,11 +55,7 @@ def _session_filter(strategy: dict) -> str:
     older tests/fixtures use the top-level key. Accept either.
     """
     entry = strategy.get("entry") or {}
-    return (
-        strategy.get("session_filter")
-        or entry.get("session_filter")
-        or "24h"
-    )
+    return strategy.get("session_filter") or entry.get("session_filter") or "24h"
 
 
 def _entry_rsi_threshold(strategy: dict) -> float:
@@ -160,9 +156,15 @@ def evaluate_entry(
     directly for determinism.
     """
     sig, _reason = evaluate_entry_detailed(
-        prices, strategy, pair=pair, context=context,
-        ensemble_consensus=ensemble_consensus, oversold_pairs=oversold_pairs,
-        vol_above=vol_above, reentry=reentry, current_cycle=current_cycle,
+        prices,
+        strategy,
+        pair=pair,
+        context=context,
+        ensemble_consensus=ensemble_consensus,
+        oversold_pairs=oversold_pairs,
+        vol_above=vol_above,
+        reentry=reentry,
+        current_cycle=current_cycle,
         session_token=session_token,
     )
     return sig
@@ -222,7 +224,10 @@ def evaluate_entry_detailed(
             return None, "rsi:adx_not_calm"
         quality = (1 - rsi / 100.0) * 0.6 + 0.4
         return Signal(
-            "mean_reversion", round(quality, 4), size, pair,
+            "mean_reversion",
+            round(quality, 4),
+            size,
+            pair,
             {
                 "rsi": rsi,
                 "adx": adx,
@@ -243,7 +248,10 @@ def evaluate_entry_detailed(
             return None, "vol"
         quality = 0.5 + min(oversold_pairs, 5) * 0.1
         return Signal(
-            "rsi_momentum", round(quality, 4), size, pair,
+            "rsi_momentum",
+            round(quality, 4),
+            size,
+            pair,
             {
                 "rsi": rsi,
                 "oversold_pairs": oversold_pairs,
@@ -267,8 +275,14 @@ import re  # noqa: E402  (local import; entry.py is otherwise stdlib-only)
 import time as _time  # noqa: E402
 
 from hermes_core.engines.genetic import (  # noqa: E402
-    CONSTANTS, FEATURES, ROLLING_OPS, UNARY_OPS, _eval_expr, _feature,
-    indicator_expr, is_backtest_approved, load_discovered_indicators,
+    CONSTANTS,
+    FEATURES,
+    ROLLING_OPS,
+    UNARY_OPS,
+    _eval_expr,
+    indicator_expr,
+    is_backtest_approved,
+    load_discovered_indicators,
     prefer_niche_diverse,
 )
 
@@ -300,8 +314,11 @@ def gp_invent_prices(
         if cached and (now - cached[0]) < _GP_INVENT_TTL_S:
             return cached[1]
         from hermes_core.adapters.price import seed_history_interval_sync
+
         hist = seed_history_interval_sync(
-            pair, interval=str(interval), period=str(period),
+            pair,
+            interval=str(interval),
+            period=str(period),
             max_candles=int(max_candles),
         )
         px = [float(c["price"]) for c in (hist or []) if c.get("price") is not None]
@@ -413,17 +430,20 @@ def _gp_eval_last(expr_str: str, prices: list[float]) -> float:
         return 0.0
 
 
-def gp_ensemble_signal(pair: str, prices: list[float],
-                       strategy: dict | None = None,
-                       consensus_threshold: float = 0.2,
-                       min_active: int = 2,
-                       z_threshold: float = 0.5,
-                       daily_prices: list[float] | None = None,
-                       promote: bool = False,
-                       exiled_ids: set[str] | frozenset | None = None,
-                       *,
-                       invent_interval: str | None = None,
-                       invent_horizon: int | None = None) -> Signal | None:
+def gp_ensemble_signal(
+    pair: str,
+    prices: list[float],
+    strategy: dict | None = None,
+    consensus_threshold: float = 0.2,
+    min_active: int = 2,
+    z_threshold: float = 0.5,
+    daily_prices: list[float] | None = None,
+    promote: bool = False,
+    exiled_ids: set[str] | frozenset | None = None,
+    *,
+    invent_interval: str | None = None,
+    invent_horizon: int | None = None,
+) -> Signal | None:
     """GP-ensemble vote of discovered indicators for `pair`.
 
     Each indicator's expression is evaluated on the invent-regime series (the
@@ -476,7 +496,9 @@ def gp_ensemble_signal(pair: str, prices: list[float],
         # Same-type only: candle TF + forward horizon must match invent profile.
         # Untagged / wrong-regime formulas are skipped loudly (no silent vote).
         if not indicator_matches_regime(
-            ind, interval=req_interval, horizon=req_horizon,
+            ind,
+            interval=req_interval,
+            horizon=req_horizon,
         ):
             regime_miss += 1
             continue
@@ -489,8 +511,9 @@ def gp_ensemble_signal(pair: str, prices: list[float],
         if not is_backtest_approved(ind):
             continue
         try:
-            series = [_gp_eval_last(expr, eval_prices[: i + 1])
-                      for i in range(49, len(eval_prices))]
+            series = [
+                _gp_eval_last(expr, eval_prices[: i + 1]) for i in range(49, len(eval_prices))
+            ]
         except Exception:  # noqa: BLE001
             continue
         if len(series) < 20:
@@ -539,16 +562,15 @@ def gp_ensemble_signal(pair: str, prices: list[float],
         return None
 
     size = (strategy or {}).get("position_size_r", 0.1)
-    consensus = ("bullish" if strength > 0 else "bearish")
+    consensus = "bullish" if strength > 0 else "bearish"
     if abs(strength) > 0.6:
         consensus = "strong_" + consensus
-    eval_on = (
-        req_interval
-        if (daily_prices and len(daily_prices) >= 50)
-        else "live"
-    )
+    eval_on = req_interval if (daily_prices and len(daily_prices) >= 50) else "live"
     return Signal(
-        "gp_ensemble", round(abs(strength), 4), size, pair,
+        "gp_ensemble",
+        round(abs(strength), 4),
+        size,
+        pair,
         {
             "shadow": not promote,
             "gp_strength": round(strength, 4),
@@ -566,8 +588,7 @@ def gp_ensemble_signal(pair: str, prices: list[float],
     )
 
 
-def simulate_gp_paper_pnl(pair: str, prices: list[float],
-                          horizon: int = 1) -> dict:
+def simulate_gp_paper_pnl(pair: str, prices: list[float], horizon: int = 1) -> dict:
     """Paper-trade simulation of the GP shadow signal over `prices`.
 
     Enters long when the GP consensus is bullish, short when bearish, exits one
@@ -576,8 +597,7 @@ def simulate_gp_paper_pnl(pair: str, prices: list[float],
     Does NOT place real orders.
     """
     if not prices or len(prices) < 60 + horizon:
-        return {"trades": 0, "wins": 0, "losses": 0,
-                "win_rate": 0.0, "total_pnl": 0.0}
+        return {"trades": 0, "wins": 0, "losses": 0, "win_rate": 0.0, "total_pnl": 0.0}
     wins = losses = 0
     pnl = 0.0
     n = 0

@@ -4,6 +4,7 @@ boots and returns 200 against a fresh in-memory SQLite DB.
 
 Run:  pytest backend/tests/test_smoke.py
 """
+
 import os
 import sys
 import tempfile
@@ -17,8 +18,8 @@ os.environ["DB_PATH"] = _DB
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from fastapi.testclient import TestClient  # noqa: E402
 import main  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
 client = TestClient(main.app)
 
@@ -33,33 +34,39 @@ def test_quick_test():
 
 
 # ── Core dashboard endpoints (Live / Activity / Reports) ──────────
-@pytest.mark.parametrize("ep", [
-    "/api/overview",
-    "/api/discovered",
-    "/api/cortex",
-    "/api/heartbeat/forex",
-    "/api/price/forex",
-    "/api/daily-summary",
-    "/api/lifetime-summary",
-    "/api/skip-analysis/forex",
-    "/api/strategy-params/forex",
-    "/api/per-version/forex",
-    "/api/bot/forex/pulse",
-    "/api/alerts",
-    "/api/auth/status",
-])
+@pytest.mark.parametrize(
+    "ep",
+    [
+        "/api/overview",
+        "/api/discovered",
+        "/api/cortex",
+        "/api/heartbeat/forex",
+        "/api/price/forex",
+        "/api/daily-summary",
+        "/api/lifetime-summary",
+        "/api/skip-analysis/forex",
+        "/api/strategy-params/forex",
+        "/api/per-version/forex",
+        "/api/bot/forex/pulse",
+        "/api/alerts",
+        "/api/auth/status",
+    ],
+)
 def test_core_get_endpoints(ep):
     r = client.get(ep)
     assert r.status_code == 200, f"{ep} -> {r.status_code}: {r.text[:200]}"
 
 
 # ── Audit endpoints ───────────────────────────────────────────────
-@pytest.mark.parametrize("ep", [
-    "/api/audit/findings",
-    "/api/audit/summary",
-    "/api/audit/runs",
-    "/api/audit/correlate",
-])
+@pytest.mark.parametrize(
+    "ep",
+    [
+        "/api/audit/findings",
+        "/api/audit/summary",
+        "/api/audit/runs",
+        "/api/audit/correlate",
+    ],
+)
 def test_audit_get_endpoints(ep):
     r = client.get(ep)
     assert r.status_code == 200, f"{ep} -> {r.status_code}: {r.text[:200]}"
@@ -69,8 +76,7 @@ def test_audit_get_endpoints(ep):
 def test_ingest_and_overview_populates():
     payload = {
         "recent_trades": [
-            {"id": "t1", "pair": "EUR/USD", "pnl_pct": 1.1,
-             "exit_reason": "tp", "hold_cycles": 3},
+            {"id": "t1", "pair": "EUR/USD", "pnl_pct": 1.1, "exit_reason": "tp", "hold_cycles": 3},
         ],
         "recent_skips": [{"pair": "AUD/USD", "reason_skipped": "no_setup"}],
         "recent_hypotheses": [],
@@ -95,5 +101,5 @@ def test_auth_setup_and_login():
     pw = "smoketest123"
     s = client.post("/api/auth/setup", json={"password": pw, "confirm": pw})
     assert s.status_code == 200 and "token" in s.json()
-    l = client.post("/api/auth/login", json={"password": pw})
-    assert l.status_code == 200 and "token" in l.json()
+    login = client.post("/api/auth/login", json={"password": pw})
+    assert login.status_code == 200 and "token" in login.json()

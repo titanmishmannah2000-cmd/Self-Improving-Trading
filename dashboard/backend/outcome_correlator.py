@@ -14,19 +14,13 @@ import json
 import os
 import sqlite3
 import sys
-from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Optional
 
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
-from findings_store import _get_conn, list_findings, get_finding
+from findings_store import get_finding, list_findings
 
-DASHBOARD_DB_PATH = Path(
-    os.getenv("DASHBOARD_DB")
-    or os.getenv("DB_PATH")
-    or "/data/hermes.db"
-)
+DASHBOARD_DB_PATH = Path(os.getenv("DASHBOARD_DB") or os.getenv("DB_PATH") or "/data/hermes.db")
 
 
 # ── Keyword → Finding mapping ─────────────────────────────────────────────
@@ -50,7 +44,7 @@ PATTERN_MAP = {
 }
 
 
-def get_dashboard_conn() -> Optional[sqlite3.Connection]:
+def get_dashboard_conn() -> sqlite3.Connection | None:
     if not DASHBOARD_DB_PATH.exists():
         return None
     conn = sqlite3.connect(str(DASHBOARD_DB_PATH))
@@ -139,9 +133,13 @@ def correlate_finding(finding: dict) -> dict:
                 ]
                 result["confidence"] = min(90, 50 + len(rows) * 5)
                 if status in ("pending", "approved"):
-                    result["note"] = f"Unresolved finding — {len(rows)} related trades found, {total_pnl:+.2f}% total PnL impact"
+                    result["note"] = (
+                        f"Unresolved finding — {len(rows)} related trades found, {total_pnl:+.2f}% total PnL impact"
+                    )
                 elif status == "applied":
-                    result["note"] = f"Fix applied — {len(rows)} historical trades linked to this pattern"
+                    result["note"] = (
+                        f"Fix applied — {len(rows)} historical trades linked to this pattern"
+                    )
             else:
                 result["note"] = f"No trades found matching keywords: {keywords}"
                 result["confidence"] = 30
@@ -153,7 +151,7 @@ def correlate_finding(finding: dict) -> dict:
     return result
 
 
-def correlate_all(domain: Optional[str] = None, verbose: bool = True) -> list[dict]:
+def correlate_all(domain: str | None = None, verbose: bool = True) -> list[dict]:
     """Correlate all open findings (or by domain) with trade impact."""
     findings = list_findings(
         status=None,  # all statuses
@@ -174,15 +172,20 @@ def correlate_all(domain: Optional[str] = None, verbose: bool = True) -> list[di
         r = correlate_finding(f)
         results.append(r)
         if verbose and r["potential_trades_found"] > 0:
-            sev_icon = "🔴" if r["severity"] == "CRITICAL" else "🟡" if r["severity"] == "HIGH" else "ℹ️"
+            sev_icon = (
+                "🔴" if r["severity"] == "CRITICAL" else "🟡" if r["severity"] == "HIGH" else "ℹ️"
+            )
             print(f"  {sev_icon} [{r['domain']:>22}] {r['description'][:70]}")
-            print(f"      → {r['potential_trades_found']} trades, {r['total_pnl_impact']:+.2f}% PnL, {r['win_rate_impact']}% WR")
+            print(
+                f"      → {r['potential_trades_found']} trades, {r['total_pnl_impact']:+.2f}% PnL, {r['win_rate_impact']}% WR"
+            )
 
     return results
 
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="Outcome Correlator (Layer 5)")
     parser.add_argument("--finding", type=str, help="Correlate a specific finding")
     parser.add_argument("--domain", type=str, help="Filter by domain")

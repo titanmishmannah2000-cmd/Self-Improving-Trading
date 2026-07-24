@@ -61,15 +61,30 @@ class FakeFeed:
             raise TimeoutError("feed timed out")
         if self.mode == "stale":
             # always the same candle_ts -> adapter-style stale None
-            return {"price": 1.1000, "high": 1.1010, "low": 1.0990,
-                    "candle_ts": self.base_ts, "ts": self.calls}
+            return {
+                "price": 1.1000,
+                "high": 1.1010,
+                "low": 1.0990,
+                "candle_ts": self.base_ts,
+                "ts": self.calls,
+            }
         if self.mode == "flat":
-            return {"price": 1.1000, "high": 1.1000, "low": 1.1000,
-                    "candle_ts": self.base_ts + self.calls, "ts": self.calls}
+            return {
+                "price": 1.1000,
+                "high": 1.1000,
+                "low": 1.1000,
+                "candle_ts": self.base_ts + self.calls,
+                "ts": self.calls,
+            }
         # fresh: nudges price so one entry can fill then exit over cycles
         price = 1.1000 + 0.0005 * (self.calls % 7)
-        return {"price": price, "high": price + 0.0002, "low": price - 0.0002,
-                "candle_ts": self.base_ts + self.calls, "ts": self.calls}
+        return {
+            "price": price,
+            "high": price + 0.0002,
+            "low": price - 0.0002,
+            "candle_ts": self.base_ts + self.calls,
+            "ts": self.calls,
+        }
 
 
 def test_heartbeat_keys():
@@ -123,8 +138,7 @@ def test_circuit_breaker():
     # carry the failure count across cycles; after 5 consecutive -> breaker opens
     cf = 0
     for c in range(1, 8):
-        s = run_cycle("forex", c, fetch_fn=feed, now_fn=lambda: 12 * 3600,
-                      consecutive_failures=cf)
+        s = run_cycle("forex", c, fetch_fn=feed, now_fn=lambda: 12 * 3600, consecutive_failures=cf)
         cf = s["consecutive_failures"]
         if cf >= MAX_CONSECUTIVE_FAILURES:
             # [GUARD L24] the breaker helper must open (pause) at the cap
@@ -144,8 +158,14 @@ def test_engine_failure_continues():
 
     feed = FakeFeed("fresh")
     for c in range(1, 12):
-        run_cycle("forex", c, fetch_fn=feed, now_fn=lambda: 12 * 3600,
-                  health_registry=health, chart_context_fn=boom)
+        run_cycle(
+            "forex",
+            c,
+            fetch_fn=feed,
+            now_fn=lambda: 12 * 3600,
+            health_registry=health,
+            chart_context_fn=boom,
+        )
     assert health.get("chart_vision") is False
     # heartbeat still written -> bot still running
     hb = _hb()

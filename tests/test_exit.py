@@ -23,8 +23,13 @@ def trade(entry, **kw):
     the engine reads canonical keys, so we bridge them here to keep the original
     test calls intact.
     """
-    d = {"entry_price": entry, "held_cycles": 0, "breakeven_set": False,
-         "partial_done": False, "partial_enabled": False}
+    d = {
+        "entry_price": entry,
+        "held_cycles": 0,
+        "breakeven_set": False,
+        "partial_done": False,
+        "partial_enabled": False,
+    }
     if "sl" in kw:
         d["stop_loss_pct"] = kw.pop("sl")
     if "tp" in kw:
@@ -150,8 +155,9 @@ def test_breakeven():
 
 
 def test_partial_close():
-    t = trade(1.1000, held_cycles=101, profit_target_pct=3.0,
-              partial_enabled=True, partial_done=False)
+    t = trade(
+        1.1000, held_cycles=101, profit_target_pct=3.0, partial_enabled=True, partial_done=False
+    )
     ex = evaluate_exit(t, 1.1331, None)
     # 50% off at FULL target 3.0% (->1.1330, NOT target/2); stop to breakeven
     assert ex is not None
@@ -185,7 +191,8 @@ def test_no_io_in_exit_engine():
 # --- Hypothesis: exactly one reason, never zero/multiple --------------------
 prices = st.lists(
     st.floats(min_value=1e-3, max_value=1e6, allow_nan=False, allow_infinity=False),
-    min_size=2, max_size=40,
+    min_size=2,
+    max_size=40,
 )
 
 
@@ -204,9 +211,14 @@ def test_exactly_one_reason(entry, price, sl, tp, te, held, partial, pr):
     # Build a valid trade; never pass contradictory state. evaluate_exit must
     # return either None or a single Exit with one reason — never 2 actions.
     t = {
-        "entry_price": entry, "stop_loss_pct": sl, "profit_target_pct": tp,
-        "time_exit_cycles": te, "held_cycles": held,
-        "partial_enabled": partial, "partial_done": False, "breakeven_set": False,
+        "entry_price": entry,
+        "stop_loss_pct": sl,
+        "profit_target_pct": tp,
+        "time_exit_cycles": te,
+        "held_cycles": held,
+        "partial_enabled": partial,
+        "partial_done": False,
+        "breakeven_set": False,
         "unrealised_pct": (price - entry) / entry * 100.0 if entry else 0.0,
         "mfe_giveback_enabled": False,  # isolate classic reasons in property test
     }
@@ -217,8 +229,13 @@ def test_exactly_one_reason(entry, price, sl, tp, te, held, partial, pr):
     assert result is None or isinstance(result, Exit)
     if result is not None:
         assert result.reason in {
-            "stop_loss", "profit_target", "partial_close",
-            "time_exit", "breakeven", "trailing", "mfe_giveback",
+            "stop_loss",
+            "profit_target",
+            "partial_close",
+            "time_exit",
+            "breakeven",
+            "trailing",
+            "mfe_giveback",
         }
         # exactly one action: no reason can also imply another simultaneously
         assert (result.reason == "partial_close") == (result.partial_close_fraction == 0.5)

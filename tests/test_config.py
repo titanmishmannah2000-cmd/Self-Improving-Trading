@@ -94,9 +94,10 @@ def test_valid_strategy_passes_validation():
 def test_strategy_seeds_declare_version():
     """Item 14: every image seed strategy ships with a baseline version."""
     from pathlib import Path
+
     import yaml
+
     root = Path(__file__).resolve().parent.parent / "bots"
     for path in root.glob("*/state/strategies/*.yaml"):
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert data.get("version") is not None, path.name
-

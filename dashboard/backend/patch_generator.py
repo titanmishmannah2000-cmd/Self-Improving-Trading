@@ -11,15 +11,13 @@ Usage:
 
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
 
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
-from findings_store import _get_conn, get_finding, list_findings, update_finding_status, _ts
 from data_collector import BOT_PATHS
+from findings_store import _ts, get_finding, list_findings, update_finding_status
 
 PATCH_DIR = _HERE / "generated_patches"
 PATCH_DIR.mkdir(exist_ok=True)
@@ -60,7 +58,10 @@ def generate_patch(finding_id: str, apply: bool = False) -> dict:
         return {"status": "error", "message": "Finding not found"}
 
     if finding["status"] not in ("approved", "pending"):
-        return {"status": "error", "message": f"Finding is {finding['status']}, need approved or pending"}
+        return {
+            "status": "error",
+            "message": f"Finding is {finding['status']}, need approved or pending",
+        }
 
     description = finding.get("description", "")
     suggested_fix = finding.get("suggested_fix", "")
@@ -94,7 +95,10 @@ def generate_patch(finding_id: str, apply: bool = False) -> dict:
                 break
 
     if not target_file or not target_file.exists():
-        return {"status": "error", "message": f"Could not resolve target file from location: {location}"}
+        return {
+            "status": "error",
+            "message": f"Could not resolve target file from location: {location}",
+        }
 
     # Read current file content
     try:
@@ -114,6 +118,7 @@ def generate_patch(finding_id: str, apply: bool = False) -> dict:
     # Call LLM
     try:
         import httpx
+
         api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         if not api_key:
             # Try loading from .env
@@ -145,7 +150,10 @@ def generate_patch(finding_id: str, apply: bool = False) -> dict:
         )
 
         if response.status_code != 200:
-            return {"status": "error", "message": f"LLM error {response.status_code}: {response.text[:300]}"}
+            return {
+                "status": "error",
+                "message": f"LLM error {response.status_code}: {response.text[:300]}",
+            }
 
         result = response.json()
         content = result["choices"][0]["message"]["content"]
@@ -225,10 +233,13 @@ def generate_all_approved(verbose: bool = True) -> list[dict]:
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="Patch Generator (Layer 7)")
     parser.add_argument("--finding", type=str, help="Generate patch for a finding")
     parser.add_argument("--apply", action="store_true", help="Also mark as applied")
-    parser.add_argument("--all-approved", action="store_true", help="Generate patches for all approved findings")
+    parser.add_argument(
+        "--all-approved", action="store_true", help="Generate patches for all approved findings"
+    )
     args = parser.parse_args()
 
     if args.all_approved:

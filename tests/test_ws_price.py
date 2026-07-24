@@ -82,6 +82,7 @@ class _FakeWS:
 def _fake_connect(frames):
     async def _conn(url, **kw):
         return _FakeWS(frames)
+
     return _conn
 
 
@@ -122,7 +123,8 @@ async def test_stream_buckets_identical_ticks(monkeypatch):
         '{"type": "ticker", "product_id": "BTC-USD", "price": "65000.00"}',
     ]
     monkeypatch.setattr(
-        "hermes_core.adapters.ws_price.websockets.connect", _fake_connect(frames),
+        "hermes_core.adapters.ws_price.websockets.connect",
+        _fake_connect(frames),
     )
     stream = PriceStream(["BTC/USD"], url="wss://fake.test")
     await stream.connect()
@@ -152,6 +154,7 @@ async def test_stale_guard_returns_none(frames, monkeypatch):
 async def test_connect_fail_soft(monkeypatch):
     async def _boom(url, **kw):
         raise OSError("refused")
+
     monkeypatch.setattr("hermes_core.adapters.ws_price.websockets.connect", _boom)
     stream = PriceStream(["EUR/USD"], url="wss://fake.test")
     await stream.connect()  # must not raise
@@ -258,4 +261,3 @@ async def test_on_tick_callback_fires(monkeypatch):
     await asyncio.sleep(0.1)
     assert ticks and ticks[0] == ("BTC/USD", 1.55)
     await stream.aclose()
-

@@ -16,12 +16,12 @@ What it catches:
 import json
 import os
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
-from findings_store import _get_conn, insert_finding, get_latest_run, list_findings, _ts
+from findings_store import get_latest_run, insert_finding, list_findings
 
 DASHBOARD_API_URL = os.environ.get(
     "DASHBOARD_API_URL",
@@ -57,6 +57,7 @@ Rules:
 def get_recent_bad_trades(hours_back: int = 24) -> list[dict]:
     """Fetch trades closed in the last N hours with >2x expected loss."""
     import httpx
+
     bad_trades = []
     try:
         r = httpx.get(f"{DASHBOARD_API_URL}/api/overview", timeout=10)
@@ -70,17 +71,19 @@ def get_recent_bad_trades(hours_back: int = 24) -> list[dict]:
                     continue
                 pnl = t.get("pnl_pct", 0) or 0
                 if pnl < -0.5:  # >0.5% loss threshold
-                    bad_trades.append({
-                        "bot": bot_name,
-                        "id": t.get("id", "?"),
-                        "pair": t.get("pair") or t.get("asset", "?"),
-                        "pnl_pct": round(pnl, 3),
-                        "exit_reason": t.get("exit_reason", "?"),
-                        "entry_ts": t.get("entry_ts", "?"),
-                        "exit_ts": t.get("exit_ts", "?"),
-                        "entry_price": t.get("entry_price", "?"),
-                        "hold_cycles": t.get("hold_cycles", 0),
-                    })
+                    bad_trades.append(
+                        {
+                            "bot": bot_name,
+                            "id": t.get("id", "?"),
+                            "pair": t.get("pair") or t.get("asset", "?"),
+                            "pnl_pct": round(pnl, 3),
+                            "exit_reason": t.get("exit_reason", "?"),
+                            "entry_ts": t.get("entry_ts", "?"),
+                            "exit_ts": t.get("exit_ts", "?"),
+                            "entry_price": t.get("entry_price", "?"),
+                            "hold_cycles": t.get("hold_cycles", 0),
+                        }
+                    )
 
         # Sort by loss size (largest first)
         bad_trades.sort(key=lambda x: x["pnl_pct"])
@@ -94,10 +97,7 @@ def get_recent_bad_trades(hours_back: int = 24) -> list[dict]:
 def check_already_analyzed(trade_id: str) -> bool:
     """Check if this trade was already post-mortem'd to avoid duplicates."""
     existing = list_findings(domain="performance-drift", limit=100)
-    for f in existing:
-        if trade_id in (f.get("location") or ""):
-            return True
-    return False
+    return any(trade_id in (f.get("location") or "") for f in existing)
 
 
 def analyze_trade(trade: dict) -> dict:
@@ -117,6 +117,7 @@ def analyze_trade(trade: dict) -> dict:
 
     try:
         import httpx
+
         api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         if not api_key:
             env_path = _HERE / ".env"
@@ -159,9 +160,9 @@ def analyze_trade(trade: dict) -> dict:
 def run_post_mortem(verbose: bool = True) -> list[dict]:
     """Check for recent bad trades and analyze them."""
     if verbose:
-        print(f"\n{'='*40}")
-        print(f"POST-MORTEM — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
-        print(f"{'='*40}")
+        print(f"\n{'=' * 40}")
+        print(f"POST-MORTEM — {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
+        print(f"{'=' * 40}")
 
     bad_trades = get_recent_bad_trades()
     if not bad_trades:
@@ -182,13 +183,15 @@ def run_post_mortem(verbose: bool = True) -> list[dict]:
             continue
 
         if verbose:
-            print(f"  🔍 {trade['bot']} {trade['pair']}: {trade['pnl_pct']}% ({trade['exit_reason']})")
+            print(
+                f"  🔍 {trade['bot']} {trade['pair']}: {trade['pnl_pct']}% ({trade['exit_reason']})"
+            )
 
         result = analyze_trade(trade)
 
         if not result.get("actionable"):
             if verbose:
-                print(f"     → Normal loss, not actionable")
+                print("     → Normal loss, not actionable")
             continue
 
         finding_data = result.get("finding", {})
@@ -196,7 +199,9 @@ def run_post_mortem(verbose: bool = True) -> list[dict]:
             continue
 
         latest_run = get_latest_run()
-        audit_run_id = latest_run["id"] if latest_run else f"pm-{datetime.now(timezone.utc).strftime('%Y%m%d%H')}"
+        audit_run_id = (
+            latest_run["id"] if latest_run else f"pm-{datetime.now(UTC).strftime('%Y%m%d%H')}"
+        )
 
         finding = insert_finding(
             domain="performance-drift",

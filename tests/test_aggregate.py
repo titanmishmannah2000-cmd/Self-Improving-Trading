@@ -20,25 +20,34 @@ from hermes_core.adapters.aggregate import (
     YfinanceSource,
 )
 
-ALL_PAIRS = ["EUR/USD", "GBP/USD", "GBP/JPY", "AUD/USD",
-             "XAU/USD", "XAG/USD", "BTC/USD", "ETH/USD"]
+ALL_PAIRS = ["EUR/USD", "GBP/USD", "GBP/JPY", "AUD/USD", "XAU/USD", "XAG/USD", "BTC/USD", "ETH/USD"]
 
 
 # ── unit: consensus + fail-soft ───────────────────────────────────────────────
 async def test_frankfurter_fx():
     s = FrankfurterSource()
+
     # monkeypatch its client.get via a fake
     class _R:
-        def __init__(self, pair): self.pair = pair
-        def raise_for_status(self): pass
+        def __init__(self, pair):
+            self.pair = pair
+
+        def raise_for_status(self):
+            pass
+
         def json(self):
             # frankfurter is FX-only; XAU/USD has no rate -> empty
             if "XAU" in self.pair or "XAG" in self.pair:
                 return {"rates": {}}
             return {"rates": {"USD": 1.10}}
+
     class _C:
-        def __init__(self, pair): self.pair = pair
-        async def get(self, *a, **k): return _R(self.pair)
+        def __init__(self, pair):
+            self.pair = pair
+
+        async def get(self, *a, **k):
+            return _R(self.pair)
+
     s._client = _C("EUR/USD")
     assert abs(await s.fetch("EUR/USD") - 1.10) < 1e-9
     s2 = FrankfurterSource()
@@ -48,20 +57,29 @@ async def test_frankfurter_fx():
 
 async def test_alphavantage_returns_rate():
     s = AlphaVantageSource(api_key="k")
+
     class _R:
-        def raise_for_status(self): pass
-        def json(self): return {"Realtime Currency Exchange Rate": {"5. Exchange Rate": "1.25"}}
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"Realtime Currency Exchange Rate": {"5. Exchange Rate": "1.25"}}
+
     class _C:
-        async def get(self, *a, **k): return _R()
+        async def get(self, *a, **k):
+            return _R()
+
     s._client = _C()
     assert abs(await s.fetch("GBP/USD") - 1.25) < 1e-9
 
 
 async def test_alphavantage_throttled_returns_none():
     s = AlphaVantageSource(api_key="k")
+
     class _C:
         async def get(self, *a, **k):
             raise RuntimeError("429 quota exceeded")  # simulate throttle
+
     s._client = _C()
     assert await s.fetch("EUR/USD") is None  # [GUARD L61] dropped, fail-soft
 
@@ -74,11 +92,18 @@ async def test_alphavantage_no_key_returns_none(monkeypatch):
 
 async def test_paxg_bridge():
     s = PaxgGoldSource()
+
     class _R:
-        def raise_for_status(self): pass
-        def json(self): return {"price": "2350.5"}
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"price": "2350.5"}
+
     class _C:
-        async def get(self, *a, **k): return _R()
+        async def get(self, *a, **k):
+            return _R()
+
     s._client = _C()
     assert abs(await s.fetch("XAU/USD") - 2350.5) < 1e-9
     assert await s.fetch("EUR/USD") is None
@@ -86,11 +111,18 @@ async def test_paxg_bridge():
 
 async def test_metals_keyed_covers_xau_xag():
     s = MetalsSource(api_key="k")
+
     class _R:
-        def raise_for_status(self): pass
-        def json(self): return {"metals": {"gold": 2350.0, "silver": 28.0}}
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"metals": {"gold": 2350.0, "silver": 28.0}}
+
     class _C:
-        async def get(self, *a, **k): return _R()
+        async def get(self, *a, **k):
+            return _R()
+
     s._client = _C()
     assert abs(await s.fetch("XAU/USD") - 2350.0) < 1e-9
     assert abs(await s.fetch("XAG/USD") - 28.0) < 1e-9  # same cached response, both metals
@@ -106,13 +138,17 @@ async def test_metals_one_call_serves_both():
     calls = {"n": 0}
 
     class _R:
-        def raise_for_status(self): pass
-        def json(self): return {"metals": {"gold": 2350.0, "silver": 28.0}}
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"metals": {"gold": 2350.0, "silver": 28.0}}
 
     class _C:
         async def get(self, *a, **k):
             calls["n"] += 1
             return _R()
+
     s._client = _C()
     g = await s.fetch("XAU/USD")
     x = await s.fetch("XAG/USD")
@@ -128,15 +164,21 @@ async def test_source_cache_retry_on_failure():
     attempts = {"n": 0}
 
     class _R:
-        def __init__(self, ok): self.ok = ok
+        def __init__(self, ok):
+            self.ok = ok
+
         def raise_for_status(self):
             if not self.ok:
                 raise RuntimeError("429")
-        def json(self): return {"rates": {"USD": 1.10}}
+
+        def json(self):
+            return {"rates": {"USD": 1.10}}
+
     class _C:
         async def get(self, *a, **k):
             attempts["n"] += 1
             return _R(ok=(attempts["n"] >= 2))  # fail first, succeed on retry
+
     s._client = _C()
     val = await s.fetch("EUR/USD")
     assert abs(val - 1.10) < 1e-9
@@ -152,19 +194,34 @@ async def test_metals_no_key_returns_none():
 
 async def test_coinbase_ticker_crypto():
     s = CoinbaseTickerSource()
+
     class _R:
-        def raise_for_status(self): pass
-        def json(self): return {"price": "60000.0"}
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"price": "60000.0"}
+
     class _C:
-        async def get(self, *a, **k): return _R()
+        async def get(self, *a, **k):
+            return _R()
+
     s._client = _C()
     assert abs(await s.fetch("BTC/USD") - 60000.0) < 1e-9
     assert await s.fetch("EUR/USD") is None
 
 
 # ── integration: aggregator consensus + stale + degraded ──────────────────────
-def _fake_sources(frank=1.10, alpha=1.101, yf=1.099, paxg=None, metals=None,
-                  coinbase=None, fail_frank=False, fail_alpha=False):
+def _fake_sources(
+    frank=1.10,
+    alpha=1.101,
+    yf=1.099,
+    paxg=None,
+    metals=None,
+    coinbase=None,
+    fail_frank=False,
+    fail_alpha=False,
+):
     """Build a source list with monkeypatched fetch returning canned values.
 
     Scalar args (frank/alpha/yf) apply to ANY pair that source covers; None means
@@ -284,13 +341,17 @@ def test_disagreement_prefers_fresh_last_good():
     )
     # Seed an agreeing last-good, then poll a divergent set.
     agg._last_good["EUR/USD"] = {
-        "pair": "EUR/USD", "price": 1.101, "high": 1.101, "low": 1.101,
-        "candle_ts": _time.time(), "ts": _time.time(), "n_sources": 3,
+        "pair": "EUR/USD",
+        "price": 1.101,
+        "high": 1.101,
+        "low": 1.101,
+        "candle_ts": _time.time(),
+        "ts": _time.time(),
+        "n_sources": 3,
     }
     c = agg.fetch_fn("EUR/USD")
     assert c is not None
     assert abs(c["price"] - 1.101) < 1e-9  # preferred last-good, not divergent median
-
 
 
 def test_all_sources_fail_soft_none():
@@ -329,8 +390,9 @@ def test_crypto_rest_works():
 def test_l01_stale_returns_none():
     # all sources fail -> aggregator falls back to last_good. Inject an OLD
     # last_good so the [L01] stale guard (stale_s=0.0) returns None.
-    agg = PriceAggregator(["EUR/USD"], sources=_fake_sources(frank=None, alpha=None, yf=None),
-                           stale_s=0.0)
+    agg = PriceAggregator(
+        ["EUR/USD"], sources=_fake_sources(frank=None, alpha=None, yf=None), stale_s=0.0
+    )
     agg._last_good["EUR/USD"] = {"pair": "EUR/USD", "price": 1.10, "ts": 0.0}
     assert agg.fetch_fn("EUR/USD") is None
 
@@ -356,8 +418,8 @@ def test_seed_history_fn(monkeypatch):
 
 # ── run_cycle integration (no dashboard/fastapi dependency) ───────────────────
 def test_aggregator_through_run_cycle(monkeypatch):
-    from hermes_core.engines.loop import run_cycle
     import hermes_core.adapters.aggregate as agg_mod
+    from hermes_core.engines.loop import run_cycle
 
     # Network-free: no Yahoo / Frankfurter during history seeding.
     monkeypatch.setattr(agg_mod, "_external_history", lambda *a, **k: [])
@@ -399,7 +461,8 @@ def test_aggregator_through_run_cycle(monkeypatch):
     reentry: dict = {}
     for cyc in range(1, 80):
         run_cycle(
-            "forex", cyc,
+            "forex",
+            cyc,
             fetch_fn=agg.fetch_fn,
             history_fn=_hist,
             now_fn=lambda c=cyc: c * 3600.0,

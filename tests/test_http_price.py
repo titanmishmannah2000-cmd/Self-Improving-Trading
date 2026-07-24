@@ -21,16 +21,17 @@ def _ok_price(symbol, price=1.10, candle_ts=1000.0):
             200,
             json={"symbol": symbol, "price": price, "candle_ts": candle_ts},
         )
+
     return handler
 
 
 def _ok_history(symbol, prices=(1.0, 1.05, 1.02, 1.08)):
     def handler(req):
         candles = [
-            {"symbol": symbol, "price": p, "candle_ts": 1000.0 + i}
-            for i, p in enumerate(prices)
+            {"symbol": symbol, "price": p, "candle_ts": 1000.0 + i} for i, p in enumerate(prices)
         ]
         return httpx.Response(200, json={"candles": candles})
+
     return handler
 
 
@@ -78,9 +79,7 @@ async def test_fetch_force_bypasses_stale():
 
 
 async def test_fetch_fail_soft_on_500():
-    c = http_price.HttpPriceClient(
-        base_url="https://fake.test", transport=_transport(_err_handler)
-    )
+    c = http_price.HttpPriceClient(base_url="https://fake.test", transport=_transport(_err_handler))
     candle = await c.fetch("EUR/USD")
     await c.aclose()
     assert candle is None  # fail-soft, no raise
@@ -114,9 +113,7 @@ async def test_seed_history_returns_candles():
 
 
 async def test_seed_history_fail_soft_on_error():
-    c = http_price.HttpPriceClient(
-        base_url="https://fake.test", transport=_transport(_err_handler)
-    )
+    c = http_price.HttpPriceClient(base_url="https://fake.test", transport=_transport(_err_handler))
     rows = await c.seed_history("EUR/USD")
     await c.aclose()
     assert rows == []  # fail-soft
@@ -129,9 +126,7 @@ async def test_symbol_mapping_strips_slash():
         captured["symbol"] = dict(req.url.params).get("symbol")
         return httpx.Response(200, json={"price": 1.1, "candle_ts": 1.0})
 
-    c = http_price.HttpPriceClient(
-        base_url="https://fake.test", transport=_transport(handler)
-    )
+    c = http_price.HttpPriceClient(base_url="https://fake.test", transport=_transport(handler))
     await c.fetch("EUR/USD")
     await c.aclose()
     assert captured["symbol"] == "EURUSD"  # mapped, no slash

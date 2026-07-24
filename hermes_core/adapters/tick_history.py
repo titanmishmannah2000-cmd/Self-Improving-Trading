@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 
 TICK_HISTORY_MAX = 300
-TICK_MOVE_MIN_PCT = 1e-5   # 0.001%
+TICK_MOVE_MIN_PCT = 1e-5  # 0.001%
 TICK_SAMPLE_MIN_S = 45.0
 FLAT_TAIL_BARS = 5
 
@@ -42,10 +42,7 @@ def append_bucketed_tick(
             prev_ts = float(prev.get("ts") or 0)
         except (TypeError, ValueError):
             prev_price, prev_ts = 0.0, 0.0
-        moved = (
-            prev_price > 0
-            and abs(price - prev_price) / prev_price >= float(move_min_pct)
-        )
+        moved = prev_price > 0 and abs(price - prev_price) / prev_price >= float(move_min_pct)
         aged = (ts - prev_ts) >= float(sample_min_s)
         if not moved and not aged:
             # Refresh the tip without growing identical bars.

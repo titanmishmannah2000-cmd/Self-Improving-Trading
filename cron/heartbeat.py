@@ -32,8 +32,10 @@ def main() -> None:
     ts = float(data.get("ts", 0))
     age = time.time() - ts
     if age > SILENCE_SECONDS:
-        msg = (f"[heartbeat] ALERT {bot}: silent {age / 60:.0f} min "
-               f"(threshold {SILENCE_SECONDS // 60} min)")
+        msg = (
+            f"[heartbeat] ALERT {bot}: silent {age / 60:.0f} min "
+            f"(threshold {SILENCE_SECONDS // 60} min)"
+        )
         print(msg, flush=True)
         send_text_alert(msg)
     else:

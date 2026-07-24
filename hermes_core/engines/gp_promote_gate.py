@@ -27,11 +27,11 @@ STATE_NAME = "gp_promote_gate.json"
 # Defaults chosen to match the measured daily paper book that seeded
 # GP_EXCLUDE_PAIRS (BTC ~−26% cumulative / many bars → clearly negative mean).
 DEFAULT_MIN_SAMPLES = 30
-DEFAULT_BAN_EXPECTANCY = -0.05   # mean % per sample → ban if below
+DEFAULT_BAN_EXPECTANCY = -0.05  # mean % per sample → ban if below
 DEFAULT_UNBAN_EXPECTANCY = 0.05  # mean % per sample → unban if above
-DEFAULT_COOLDOWN_S = 86_400      # 24h after a state flip
-DEFAULT_WINDOW = 100             # rolling PnL samples kept per pair
-DEFAULT_SHADOW_HORIZON_S = 3_600 # settle a pending shadow after 1h
+DEFAULT_COOLDOWN_S = 86_400  # 24h after a state flip
+DEFAULT_WINDOW = 100  # rolling PnL samples kept per pair
+DEFAULT_SHADOW_HORIZON_S = 3_600  # settle a pending shadow after 1h
 
 
 def _fenv(name: str, default: float) -> float:
@@ -343,6 +343,7 @@ def observe_shadow(
     # Reject cross-pair scale contamination (e.g. EUR pending at 116.5).
     try:
         from hermes_core.engines.soak_controls import pair_price_scale_ok
+
         if not pair_price_scale_ok(pair, px):
             return None
     except Exception:  # noqa: BLE001 — never block shadow on sanity import
@@ -360,6 +361,7 @@ def observe_shadow(
         # Drop contaminated pending entries instead of settling nonsense PnL.
         try:
             from hermes_core.engines.soak_controls import pair_price_scale_ok
+
             if entry > 0 and not pair_price_scale_ok(pair, entry):
                 rec["pending_shadow"] = None
                 rec["last_reason"] = "dropped_bad_scale_pending"
@@ -367,7 +369,12 @@ def observe_shadow(
                 pending = None
         except Exception:  # noqa: BLE001
             pass
-        if isinstance(pending, dict) and entry > 0 and direc in (-1, 1) and age >= shadow_horizon_s():
+        if (
+            isinstance(pending, dict)
+            and entry > 0
+            and direc in (-1, 1)
+            and age >= shadow_horizon_s()
+        ):
             pnl = (px / entry - 1.0) * 100.0 * direc
             rec["pending_shadow"] = None
             save_state(bot, st)

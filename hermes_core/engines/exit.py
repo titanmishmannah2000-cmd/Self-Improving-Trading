@@ -30,15 +30,15 @@ CIRCUIT_MAX_CONSECUTIVE_FAILURES = 5  # [GUARD L24]
 
 # Defaults when strategy / position omit knobs (≈2.5h at 60s cycles).
 DEFAULT_TIME_EXIT_CYCLES = 150
-DEFAULT_MFE_GIVEBACK_MIN_PCT = 0.4   # need real peak before locking
-DEFAULT_MFE_GIVEBACK_FRAC = 0.5      # exit after giving back ≥50% of MFE
+DEFAULT_MFE_GIVEBACK_MIN_PCT = 0.4  # need real peak before locking
+DEFAULT_MFE_GIVEBACK_FRAC = 0.5  # exit after giving back ≥50% of MFE
 
 
 @dataclass
 class Exit:
-    reason: str                      # one of the reasons above
-    price: float                     # price at evaluation
-    new_stop: float | None = None   # stop adjustment (breakeven/trailing)
+    reason: str  # one of the reasons above
+    price: float  # price at evaluation
+    new_stop: float | None = None  # stop adjustment (breakeven/trailing)
     partial_close_fraction: float | None = None  # 0.5 when partial-closing
 
 

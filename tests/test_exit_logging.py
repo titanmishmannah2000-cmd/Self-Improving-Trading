@@ -6,10 +6,11 @@ key `reason` while the dashboard reads `exit_reason` -> every "closed trade"
 had exit_reason=None and entry_price==exit_price, which zeroed the closed
 counter, cumulative chart, Activity feed and Reports.
 """
+
 import pytest
 
 from hermes_core.engines import loop as L
-from hermes_core.engines.exit import evaluate_exit, Exit
+from hermes_core.engines.exit import evaluate_exit
 
 
 class _CortexStub:
@@ -55,19 +56,26 @@ def _cases(reason):
     if reason == "profit_target":
         return 1.04, {}, None
     if reason == "mfe_giveback":
-        return 1.003, {
-            "mfe_giveback_enabled": True,
-            "peak_mfe_pct": 0.8,
-            "unrealised_pct": 0.3,
-            "mfe_giveback_min_pct": 0.4,
-            "mfe_giveback_frac": 0.5,
-        }, None
+        return (
+            1.003,
+            {
+                "mfe_giveback_enabled": True,
+                "peak_mfe_pct": 0.8,
+                "unrealised_pct": 0.3,
+                "mfe_giveback_min_pct": 0.4,
+                "mfe_giveback_frac": 0.5,
+            },
+            None,
+        )
     if reason == "breakeven":
         return 1.02, {}, None
     if reason == "trailing":
         # unreal in (0, 1.5%) so breakeven doesn't fire; vary prices for real ATR
-        return 1.01, {"trailing_atr_mult": 2.0, "current_stop": 0.5}, \
-               [1.0 + 0.003 * ((i % 2) * 2 - 1) for i in range(50)]
+        return (
+            1.01,
+            {"trailing_atr_mult": 2.0, "current_stop": 0.5},
+            [1.0 + 0.003 * ((i % 2) * 2 - 1) for i in range(50)],
+        )
 
 
 def _eval(reason):
@@ -93,9 +101,17 @@ def _run(reason):
     summary = {"exits": []}
     reentry = {}
     L._process_exit(
-        "forex", "EUR/USD", 10, pos, price, ex,
-        cortex=cortex, reentry=reentry,
-        open_positions=open_positions, summary=summary, alert_fn=None,
+        "forex",
+        "EUR/USD",
+        10,
+        pos,
+        price,
+        ex,
+        cortex=cortex,
+        reentry=reentry,
+        open_positions=open_positions,
+        summary=summary,
+        alert_fn=None,
     )
     return {
         "logged": logged,
@@ -144,16 +160,27 @@ def test_partial_close_is_logged_as_real_close():
     res = _run("profit_target")  # plumbing sanity (real close path)
     assert res["pos_deleted"] is True
     # Now drive partial directly:
-    pos2 = _make_pos(); pos2["partial_enabled"] = True
+    pos2 = _make_pos()
+    pos2["partial_enabled"] = True
     pos2["unrealised_pct"] = (price - 1.0) / 1.0 * 100.0
     logged = []
     L._log_trade = lambda b, r: logged.append(r)
     L._discovered_indicator_ids = lambda b, p: []
     cortex = _CortexStub()
     op = {"EUR/USD": pos2}
-    L._process_exit("forex", "EUR/USD", 10, pos2, price, ex,
-                    cortex=cortex, reentry={}, open_positions=op,
-                    summary={"exits": []}, alert_fn=None)
+    L._process_exit(
+        "forex",
+        "EUR/USD",
+        10,
+        pos2,
+        price,
+        ex,
+        cortex=cortex,
+        reentry={},
+        open_positions=op,
+        summary={"exits": []},
+        alert_fn=None,
+    )
     assert "EUR/USD" not in op, "partial_close closes the position"
     assert len(logged) == 1 and logged[0]["exit_reason"] == "partial_close"
     assert logged[0]["entry_type"] == "gp_ensemble"
@@ -171,11 +198,22 @@ def test_gp_close_credits_only_firing_indicators():
     assert ex is not None and ex.reason == "stop_loss"
     cortex = _CortexStub()
     op = {"EUR/USD": pos}
-    L._process_exit("forex", "EUR/USD", 10, pos, 0.98, ex,
-                    cortex=cortex, reentry={}, open_positions=op,
-                    summary={"exits": []}, alert_fn=None)
-    assert cortex.ind_credit == ["EUR_roc20", "EUR_rsi14"], \
+    L._process_exit(
+        "forex",
+        "EUR/USD",
+        10,
+        pos,
+        0.98,
+        ex,
+        cortex=cortex,
+        reentry={},
+        open_positions=op,
+        summary={"exits": []},
+        alert_fn=None,
+    )
+    assert cortex.ind_credit == ["EUR_roc20", "EUR_rsi14"], (
         f"only firing indicators should be credited, got {cortex.ind_credit}"
+    )
 
     # mean_reversion close: must credit NO indicators
     pos2 = _make_pos("mean_reversion")
@@ -185,11 +223,20 @@ def test_gp_close_credits_only_firing_indicators():
     assert ex2 is not None and ex2.reason == "stop_loss"
     cortex2 = _CortexStub()
     op2 = {"GBP/USD": pos2}
-    L._process_exit("forex", "GBP/USD", 11, pos2, 0.98, ex2,
-                    cortex=cortex2, reentry={}, open_positions=op2,
-                    summary={"exits": []}, alert_fn=None)
-    assert cortex2.ind_credit == [], \
-        "non-GP close must credit no indicators"
+    L._process_exit(
+        "forex",
+        "GBP/USD",
+        11,
+        pos2,
+        0.98,
+        ex2,
+        cortex=cortex2,
+        reentry={},
+        open_positions=op2,
+        summary={"exits": []},
+        alert_fn=None,
+    )
+    assert cortex2.ind_credit == [], "non-GP close must credit no indicators"
 
 
 def test_gp_close_persists_to_cortex_and_surfaces_in_summary(tmp_path, monkeypatch):
@@ -203,6 +250,7 @@ def test_gp_close_persists_to_cortex_and_surfaces_in_summary(tmp_path, monkeypat
     what /api/cortex reads to populate the GP-Entry column.
     """
     import hermes_core.engines.decision_cortex as cx
+
     monkeypatch.setattr(cx, "CORTEX_DIR", tmp_path / "cortex")
     monkeypatch.setattr(cx, "MEMORY_PATH", tmp_path / "cortex" / "m.json")
     monkeypatch.setattr(cx, "EXILE_PATH", tmp_path / "cortex" / "e.json")
@@ -217,9 +265,19 @@ def test_gp_close_persists_to_cortex_and_surfaces_in_summary(tmp_path, monkeypat
     ex = evaluate_exit(pos, 0.98, None)
     assert ex is not None and ex.reason == "stop_loss"
     op = {"EUR/USD": pos}
-    L._process_exit("forex", "EUR/USD", 10, pos, 0.98, ex,
-                    cortex=cortex, reentry={}, open_positions=op,
-                    summary={"exits": []}, alert_fn=None)
+    L._process_exit(
+        "forex",
+        "EUR/USD",
+        10,
+        pos,
+        0.98,
+        ex,
+        cortex=cortex,
+        reentry={},
+        open_positions=op,
+        summary={"exits": []},
+        alert_fn=None,
+    )
 
     # (b) file actually written to disk
     assert cx.MEMORY_PATH.exists(), "cortex memory must persist to disk"
@@ -238,6 +296,7 @@ def test_gp_close_persists_to_cortex_and_surfaces_in_summary(tmp_path, monkeypat
 def test_mean_reversion_close_does_not_credit_indicators(tmp_path, monkeypatch):
     """Sanity: a non-GP close must not create any indicator stats."""
     import hermes_core.engines.decision_cortex as cx
+
     monkeypatch.setattr(cx, "CORTEX_DIR", tmp_path / "cortex")
     monkeypatch.setattr(cx, "MEMORY_PATH", tmp_path / "cortex" / "m.json")
     monkeypatch.setattr(cx, "EXILE_PATH", tmp_path / "cortex" / "e.json")
@@ -250,7 +309,17 @@ def test_mean_reversion_close_does_not_credit_indicators(tmp_path, monkeypatch):
     pos["unrealised_pct"] = -0.5
     ex = evaluate_exit(pos, 0.98, None)
     op = {"GBP/USD": pos}
-    L._process_exit("forex", "GBP/USD", 11, pos, 0.98, ex,
-                    cortex=cortex, reentry={}, open_positions=op,
-                    summary={"exits": []}, alert_fn=None)
+    L._process_exit(
+        "forex",
+        "GBP/USD",
+        11,
+        pos,
+        0.98,
+        ex,
+        cortex=cortex,
+        reentry={},
+        open_positions=op,
+        summary={"exits": []},
+        alert_fn=None,
+    )
     assert Cortex().summary()["indicators"] == {}

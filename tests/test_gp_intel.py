@@ -25,13 +25,18 @@ def _tmp_gp_state(tmp_path, monkeypatch):
 
 
 def _ind(signal, wr=0.5, fitness=0.6, trained=("BULL",)):
-    return {"id": "i", "signal": signal, "wr": wr, "fitness": fitness,
-            "trained_regimes": list(trained)}
+    return {
+        "id": "i",
+        "signal": signal,
+        "wr": wr,
+        "fitness": fitness,
+        "trained_regimes": list(trained),
+    }
 
 
 # ── blueprint Phase 14 success criteria ───────────────────────────────────
 def test_strong_bullish_label():
-    inds = [_ind(0.9), _ind(0.7), _ind(0.8)]   # all signal>0.2, wr>0.5
+    inds = [_ind(0.9), _ind(0.7), _ind(0.8)]  # all signal>0.2, wr>0.5
     assert gp.get_label(inds) == "strong_bullish"
     # a 2/3 bullish mix is still bullish (not conflict): score~0.33, agree~0.67
     assert gp.get_label([_ind(0.9), _ind(-0.8), _ind(0.5)]) == "bullish"
@@ -44,7 +49,7 @@ def test_default_zero_after_fix():
     # so its first entries can fire and accumulate the data that earns a real
     # score. -0.3 would mean "never enters -> never learns -> never rises".
     assert gp.DEFAULT_GP_SCORE == 0.0
-    assert gp.gp_entry_score("EUR/USD_BRAND_NEW") == 0.0   # not -0.3
+    assert gp.gp_entry_score("EUR/USD_BRAND_NEW") == 0.0  # not -0.3
     # and it is NOT suppressed at neutral (gate is >= 0)
     suppressed, _reason = gp.should_suppress("EUR/USD_BRAND_NEW")
     assert suppressed is False
@@ -55,9 +60,9 @@ def test_consecutive_lockout():
     assert gp.is_locked(pair) is False
     gp.record_loss(pair)
     gp.record_loss(pair)
-    assert gp.is_locked(pair) is False          # 2 not enough
+    assert gp.is_locked(pair) is False  # 2 not enough
     gp.record_loss(pair)
-    assert gp.is_locked(pair) is True           # >=3 -> locked
+    assert gp.is_locked(pair) is True  # >=3 -> locked
     # a win resets the counter
     gp.record_win(pair)
     assert gp.is_locked(pair) is False
@@ -65,11 +70,17 @@ def test_consecutive_lockout():
 
 def test_cull_low_wr():
     # genuine degradation: same-regime WR 0.35 over 50 signals -> culled.
-    reg = [{"id": "x", "fitness": 0.7, "trained_regimes": ["BULL"],
-            "by_regime": {"BULL": {"wins": 0, "signals": 0}}}]
+    reg = [
+        {
+            "id": "x",
+            "fitness": 0.7,
+            "trained_regimes": ["BULL"],
+            "by_regime": {"BULL": {"wins": 0, "signals": 0}},
+        }
+    ]
     # feed 50 outcomes, 30% wins (0.30 WR < 0.40 cull threshold)
     for k in range(50):
-        outcome = 1.0 if k % 10 < 3 else -1.0   # 3/10 = 0.30 win rate
+        outcome = 1.0 if k % 10 < 3 else -1.0  # 3/10 = 0.30 win rate
         reg = gp._update_indicator(reg, "x", outcome, "BULL")
     culled = [i for i in reg if i["id"] == "x"][0]
     assert culled["culled"] is True
@@ -79,7 +90,7 @@ def test_cull_low_wr():
 # ── score bounds + suppression reason ──────────────────────────────────────
 def test_score_bounded():
     # after enough winning data the score stays within [-1, 1]
-    gp.record_win("GBP/JPY")   # reset any lockout
+    gp.record_win("GBP/JPY")  # reset any lockout
     s = gp.gp_entry_score("GBP/JPY")
     assert -1.0 <= s <= 1.0
 
@@ -104,16 +115,22 @@ def test_regime_mismatch_weight_penalty_not_cull():
     ind = _ind(0.5, fitness=0.8, trained=("BULL",))
     assert gp.weight_for(ind, "BULL") == 0.8
     assert gp.weight_for(ind, "NEUTRAL") == pytest.approx(0.8 * gp.REGIME_MISMATCH_PENALTY)
-    assert ind.get("culled") is None          # never culled for mismatch
+    assert ind.get("culled") is None  # never culled for mismatch
     # but a same-regime low-WR indicator IS culled (degradation), not just penalized
-    reg = [{"id": "y", "fitness": 0.8, "trained_regimes": ["BULL"],
-            "by_regime": {"BULL": {"wins": 0, "signals": 0}}}]
+    reg = [
+        {
+            "id": "y",
+            "fitness": 0.8,
+            "trained_regimes": ["BULL"],
+            "by_regime": {"BULL": {"wins": 0, "signals": 0}},
+        }
+    ]
     for k in range(50):
         outcome = 1.0 if k % 10 < 3 else -1.0
         reg = gp._update_indicator(reg, "y", outcome, "BULL")
     degraded = [i for i in reg if i["id"] == "y"][0]
     assert degraded["culled"] is True
-    assert gp.weight_for(degraded, "BULL") == 0.0   # culled -> zero weight
+    assert gp.weight_for(degraded, "BULL") == 0.0  # culled -> zero weight
 
 
 def test_gp_intelligence_wrapper():

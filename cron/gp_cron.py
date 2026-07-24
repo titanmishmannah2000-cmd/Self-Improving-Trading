@@ -39,19 +39,16 @@ def main() -> None:
                 period=prof["period"],
                 max_candles=prof["max_candles"],
             )
-            prices = [
-                float(c["price"] if isinstance(c, dict) else c)
-                for c in candles
-            ]
+            prices = [float(c["price"] if isinstance(c, dict) else c) for c in candles]
             if len(prices) < int(prof["min_bars"]):
                 print(
-                    f"[cron] gp_cron: {pair} skipped "
-                    f"(<{prof['min_bars']} {prof['interval']} bars)",
+                    f"[cron] gp_cron: {pair} skipped (<{prof['min_bars']} {prof['interval']} bars)",
                     flush=True,
                 )
                 continue
             inds = discover(
-                pair, prices,
+                pair,
+                prices,
                 horizon=int(prof["horizon"]),
                 generations=int(prof["generations"]),
                 pop_size=int(prof["pop_size"]),

@@ -15,17 +15,23 @@ Runs after every audit and stores scores in audit_maturity table.
 
 import json
 import sys
-from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
-from findings_store import _get_conn, insert_maturity, get_latest_run, list_findings, get_maturity_history
+from findings_store import _get_conn, get_latest_run, insert_maturity, list_findings
 
 KNOWN_BUG_PATTERNS = [
-    "hermes_forex", "hermes-btc", "railway down", "subprocess",
-    "except: pass", "correct_configs", "return 0.0",
-    "cycle_count", "entry_strategy", "stop_loss_pct =",
+    "hermes_forex",
+    "hermes-btc",
+    "railway down",
+    "subprocess",
+    "except: pass",
+    "correct_configs",
+    "return 0.0",
+    "cycle_count",
+    "entry_strategy",
+    "stop_loss_pct =",
     "try: ... except: pass",
 ]
 
@@ -35,12 +41,13 @@ def score_dimensions(verbose: bool = True) -> dict:
     conn = _get_conn()
     try:
         findings = list_findings(limit=500)
-        all_findings_count = len([f for f in findings if f.get("domain") != "test-domain"])
+        len([f for f in findings if f.get("domain") != "test-domain"])
 
         # 1. Detection depth: % of known patterns covered by recent findings
         recent_text = " ".join(
             f.get("description", "") + " " + f.get("location", "")
-            for f in findings if f.get("domain") != "test-domain"
+            for f in findings
+            if f.get("domain") != "test-domain"
         ).lower()
         found_patterns = sum(1 for p in KNOWN_BUG_PATTERNS if p.lower() in recent_text)
         detection_depth = round(found_patterns / len(KNOWN_BUG_PATTERNS) * 5, 1)
@@ -72,7 +79,13 @@ def score_dimensions(verbose: bool = True) -> dict:
                 trend_awareness = 4.0
 
         # 5. Strategic insight: does it produce INTELLIGENCE/UPGRADE findings?
-        upgrade_count = len([f for f in findings if f.get("type") in ("UPGRADE", "INTELLIGENCE") and f.get("domain") != "test-domain"])
+        upgrade_count = len(
+            [
+                f
+                for f in findings
+                if f.get("type") in ("UPGRADE", "INTELLIGENCE") and f.get("domain") != "test-domain"
+            ]
+        )
         strategic_insight = min(5, upgrade_count / 2)
 
         # 6. Response time: check if live anomalies led to findings quickly
@@ -104,25 +117,55 @@ def score_dimensions(verbose: bool = True) -> dict:
             pass
 
         scores = {
-            "detection_depth": {"score": detection_depth, "evidence": f"{found_patterns}/{len(KNOWN_BUG_PATTERNS)} known patterns found", "max": 5},
-            "false_positive_rate": {"score": false_positive_score, "evidence": f"{rejected} rejected / {total_decided} decided", "max": 5},
-            "coverage_breadth": {"score": coverage_breadth, "evidence": f"{len(domains)}/5 domains covered", "max": 5},
-            "trend_awareness": {"score": trend_awareness, "evidence": f"{'regression tracking active' if latest and json.loads(latest.get('regressions','[]')) else 'no regressions tracked yet'}", "max": 5},
-            "strategic_insight": {"score": strategic_insight, "evidence": f"{upgrade_count} UPGRADE/INTELLIGENCE findings", "max": 5},
-            "response_time": {"score": response_time, "evidence": f"{'anomaly diver active' if response_time > 2 else 'no anomaly diver data'}", "max": 5},
-            "cross_domain_reasoning": {"score": cross_domain, "evidence": f"{'synthesis active' if cross_domain > 2 else 'no cross-domain synthesis'}", "max": 5},
+            "detection_depth": {
+                "score": detection_depth,
+                "evidence": f"{found_patterns}/{len(KNOWN_BUG_PATTERNS)} known patterns found",
+                "max": 5,
+            },
+            "false_positive_rate": {
+                "score": false_positive_score,
+                "evidence": f"{rejected} rejected / {total_decided} decided",
+                "max": 5,
+            },
+            "coverage_breadth": {
+                "score": coverage_breadth,
+                "evidence": f"{len(domains)}/5 domains covered",
+                "max": 5,
+            },
+            "trend_awareness": {
+                "score": trend_awareness,
+                "evidence": f"{'regression tracking active' if latest and json.loads(latest.get('regressions', '[]')) else 'no regressions tracked yet'}",
+                "max": 5,
+            },
+            "strategic_insight": {
+                "score": strategic_insight,
+                "evidence": f"{upgrade_count} UPGRADE/INTELLIGENCE findings",
+                "max": 5,
+            },
+            "response_time": {
+                "score": response_time,
+                "evidence": f"{'anomaly diver active' if response_time > 2 else 'no anomaly diver data'}",
+                "max": 5,
+            },
+            "cross_domain_reasoning": {
+                "score": cross_domain,
+                "evidence": f"{'synthesis active' if cross_domain > 2 else 'no cross-domain synthesis'}",
+                "max": 5,
+            },
         }
 
         overall = round(sum(s["score"] for s in scores.values()) / len(scores), 1)
 
         if verbose:
-            print(f"\n{'='*40}")
-            print(f"INTELLIGENCE MATURITY SCORER")
-            print(f"{'='*40}")
+            print(f"\n{'=' * 40}")
+            print("INTELLIGENCE MATURITY SCORER")
+            print(f"{'=' * 40}")
             for dim, data in scores.items():
                 bar = "█" * int(data["score"]) + "░" * (5 - int(data["score"]))
                 print(f"  {dim:>25}: {bar}  {data['score']}/5 — {data['evidence'][:50]}")
-            print(f"\n  {'OVERALL':>25}: {'█' * int(overall)}{'░' * (5 - int(overall))}  {overall}/5")
+            print(
+                f"\n  {'OVERALL':>25}: {'█' * int(overall)}{'░' * (5 - int(overall))}  {overall}/5"
+            )
 
         return {"scores": scores, "overall": overall}
 

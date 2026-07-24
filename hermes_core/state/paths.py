@@ -74,6 +74,7 @@ def strategy_path(pair: str, bot: str | None = None) -> Path:
 def seed_strategy_path(pair: str, bot: str | None = None) -> Path:
     """Image/seed strategy YAML under ``bots/{bot}/state/strategies/`` (read-only source)."""
     from hermes_core.config.loader import repo_root
+
     b = bot or bot_for_pair(pair)
     fname = pair.replace("/", "_").replace("-", "_") + ".yaml"
     return repo_root() / "bots" / b / "state" / "strategies" / fname

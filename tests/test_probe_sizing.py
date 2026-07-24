@@ -34,7 +34,9 @@ def test_thin_evidence_probes():
 def test_enough_evidence_full():
     base = 0.40
     out = apply_probe_sizing(
-        base, enabled=True, evidence_n=PROBE_EVIDENCE_MIN,
+        base,
+        enabled=True,
+        evidence_n=PROBE_EVIDENCE_MIN,
     )
     assert out["size_mode"] == "full"
     assert out["evidence_state"] == "ok"

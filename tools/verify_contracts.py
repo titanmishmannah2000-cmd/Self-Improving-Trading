@@ -44,17 +44,24 @@ def main() -> int:
             failures.append(f"{module_path}.{name}: missing ({exc})")
             continue
         if inspect.isclass(obj):
-            if not hasattr(obj, "run") and name in ("Cortex", "PolicyEngine", "SelfAudit"):
-                if name == "Cortex" and not callable(getattr(obj, "record_entry", None)):
-                    failures.append(f"{module_path}.{name}: missing record_entry")
+            if (
+                not hasattr(obj, "run")
+                and name in ("Cortex", "PolicyEngine", "SelfAudit")
+                and name == "Cortex"
+                and not callable(getattr(obj, "record_entry", None))
+            ):
+                failures.append(f"{module_path}.{name}: missing record_entry")
             continue
         sig = inspect.signature(obj)
-        n_params = len([
-            p for p in sig.parameters.values()
-            if p.default is inspect.Parameter.empty
-            and p.kind in (inspect.Parameter.POSITIONAL_ONLY,
-                           inspect.Parameter.POSITIONAL_OR_KEYWORD)
-        ])
+        n_params = len(
+            [
+                p
+                for p in sig.parameters.values()
+                if p.default is inspect.Parameter.empty
+                and p.kind
+                in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            ]
+        )
         if n_params < min_args:
             failures.append(
                 f"{module_path}.{name}: expected >={min_args} required args, got {n_params}"

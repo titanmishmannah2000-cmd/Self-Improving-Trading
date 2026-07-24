@@ -19,9 +19,8 @@ Integrated into findings_store via update_finding_status.
 
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
@@ -61,7 +60,17 @@ def extract_keywords(finding: dict) -> list[str]:
     # Simple extraction: take unique words > 4 chars
     for w in text.split():
         w = w.strip(".,:;!?()[]{}\"'")
-        if len(w) > 4 and w not in ("this", "that", "with", "from", "have", "been", "would", "could", "should"):
+        if len(w) > 4 and w not in (
+            "this",
+            "that",
+            "with",
+            "from",
+            "have",
+            "been",
+            "would",
+            "could",
+            "should",
+        ):
             words.add(w)
     return list(words)[:20]
 
@@ -69,7 +78,7 @@ def extract_keywords(finding: dict) -> list[str]:
 def record_feedback(
     finding_id: str,
     reason: str,
-    comment: Optional[str] = None,
+    comment: str | None = None,
 ) -> dict:
     """Record user feedback for a rejected finding."""
     valid_reasons = {"false_positive", "won_t_fix", "needs_more_evidence", "not_actionable"}
@@ -82,7 +91,7 @@ def record_feedback(
 
     extend_db()
     keywords = extract_keywords(finding)
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     conn = _get_conn()
     try:
@@ -90,10 +99,16 @@ def record_feedback(
             """INSERT INTO audit_feedback
                (finding_id, reason, comment, pattern_keywords, domain, finding_type, location_hint, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (finding_id, reason, comment,
-             json.dumps(keywords), finding["domain"],
-             finding["type"], (finding.get("location") or "")[:100],
-             now),
+            (
+                finding_id,
+                reason,
+                comment,
+                json.dumps(keywords),
+                finding["domain"],
+                finding["type"],
+                (finding.get("location") or "")[:100],
+                now,
+            ),
         )
         conn.commit()
         return {"status": "ok", "message": f"Feedback recorded: {reason}", "keywords": keywords}
@@ -150,7 +165,7 @@ def get_prompt_context(domain: str) -> str:
         conn.close()
 
 
-def list_feedback(domain: Optional[str] = None, limit: int = 20) -> list[dict]:
+def list_feedback(domain: str | None = None, limit: int = 20) -> list[dict]:
     """List all recorded feedback, optionally filtered by domain."""
     extend_db()
     conn = _get_conn()
@@ -172,11 +187,20 @@ def list_feedback(domain: Optional[str] = None, limit: int = 20) -> list[dict]:
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="Feedback Learner (Layer 6)")
-    parser.add_argument("--reject", nargs="+", metavar=("FINDING_ID", "REASON"),
-                        help="Record rejection feedback: finding_id reason [comment]")
-    parser.add_argument("--prompt-context", type=str, metavar="DOMAIN",
-                        help="Get feedback context for an audit prompt")
+    parser.add_argument(
+        "--reject",
+        nargs="+",
+        metavar=("FINDING_ID", "REASON"),
+        help="Record rejection feedback: finding_id reason [comment]",
+    )
+    parser.add_argument(
+        "--prompt-context",
+        type=str,
+        metavar="DOMAIN",
+        help="Get feedback context for an audit prompt",
+    )
     parser.add_argument("--list", action="store_true", help="List all feedback")
     parser.add_argument("--domain", type=str, help="Filter by domain")
     args = parser.parse_args()

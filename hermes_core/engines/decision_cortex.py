@@ -16,15 +16,16 @@ Persistence:
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 
 from hermes_core.state.paths import cortex_dir, current_bot
 
 # ── gates ──────────────────────────────────────────────────────────────────
-EXILE_WR = 0.30          # [GUARD L36] WR below this after enough attempts -> exile
-EXILE_MIN_ATTEMPTS = 5   # need >=5 GP attempts before exile can trigger
-REINSTATE_WR = 0.40      # WR at/above this reinstates an exiled indicator
+EXILE_WR = 0.30  # [GUARD L36] WR below this after enough attempts -> exile
+EXILE_MIN_ATTEMPTS = 5  # need >=5 GP attempts before exile can trigger
+REINSTATE_WR = 0.40  # WR at/above this reinstates an exiled indicator
 EXILE_DECAY_ENTRIES = 100  # reconsider exiled indicators every 100 entries
 VALID_ENTRY_TYPES = ("mean_reversion", "gp_ensemble")
 
@@ -35,10 +36,7 @@ MEMORY_PATH: Path | None = None
 
 
 def _cortex_paths(bot: str | None = None) -> tuple[Path, Path, Path]:
-    if CORTEX_DIR is not None:
-        base = CORTEX_DIR
-    else:
-        base = cortex_dir(bot or current_bot())
+    base = CORTEX_DIR if CORTEX_DIR is not None else cortex_dir(bot or current_bot())
     exile = EXILE_PATH or (base / "indicator_exile.json")
     memory = MEMORY_PATH or (base / "cortex_memory.json")
     return base, exile, memory
@@ -91,8 +89,9 @@ class Cortex:
         self._indicator_stats: dict[str, dict] = mem.get("indicator_stats", {})
 
     def _flush(self) -> None:
-        _save_memory({"entries": self._entries,
-                      "indicator_stats": self._indicator_stats}, self._bot)
+        _save_memory(
+            {"entries": self._entries, "indicator_stats": self._indicator_stats}, self._bot
+        )
 
     # ── recording ──────────────────────────────────────────────────────────
     def record_entry(self, pair: str, entry_type: str) -> None:
@@ -127,14 +126,9 @@ class Cortex:
             row["giveback_frac"] = float(giveback_frac)
         if mfe_capture is not None:
             row["mfe_capture"] = float(mfe_capture)
-        elif (
-            mfe_pct is not None
-            and float(mfe_pct) > 1e-9
-        ):
-            try:
+        elif mfe_pct is not None and float(mfe_pct) > 1e-9:
+            with contextlib.suppress(TypeError, ValueError, ZeroDivisionError):
                 row["mfe_capture"] = round(float(pnl) / float(mfe_pct), 4)
-            except (TypeError, ValueError, ZeroDivisionError):
-                pass
         self._entries.append(row)
         self._flush()
 
@@ -153,7 +147,8 @@ class Cortex:
         Per-pair WRs stop a bad pair from benching GP (or MR) fleet-wide.
         """
         outcomes = [
-            e for e in self._entries
+            e
+            for e in self._entries
             if e.get("type") == entry_type
             and e.get("outcome") is not None
             and (pair is None or e.get("pair") == pair)
@@ -182,7 +177,8 @@ class Cortex:
         Missing pnl on an outcome is ignored for averages but still counts W/L.
         """
         outcomes = [
-            e for e in self._entries
+            e
+            for e in self._entries
             if e.get("pair") == pair
             and e.get("type") == entry_type
             and e.get("outcome") is not None
@@ -220,7 +216,8 @@ class Cortex:
         drifted for N hours.
         """
         rows = [
-            e for e in self._entries
+            e
+            for e in self._entries
             if e.get("pair") == pair
             and e.get("type") == entry_type
             and e.get("outcome") is not None
@@ -271,18 +268,15 @@ class Cortex:
             "avg_mfe": round(sum(mfes) / len(mfes), 4) if mfes else None,
             "avg_mae": round(sum(maes) / len(maes), 4) if maes else None,
             "avg_giveback": round(sum(gbs) / len(gbs), 4) if gbs else None,
-            "avg_giveback_frac": (
-                round(sum(gfs) / len(gfs), 4) if gfs else None
-            ),
-            "avg_mfe_capture": (
-                round(sum(caps) / len(caps), 4) if caps else None
-            ),
+            "avg_giveback_frac": (round(sum(gfs) / len(gfs), 4) if gfs else None),
+            "avg_mfe_capture": (round(sum(caps) / len(caps), 4) if caps else None),
         }
 
     def excursion_scoreboard(self) -> dict:
         """Fleet-level excursion scoreboard (edge quality, not time-exit PnL)."""
         rows = [
-            e for e in self._entries
+            e
+            for e in self._entries
             if e.get("outcome") is not None and e.get("mfe_pct") is not None
         ]
         if not rows:
@@ -358,12 +352,8 @@ class Cortex:
             "n": len(rows),
             "avg_mfe": round(sum(mfes) / len(mfes), 4) if mfes else None,
             "avg_mae": round(sum(maes) / len(maes), 4) if maes else None,
-            "avg_giveback_frac": (
-                round(sum(gfs) / len(gfs), 4) if gfs else None
-            ),
-            "avg_mfe_capture": (
-                round(sum(caps) / len(caps), 4) if caps else None
-            ),
+            "avg_giveback_frac": (round(sum(gfs) / len(gfs), 4) if gfs else None),
+            "avg_mfe_capture": (round(sum(caps) / len(caps), 4) if caps else None),
         }
 
     # ── best entry type (router) ────────────────────────────────────────────
@@ -373,20 +363,28 @@ class Cortex:
         wrs = {t: self.entry_type_wr(t) for t in VALID_ENTRY_TYPES}
         known = {t: w for t, w in wrs.items() if w is not None}
         if not known:
-            return "mean_reversion"          # safe default when no data yet
+            return "mean_reversion"  # safe default when no data yet
         return max(known, key=known.get)
 
     # ── per-indicator exile system ──────────────────────────────────────────
-    def record_indicator_outcome(self, ind_id: str, pnl: float,
-                                 entry_type: str | None = None) -> None:
+    def record_indicator_outcome(
+        self, ind_id: str, pnl: float, entry_type: str | None = None
+    ) -> None:
         """Track a GP indicator's outcome; auto-exile / reinstate per gates.
 
         `entry_type` (optional) lets us separate GP-ensemble credit from any
         other credit so the dashboard can show per-indicator GP-entry WR (B9).
         """
         st = self._indicator_stats.setdefault(
-            ind_id, {"attempts": 0, "wins": 0, "pnl": 0.0, "exiled": False,
-                     "gp": {"attempts": 0, "wins": 0, "pnl": 0.0}})
+            ind_id,
+            {
+                "attempts": 0,
+                "wins": 0,
+                "pnl": 0.0,
+                "exiled": False,
+                "gp": {"attempts": 0, "wins": 0, "pnl": 0.0},
+            },
+        )
         st["attempts"] += 1
         st["pnl"] = float(st.get("pnl", 0.0)) + float(pnl)
         if pnl > 0:
@@ -404,8 +402,7 @@ class Cortex:
             if st["attempts"] % EXILE_DECAY_ENTRIES == 0 and wr >= REINSTATE_WR:
                 st["exiled"] = False
                 exiles.pop(ind_id, None)
-        elif (st["attempts"] >= EXILE_MIN_ATTEMPTS
-              and wr < EXILE_WR):
+        elif st["attempts"] >= EXILE_MIN_ATTEMPTS and wr < EXILE_WR:
             st["exiled"] = True
             exiles[ind_id] = {"exiled_at_attempts": st["attempts"], "wr": round(wr, 3)}
         _save_exiles(exiles, self._bot)
@@ -499,7 +496,9 @@ class Cortex:
             # enabled=True here: state is about evidence thickness only; the Live
             # badge still respects PROBE_SIZING via open-trade size_mode.
             bucket["evidence_state"] = evidence_state_for(
-                n, enabled=True, evidence_min=PROBE_EVIDENCE_MIN,
+                n,
+                enabled=True,
+                evidence_min=PROBE_EVIDENCE_MIN,
             )
             bucket["size_mode_if_enabled"] = (
                 "probe" if bucket["evidence_state"] == "thin" else "full"

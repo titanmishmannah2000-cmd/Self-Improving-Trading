@@ -43,8 +43,9 @@ def test_soft_block_low_quality_sell():
 def test_context_contains_trend():
     # blueprint: parsed context must carry a trend token
     for trend in ("uptrend", "downtrend", "sideways"):
-        c = cv._parse_chart_response(f'{{"trend": "{trend}", "confidence": 0.5, '
-                                      f'"sr_level": "", "recommendation": "wait"}}')
+        c = cv._parse_chart_response(
+            f'{{"trend": "{trend}", "confidence": 0.5, "sr_level": "", "recommendation": "wait"}}'
+        )
         assert trend in c
 
 
@@ -71,12 +72,12 @@ def test_groq_fallback(monkeypatch):
     # analyze_chart_gemini (PRIMARY) then analyze_chart_groq (FALLBACK).
     monkeypatch.setattr(cv, "analyze_chart_gemini", lambda p, s: None)
     monkeypatch.setattr(
-        cv, "analyze_chart_groq",
+        cv,
+        "analyze_chart_groq",
         lambda p, s: "trend: sideways (conf=0.50). SR: . Rec: wait for pullback",
     )
     monkeypatch.setattr(cv, "fetch_ohlcv", lambda s: _fake_df())
-    monkeypatch.setattr(cv, "generate_chart_png",
-                        lambda df, s: cv._cache_dir() / "fake.png")
+    monkeypatch.setattr(cv, "generate_chart_png", lambda df, s: cv._cache_dir() / "fake.png")
     c = cv.get_chart_context("EUR/USD")
     assert "sideways" in c
 
@@ -101,8 +102,7 @@ def test_cache_no_second_call(monkeypatch):
         return "trend: uptrend (conf=0.80). SR: . Rec: enter long"
 
     monkeypatch.setattr(cv, "fetch_ohlcv", lambda s: _fake_df())
-    monkeypatch.setattr(cv, "generate_chart_png",
-                        lambda df, s: cv._cache_dir() / "fake.png")
+    monkeypatch.setattr(cv, "generate_chart_png", lambda df, s: cv._cache_dir() / "fake.png")
     monkeypatch.setattr(cv, "analyze_chart", fake_analyze)
 
     c1 = cv.get_chart_context("EUR/USD")
@@ -128,14 +128,29 @@ def test_entry_hard_block_blocks_signal():
     from hermes_core.engines import evaluate_entry
 
     prices = [1.10] * 40 + [1.05]  # oversold-ish tail
-    strat = {"strategy_type": "mean_reversion", "session_filter": "24h",
-             "entry": {"threshold": 30}, "position_size_r": 0.4}
+    strat = {
+        "strategy_type": "mean_reversion",
+        "session_filter": "24h",
+        "entry": {"threshold": 30},
+        "position_size_r": 0.4,
+    }
     # valid market context would give a signal; an L14 context must not
-    sig = evaluate_entry("EUR/USD", prices, strat, context="downtrend avoid entirely",
-                         session_token="LDN", current_cycle=1)
+    sig = evaluate_entry(
+        "EUR/USD",
+        prices,
+        strat,
+        context="downtrend avoid entirely",
+        session_token="LDN",
+        current_cycle=1,
+    )
     assert sig is None
     # and the soft filter also blocks a low-quality sell
-    sig2 = evaluate_entry("EUR/USD", prices, strat,
-                          context="sideways (conf=0.10). Rec: sell",
-                          session_token="LDN", current_cycle=1)
+    sig2 = evaluate_entry(
+        "EUR/USD",
+        prices,
+        strat,
+        context="sideways (conf=0.10). Rec: sell",
+        session_token="LDN",
+        current_cycle=1,
+    )
     assert sig2 is None

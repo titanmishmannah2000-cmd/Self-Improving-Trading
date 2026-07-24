@@ -42,7 +42,9 @@ def test_propose_rr_guard_fix(tmp_path, monkeypatch):
         "top_reasons": [{"reason": "rr_guard", "n": 21}],
     }
     notes = propose_skip_shadow_notes(
-        "EUR/USD", "forex", analysis,
+        "EUR/USD",
+        "forex",
+        analysis,
         strategy={"stop_loss_pct": 1.5, "profit_target_pct": 1.0},
     )
     assert any(n.get("variable") == "profit_target_pct" for n in notes)
@@ -65,12 +67,18 @@ def test_maybe_fires_and_latches(tmp_path, monkeypatch):
     monkeypatch.setenv("SKIP_SHADOW_REFLECT", "1")
     skips_path = tmp_path / "skips.jsonl"
     rows = [
-        {"ts": i, "pair": "EUR/USD", "cycle": i, "reason": "no_signal",
-         "reason_skipped": "no_signal"}
+        {
+            "ts": i,
+            "pair": "EUR/USD",
+            "cycle": i,
+            "reason": "no_signal",
+            "reason_skipped": "no_signal",
+        }
         for i in range(55)
     ]
     skips_path.write_text(
-        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8",
+        "\n".join(json.dumps(r) for r in rows) + "\n",
+        encoding="utf-8",
     )
     (tmp_path / "gp_shadow.jsonl").write_text("", encoding="utf-8")
 
@@ -96,13 +104,15 @@ def test_combined_reflect_attaches_skip_ctx(tmp_path, monkeypatch):
     import hermes_core.engines.reflect as rf
 
     monkeypatch.setattr(rf, "hypotheses_path", lambda bot=None: tmp_path / "h.jsonl")
-    losing = [
-        {"pnl_pct": -1.0, "exit_price": 1.0, "entry_price": 1.01} for _ in range(6)
-    ]
+    losing = [{"pnl_pct": -1.0, "exit_price": 1.0, "entry_price": 1.01} for _ in range(6)]
     goal = {"max_drawdown": 0.5}
     strat = {"stop_loss_pct": 1.5, "profit_target_pct": 3.0}
     recs = rf.combined_reflect(
-        "EUR/USD", losing, goal=goal, strategy=strat, bot="forex",
+        "EUR/USD",
+        losing,
+        goal=goal,
+        strategy=strat,
+        bot="forex",
         skipped_json="skips=40; top=no_signal(80%)",
     )
     assert recs

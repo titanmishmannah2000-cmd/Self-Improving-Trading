@@ -28,6 +28,7 @@ def _tmp_state(tmp_path, monkeypatch):
 def _known_series(n=120, start=1.10, drift=-0.0005, vol=0.002, seed=5):
     """A calm-ish price series with enough bars for feature extraction."""
     import random
+
     rng = random.Random(seed)
     out = [start]
     for _ in range(1, n):
@@ -41,6 +42,7 @@ def test_9dim_finite():
     assert sig is not None
     assert len(sig) == cl.CRISIS_SIGNATURE_LENGTH
     import math
+
     assert all(math.isfinite(x) for x in sig)
 
 
@@ -48,7 +50,7 @@ def test_covid_nn():
     # the exact pre-seeded COVID fingerprint -> nearest crisis MUST be COVID-19
     rec = cl.get_crisis_recommendation(list(cl.COVID_SIG))
     assert rec is not None
-    assert rec["crisis_name"] == "COVID-19"      # pre-seeded id resolved
+    assert rec["crisis_name"] == "COVID-19"  # pre-seeded id resolved
     assert rec["novel"] is False
     assert rec["recommended_stop_pct"] == 2.5
 
@@ -59,12 +61,12 @@ def test_flatline_saves():
     assert cid is not None
     assert cid.startswith("lived_EUR/USD_")
     crises = cl._load_crises()
-    assert cid in crises                         # append-only persisted
+    assert cid in crises  # append-only persisted
 
 
 def test_zero_history_safe():
-    rec = cl.get_crisis_recommendation([])       # zero crisis history
-    assert isinstance(rec, dict)                 # safe defaults, no exception
+    rec = cl.get_crisis_recommendation([])  # zero crisis history
+    assert isinstance(rec, dict)  # safe defaults, no exception
     assert rec["novel"] is True
     rec2 = cl.get_crisis_recommendation(None)
     assert isinstance(rec2, dict)
@@ -83,6 +85,7 @@ def test_novel_regime_flatlines_and_logs():
     lines = cl.FLATLINE_LOG.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1
     import json
+
     assert json.loads(lines[0])["reason"] == "NOVEL_REGIME"
 
 

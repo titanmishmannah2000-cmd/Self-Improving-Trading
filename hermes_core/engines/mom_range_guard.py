@@ -13,8 +13,8 @@ Never raises; never blocks non-momentum entry types.
 
 from __future__ import annotations
 
-from hermes_core.env import get_env
 from hermes_core.engines.risk import PROBE_SIZE_FRACTION
+from hermes_core.env import get_env
 
 MIN_CONFLUENCE = 2
 

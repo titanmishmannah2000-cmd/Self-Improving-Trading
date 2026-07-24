@@ -10,7 +10,6 @@ Network-free. Covers:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -32,10 +31,20 @@ def test_canonical_path_is_underscore(_tmp_discovered):
 
 
 def test_save_writes_expr_and_expr_str(_tmp_discovered):
-    gp._save_discovered("EUR/USD", [{
-        "pair": "EUR/USD", "name": "(price-sma20)", "expr": "(price-sma20)",
-        "fitness": 0.3, "win_rate": 0.55, "oos_corr": 0.3, "source": "genetic",
-    }])
+    gp._save_discovered(
+        "EUR/USD",
+        [
+            {
+                "pair": "EUR/USD",
+                "name": "(price-sma20)",
+                "expr": "(price-sma20)",
+                "fitness": 0.3,
+                "win_rate": 0.55,
+                "oos_corr": 0.3,
+                "source": "genetic",
+            }
+        ],
+    )
     path = _tmp_discovered / "EUR_USD.json"
     assert path.exists()
     rows = json.loads(path.read_text(encoding="utf-8"))
@@ -47,10 +56,20 @@ def test_save_writes_expr_and_expr_str(_tmp_discovered):
 def test_legacy_slash_path_migrates_votable(_tmp_discovered):
     legacy = _tmp_discovered / "EUR" / "USD.json"
     legacy.parent.mkdir(parents=True)
-    legacy.write_text(json.dumps([{
-        "name": "(ema20-sma20)", "expr": "(ema20-sma20)",
-        "fitness": 0.25, "win_rate": 0.5, "oos_corr": 0.28,
-    }]), encoding="utf-8")
+    legacy.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "(ema20-sma20)",
+                    "expr": "(ema20-sma20)",
+                    "fitness": 0.25,
+                    "win_rate": 0.5,
+                    "oos_corr": 0.28,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
 
     loaded = load_discovered_indicators("EUR/USD", include_shared=False)
     assert len(loaded) == 1
@@ -64,10 +83,20 @@ def test_seed_fixture_does_not_migrate_or_block_invent(_tmp_discovered):
     """Dashboard seeds like ta.rsi(close,14) must not become canonical invent-blockers."""
     legacy = _tmp_discovered / "EUR" / "USD.json"
     legacy.parent.mkdir(parents=True)
-    legacy.write_text(json.dumps([{
-        "name": "rsi_14", "expr_str": "ta.rsi(close,14)",
-        "fitness": 0.82, "win_rate": 0.61, "source": "seed",
-    }]), encoding="utf-8")
+    legacy.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "rsi_14",
+                    "expr_str": "ta.rsi(close,14)",
+                    "fitness": 0.82,
+                    "win_rate": 0.61,
+                    "source": "seed",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
 
     loaded = load_discovered_indicators("EUR/USD", include_shared=False)
     assert len(loaded) == 1
@@ -79,10 +108,20 @@ def test_canon_seed_pollution_is_scrubbed(_tmp_discovered):
     """Seed rows wrongly saved to EUR_USD.json must be deleted on load."""
     canon = _tmp_discovered / "EUR_USD.json"
     canon.parent.mkdir(parents=True, exist_ok=True)
-    canon.write_text(json.dumps([{
-        "name": "rsi_14", "expr_str": "ta.rsi(close,14)",
-        "fitness": 0.82, "win_rate": 0.61, "source": "seed",
-    }]), encoding="utf-8")
+    canon.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "rsi_14",
+                    "expr_str": "ta.rsi(close,14)",
+                    "fitness": 0.82,
+                    "win_rate": 0.61,
+                    "source": "seed",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
     loaded = load_discovered_indicators("EUR/USD", include_shared=False)
     assert loaded == []
     assert not canon.exists()
@@ -91,15 +130,26 @@ def test_canon_seed_pollution_is_scrubbed(_tmp_discovered):
 def test_live_feedback_does_not_persist_seed_fixtures(_tmp_discovered, monkeypatch):
     """B10 must not re-write ta.*/seed fixtures into the canonical path."""
     import hermes_core.engines.decision_cortex as cx
+
     monkeypatch.setattr(cx, "CORTEX_DIR", _tmp_discovered / "cortex")
     monkeypatch.setattr(cx, "MEMORY_PATH", _tmp_discovered / "cortex" / "m.json")
     monkeypatch.setattr(cx, "EXILE_PATH", _tmp_discovered / "cortex" / "e.json")
     legacy = _tmp_discovered / "EUR" / "USD.json"
     legacy.parent.mkdir(parents=True)
-    legacy.write_text(json.dumps([{
-        "name": "rsi_14", "expr_str": "ta.rsi(close,14)",
-        "fitness": 0.82, "win_rate": 0.61, "source": "seed",
-    }]), encoding="utf-8")
+    legacy.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "rsi_14",
+                    "expr_str": "ta.rsi(close,14)",
+                    "fitness": 0.82,
+                    "win_rate": 0.61,
+                    "source": "seed",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
     n = gp.apply_live_feedback("EUR/USD", cx.Cortex())
     assert n == 0
     assert not (_tmp_discovered / "EUR_USD.json").exists()
@@ -107,12 +157,29 @@ def test_live_feedback_does_not_persist_seed_fixtures(_tmp_discovered, monkeypat
 
 def test_expr_str_fallback_votes(_tmp_discovered):
     """Indicators that only have expr_str (valid GP) still produce a shadow signal."""
-    gp._save_discovered("EUR/USD", [
-        {"name": "a", "expr_str": "(price-sma20)", "fitness": 0.4, "win_rate": 0.6,
-         "backtest_approved": True, "interval": "1d", "horizon": 10},
-        {"name": "b", "expr_str": "(ema20-sma20)", "fitness": 0.35, "win_rate": 0.55,
-         "backtest_approved": True, "interval": "1d", "horizon": 10},
-    ])
+    gp._save_discovered(
+        "EUR/USD",
+        [
+            {
+                "name": "a",
+                "expr_str": "(price-sma20)",
+                "fitness": 0.4,
+                "win_rate": 0.6,
+                "backtest_approved": True,
+                "interval": "1d",
+                "horizon": 10,
+            },
+            {
+                "name": "b",
+                "expr_str": "(ema20-sma20)",
+                "fitness": 0.35,
+                "win_rate": 0.55,
+                "backtest_approved": True,
+                "interval": "1d",
+                "horizon": 10,
+            },
+        ],
+    )
     # Re-load normalizes expr_str → expr
     rows = load_discovered_indicators("EUR/USD", include_shared=False)
     assert all(indicator_expr(r) for r in rows)
@@ -135,6 +202,7 @@ def test_is_gp_expr_rejects_ta_seeds():
 def test_discover_persists_canonical_schema(_tmp_discovered):
     import math
     import random
+
     rng = random.Random(3)
     prices = [1.10]
     for i in range(1, 400):
@@ -143,7 +211,12 @@ def test_discover_persists_canonical_schema(_tmp_discovered):
 
     # Match live forex invent regime (daily / horizon-10).
     inds = gp.discover(
-        "EUR/USD", prices, generations=40, pop_size=40, top_k=3, horizon=10,
+        "EUR/USD",
+        prices,
+        generations=40,
+        pop_size=40,
+        top_k=3,
+        horizon=10,
         interval="1d",
     )
     assert len(inds) >= 1

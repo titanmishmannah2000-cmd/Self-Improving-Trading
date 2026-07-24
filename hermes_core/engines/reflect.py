@@ -36,9 +36,9 @@ from pathlib import Path
 from hermes_core.config import load_config, load_strategy_for_pair
 from hermes_core.state.paths import hypotheses_path, reflection_latch_path
 
-STOP_FLOOR = 0.5          # [GUARD L45] stop_loss_pct never goes below this
-STOP_TIGHTEN = 0.3        # DD breach -> tighten by this much
-CONFIDENCE = 0.40         # L1 fixed confidence gate
+STOP_FLOOR = 0.5  # [GUARD L45] stop_loss_pct never goes below this
+STOP_TIGHTEN = 0.3  # DD breach -> tighten by this much
+CONFIDENCE = 0.40  # L1 fixed confidence gate
 
 
 # ── pure helpers (unit-tested, no I/O) ─────────────────────────────────────
@@ -50,8 +50,7 @@ def aggregate_trades(trades: list[dict]) -> dict:
     goal's max_drawdown, expressed in %). Both are in percent units.
     """
     if not trades:
-        return {"count": 0, "win_rate": 0.0, "ret": 0.0,
-                "worst_loss": 0.0, "drawdown": 0.0}
+        return {"count": 0, "win_rate": 0.0, "ret": 0.0, "worst_loss": 0.0, "drawdown": 0.0}
     pnls = [float(t.get("pnl_pct", 0.0)) for t in trades]
     wins = sum(1 for p in pnls if p > 0)
     worst = min(pnls) if pnls else 0.0
@@ -59,8 +58,8 @@ def aggregate_trades(trades: list[dict]) -> dict:
         "count": len(pnls),
         "win_rate": wins / len(pnls),
         "ret": sum(pnls),
-        "worst_loss": worst,                # <= 0
-        "drawdown": -worst,                 # >= 0, percent
+        "worst_loss": worst,  # <= 0
+        "drawdown": -worst,  # >= 0, percent
     }
 
 
@@ -145,6 +144,7 @@ def combined_reflect(
         goal = (load_config(bot) if bot else {}).get("goal", {})
     if strategy is None:
         from hermes_core.config import load_strategy_for_pair
+
         strategy = load_strategy_for_pair(pair, bot)
 
     change = layer1_rule_based(pair, trades, goal, strategy)
@@ -187,9 +187,9 @@ def combined_reflect(
 # Do NOT implement the gate at 55 as the standard — 65 is the standard, 75 the
 # unanimous bar. See roadmap S11 DO-NOT.
 # ═══════════════════════════════════════════════════════════════════════════
-L2_MIN_SCORE = 65          # [GUARD L53] below this, L2 is never invoked
-L2_UNANIMOUS_SCORE = 75    # at/above this, 3/3 unanimous required
-APPLY_CONFIDENCE = 0.40    # [GUARD L53] min confidence to apply any change
+L2_MIN_SCORE = 65  # [GUARD L53] below this, L2 is never invoked
+L2_UNANIMOUS_SCORE = 75  # at/above this, 3/3 unanimous required
+APPLY_CONFIDENCE = 0.40  # [GUARD L53] min confidence to apply any change
 
 # Ordered cascade: DeepSeek -> Gemini -> Groq. Each is a backup if the prior
 # call fails (network/quota/empty). Tests inject fakes; prod lazy-imports.
@@ -199,16 +199,20 @@ DEFAULT_MODELS = ("deepseek", "gemini", "groq")
 def call_deepseek(prompt: str, api_key: str | None = None) -> str:  # pragma: no cover
     """DeepSeek chat completion. Lazy import; network. Monkeypatch in tests."""
     from openai import OpenAI
-    client = OpenAI(api_key=api_key or _env("DEEPSEEK_API_KEY"),
-                    base_url="https://api.deepseek.com")
+
+    client = OpenAI(
+        api_key=api_key or _env("DEEPSEEK_API_KEY"), base_url="https://api.deepseek.com"
+    )
     resp = client.chat.completions.create(
-        model="deepseek-chat", messages=[{"role": "user", "content": prompt}])
+        model="deepseek-chat", messages=[{"role": "user", "content": prompt}]
+    )
     return resp.choices[0].message.content or ""
 
 
 def call_gemini(prompt: str, api_key: str | None = None) -> str:  # pragma: no cover
     """Gemini chat generation. Lazy import; network. Monkeypatch in tests."""
     import google.generativeai as genai
+
     genai.configure(api_key=api_key or _env("GEMINI_API_KEY"))
     model = genai.GenerativeModel("gemini-1.5-flash")
     resp = model.generate_content(prompt)
@@ -218,15 +222,19 @@ def call_gemini(prompt: str, api_key: str | None = None) -> str:  # pragma: no c
 def call_groq(prompt: str, api_key: str | None = None) -> str:  # pragma: no cover
     """Groq chat completion (fallback). Lazy import; network. Monkeypatch in tests."""
     from openai import OpenAI
-    client = OpenAI(api_key=api_key or _env("GROQ_API_KEY"),
-                    base_url="https://api.groq.com/openai/v1")
+
+    client = OpenAI(
+        api_key=api_key or _env("GROQ_API_KEY"), base_url="https://api.groq.com/openai/v1"
+    )
     resp = client.chat.completions.create(
-        model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}])
+        model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}]
+    )
     return resp.choices[0].message.content or ""
 
 
 def _env(name: str) -> str | None:
     import os
+
     return os.environ.get(name)
 
 
@@ -246,6 +254,7 @@ def _parse_vote(text: str) -> bool:
     Fail-closed.
     """
     import re
+
     t = (text or "").strip().upper()
     if not t:
         return False
@@ -255,12 +264,28 @@ def _parse_vote(text: str) -> bool:
 class ConsensusResult:
     """Outcome of the L2 consensus gate over a single proposal."""
 
-    __slots__ = ("score", "threshold", "votes_yes", "votes_total",
-                 "required", "confidence", "decision", "reasons")
+    __slots__ = (
+        "score",
+        "threshold",
+        "votes_yes",
+        "votes_total",
+        "required",
+        "confidence",
+        "decision",
+        "reasons",
+    )
 
-    def __init__(self, score: float, threshold: float, votes_yes: int,
-                 votes_total: int, required: int, confidence: float,
-                 decision: bool, reasons: list[str]):
+    def __init__(
+        self,
+        score: float,
+        threshold: float,
+        votes_yes: int,
+        votes_total: int,
+        required: int,
+        confidence: float,
+        decision: bool,
+        reasons: list[str],
+    ):
         self.score = score
         self.threshold = threshold
         self.votes_yes = votes_yes
@@ -272,10 +297,14 @@ class ConsensusResult:
 
     def to_dict(self) -> dict:
         return {
-            "score": self.score, "threshold": self.threshold,
-            "votes_yes": self.votes_yes, "votes_total": self.votes_total,
-            "required": self.required, "confidence": self.confidence,
-            "decision": self.decision, "reasons": self.reasons,
+            "score": self.score,
+            "threshold": self.threshold,
+            "votes_yes": self.votes_yes,
+            "votes_total": self.votes_total,
+            "required": self.required,
+            "confidence": self.confidence,
+            "decision": self.decision,
+            "reasons": self.reasons,
         }
 
 
@@ -308,13 +337,18 @@ def call_llm_consensus(
     required vote count (2/3 or 3/3) must be met AND confidence >= APPLY_CONF.
     """
     score = float(score if score is not None else proposal.get("confidence", 0.0) * 100)
-    confidence = float(confidence if confidence is not None
-                       else proposal.get("confidence", 0.0))
+    confidence = float(confidence if confidence is not None else proposal.get("confidence", 0.0))
     required, label = _required_votes(score)
 
     if required == 0:
         return ConsensusResult(
-            score, L2_MIN_SCORE, 0, 0, 0, confidence, False,
+            score,
+            L2_MIN_SCORE,
+            0,
+            0,
+            0,
+            confidence,
+            False,
             [f"score {score:.0f} < {L2_MIN_SCORE}: L2 not invoked; L1 stands on its own"],
         )
 
@@ -342,8 +376,7 @@ def call_llm_consensus(
         if _parse_vote(reply):
             votes_yes += 1
 
-    reasons = [f"score {score:.0f} -> {label}; votes {votes_yes}/{reached} "
-               f"(required {required})"]
+    reasons = [f"score {score:.0f} -> {label}; votes {votes_yes}/{reached} (required {required})"]
     if call_errors:
         reasons.append("model errors: " + ", ".join(call_errors))
 
@@ -357,14 +390,21 @@ def call_llm_consensus(
     else:
         reasons.append("CONSENSUS REJECT")
     return ConsensusResult(
-        score, L2_MIN_SCORE if score < L2_UNANIMOUS_SCORE else L2_UNANIMOUS_SCORE,
-        votes_yes, reached, required, confidence, decision, reasons,
+        score,
+        L2_MIN_SCORE if score < L2_UNANIMOUS_SCORE else L2_UNANIMOUS_SCORE,
+        votes_yes,
+        reached,
+        required,
+        confidence,
+        decision,
+        reasons,
     )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Live latch + reflect → L2 → backtest → deploy (wired from the trade loop)
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def _load_reflection_latches(bot: str = "forex") -> dict:
     path = reflection_latch_path(bot)
@@ -402,6 +442,7 @@ def _mark_reflection_done(pair: str, closed_count: int, bot: str = "forex") -> N
 def strategy_yaml_path(pair: str, bot: str = "forex") -> Path:
     """Canonical per-pair strategy file on the runtime volume."""
     from hermes_core.config.loader import strategy_yaml_path as _live
+
     return _live(pair, bot)
 
 
@@ -436,11 +477,12 @@ def apply_strategy_change(
     on validation failure so callers can refuse a bad deploy.
     """
     import copy
+
     import yaml
+
     from hermes_core.config import validate_strategy_params
 
-    strat = copy.deepcopy(strategy if strategy is not None
-                          else load_strategy_for_pair(pair, bot))
+    strat = copy.deepcopy(strategy if strategy is not None else load_strategy_for_pair(pair, bot))
     _set_strategy_param(strat, variable, new_val)
     if version is not None:
         strat["version"] = str(version)
@@ -485,8 +527,13 @@ def run_reflection_pipeline(
         strategy = load_strategy_for_pair(pair, bot)
 
     proposals = combined_reflect(
-        pair, trades, goal=goal, chart_context=chart_context,
-        skipped_json=skipped_json, strategy=strategy, bot=bot,
+        pair,
+        trades,
+        goal=goal,
+        chart_context=chart_context,
+        skipped_json=skipped_json,
+        strategy=strategy,
+        bot=bot,
     )
     if not proposals:
         return {"status": "no_proposal", "pair": pair, "deployed": False}
@@ -499,68 +546,101 @@ def run_reflection_pipeline(
 
     if score >= L2_MIN_SCORE:
         cons = call_llm_consensus(
-            prop, context=chart_context, score=score,
+            prop,
+            context=chart_context,
+            score=score,
             confidence=float(prop.get("confidence", 0.0)),
             callers=llm_callers,
         )
-        _log_hypothesis({
-            **{k: prop.get(k) for k in ("pair", "bot", "variable", "old", "new")},
-            "status": "l2_approved" if cons.decision else "l2_rejected",
-            "l2": cons.to_dict(),
-            "ts": __import__("time").time(),
-        })
+        _log_hypothesis(
+            {
+                **{k: prop.get(k) for k in ("pair", "bot", "variable", "old", "new")},
+                "status": "l2_approved" if cons.decision else "l2_rejected",
+                "l2": cons.to_dict(),
+                "ts": __import__("time").time(),
+            }
+        )
         if not cons.decision:
             return {
-                "status": "l2_reject", "pair": pair, "deployed": False,
-                "proposal": prop, "l2": cons.to_dict(),
+                "status": "l2_reject",
+                "pair": pair,
+                "deployed": False,
+                "proposal": prop,
+                "l2": cons.to_dict(),
             }
 
     kwargs = {
-        "strategy": strategy, "prices": prices, "bot": bot,
+        "strategy": strategy,
+        "prices": prices,
+        "bot": bot,
     }
     if fetch_prices is not None:
         kwargs["fetch_prices"] = fetch_prices
     verdict = backtest_with_history(
-        pair, prop["variable"], prop["old"], prop["new"], **kwargs,
+        pair,
+        prop["variable"],
+        prop["old"],
+        prop["new"],
+        **kwargs,
     )
-    _log_hypothesis({
-        **{k: prop.get(k) for k in ("pair", "bot", "variable", "old", "new")},
-        "status": "backtest_approved" if verdict.get("approved") else "backtest_rejected",
-        "backtest": {
-            "approved": verdict.get("approved"),
-            "reason": verdict.get("reason"),
-            "version_bumped": (verdict.get("phases") or {}).get("phase6_deploy", {}).get(
-                "version_bumped"),
-        },
-        "ts": __import__("time").time(),
-    })
+    _log_hypothesis(
+        {
+            **{k: prop.get(k) for k in ("pair", "bot", "variable", "old", "new")},
+            "status": "backtest_approved" if verdict.get("approved") else "backtest_rejected",
+            "backtest": {
+                "approved": verdict.get("approved"),
+                "reason": verdict.get("reason"),
+                "version_bumped": (verdict.get("phases") or {})
+                .get("phase6_deploy", {})
+                .get("version_bumped"),
+            },
+            "ts": __import__("time").time(),
+        }
+    )
     if not verdict.get("approved"):
         return {
-            "status": "backtest_reject", "pair": pair, "deployed": False,
-            "proposal": prop, "verdict": verdict,
+            "status": "backtest_reject",
+            "pair": pair,
+            "deployed": False,
+            "proposal": prop,
+            "verdict": verdict,
         }
 
     bumped = (verdict.get("phases") or {}).get("phase6_deploy", {}).get("version_bumped")
     if not auto_deploy:
         return {
-            "status": "approved_pending_deploy", "pair": pair, "deployed": False,
-            "proposal": prop, "verdict": verdict, "version": bumped,
+            "status": "approved_pending_deploy",
+            "pair": pair,
+            "deployed": False,
+            "proposal": prop,
+            "verdict": verdict,
+            "version": bumped,
         }
 
     written = apply_strategy_change(
-        pair, prop["variable"], prop["new"],
-        bot=bot, version=bumped, strategy=strategy,
+        pair,
+        prop["variable"],
+        prop["new"],
+        bot=bot,
+        version=bumped,
+        strategy=strategy,
     )
-    _log_hypothesis({
-        **{k: prop.get(k) for k in ("pair", "bot", "variable", "old", "new")},
-        "status": "deployed",
-        "version": written.get("version"),
-        "ts": __import__("time").time(),
-    })
+    _log_hypothesis(
+        {
+            **{k: prop.get(k) for k in ("pair", "bot", "variable", "old", "new")},
+            "status": "deployed",
+            "version": written.get("version"),
+            "ts": __import__("time").time(),
+        }
+    )
     return {
-        "status": "deployed", "pair": pair, "deployed": True,
-        "proposal": prop, "verdict": verdict,
-        "version": written.get("version"), "strategy": written,
+        "status": "deployed",
+        "pair": pair,
+        "deployed": True,
+        "proposal": prop,
+        "verdict": verdict,
+        "version": written.get("version"),
+        "strategy": written,
     }
 
 
@@ -621,6 +701,7 @@ def maybe_reflect_pair(
             load_pair_skips,
             skip_shadow_reflect_enabled,
         )
+
         if skip_shadow_reflect_enabled():
             analysis = analyze_skip_shadow(
                 load_pair_skips(bot, pair),
@@ -632,14 +713,22 @@ def maybe_reflect_pair(
 
     try:
         result = run_reflection_pipeline(
-            pair, batch, bot=bot, goal=goal, chart_context=chart_context,
-            prices=prices, fetch_prices=fetch_prices, llm_callers=llm_callers,
+            pair,
+            batch,
+            bot=bot,
+            goal=goal,
+            chart_context=chart_context,
+            prices=prices,
+            fetch_prices=fetch_prices,
+            llm_callers=llm_callers,
             auto_deploy=auto_deploy,
             skipped_json=skipped_json,
         )
     except Exception as exc:  # noqa: BLE001 — never break the trade loop
         result = {
-            "status": "error", "pair": pair, "deployed": False,
+            "status": "error",
+            "pair": pair,
+            "deployed": False,
             "error": f"{type(exc).__name__}: {exc}",
         }
     _mark_reflection_done(pair, total, bot)

@@ -21,9 +21,7 @@ def is_polluted(rec: dict) -> bool:
         return True
     if rec.get("mode") == "shadow" and "reasoning" in rec and "status" not in rec:
         return True
-    if rec.get("variable") == "rsi_period" and rec.get("reasoning") == "improve WR":
-        return True
-    return False
+    return bool(rec.get("variable") == "rsi_period" and rec.get("reasoning") == "improve WR")
 
 
 def clean_file(path: Path, stamp: str) -> tuple[int, int]:

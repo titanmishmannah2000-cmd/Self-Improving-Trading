@@ -64,7 +64,7 @@ def test_suppress_mr():
 def test_priority_discovery():
     c = dc.Cortex()
     c.exile_indicator("ind_a")
-    c.exile_indicator("ind_b")          # >=2 exiled fleet-wide
+    c.exile_indicator("ind_b")  # >=2 exiled fleet-wide
     eng = pe.PolicyEngine()
     pol = eng.evaluate(10, ["EUR/USD"], c)
     assert pol.priority_discovery is True
@@ -81,7 +81,7 @@ def test_no_priority_discovery_single():
 
 def test_cortex_best_updates():
     c = dc.Cortex()
-    assert c.best_entry_type() == "mean_reversion"   # no data -> safe default
+    assert c.best_entry_type() == "mean_reversion"  # no data -> safe default
     c.record_outcome("EUR/USD", "gp_ensemble", 1.0)
     c.record_outcome("EUR/USD", "gp_ensemble", 1.0)
     c.record_outcome("EUR/USD", "mean_reversion", -1.0)
@@ -104,7 +104,7 @@ def test_exile_after_5_attempts_low_wr():
 def test_exile_not_before_5_attempts():
     c = dc.Cortex()
     ind = "slow_ind"
-    for _ in range(4):                 # only 4 attempts -> gate not reached
+    for _ in range(4):  # only 4 attempts -> gate not reached
         c.record_indicator_outcome(ind, -1.0)
     assert c.is_indicator_exiled(ind) is False
 
@@ -113,11 +113,11 @@ def test_reinstate_after_recovery():
     c = dc.Cortex()
     ind = "recover_ind"
     for _ in range(5):
-        c.record_indicator_outcome(ind, -1.0)   # exiled at WR 0.0
+        c.record_indicator_outcome(ind, -1.0)  # exiled at WR 0.0
     assert c.is_indicator_exiled(ind) is True
     # pile on wins up to a decay checkpoint (attempt 100) with WR >= 40%
     for _ in range(95):
-        c.record_indicator_outcome(ind, 1.0)    # attempts=100, wins=95 -> WR 0.95
+        c.record_indicator_outcome(ind, 1.0)  # attempts=100, wins=95 -> WR 0.95
     assert c.is_indicator_exiled(ind) is False
 
 

@@ -190,18 +190,21 @@ def _release(h):
 
 def _run_bot(bot, live_api, cycles=80):
     feed = _Feed({"forex": 1.10, "gold": 2000.0, "crypto": 30000.0}[bot])
-    cfg = load_config(bot)
+    load_config(bot)
     open_positions: dict = {}
     reentry: dict = {}
     completed = 0
     for cycle in range(1, cycles):
         s = run_cycle(
-            bot, cycle, fetch_fn=feed,
+            bot,
+            cycle,
+            fetch_fn=feed,
             push_fn=lambda b, s: None,  # we push real trades below, not the raw summary
             now_fn=lambda c=cycle: c * 3600.0,
             chart_context_fn=lambda p: "",
             ensemble_fn=lambda p: "neutral",
-            open_positions=open_positions, reentry=reentry,
+            open_positions=open_positions,
+            reentry=reentry,
             consecutive_failures=0,
         )
         # Build REAL closed-trade records from this cycle's exits and push them
@@ -210,12 +213,18 @@ def _run_bot(bot, live_api, cycles=80):
         if exits:
             recs = []
             for pair, reason in exits:
-                recs.append({
-                    "id": f"t{cycle}-{pair}", "pair": pair,
-                    "exit_reason": reason, "pnl_pct": 1.0,
-                    "entry_price": 1.0, "exit_price": 1.01,
-                    "entry_ts": (cycle - 1) * 60, "exit_ts": cycle * 60,
-                })
+                recs.append(
+                    {
+                        "id": f"t{cycle}-{pair}",
+                        "pair": pair,
+                        "exit_reason": reason,
+                        "pnl_pct": 1.0,
+                        "entry_price": 1.0,
+                        "exit_price": 1.01,
+                        "entry_ts": (cycle - 1) * 60,
+                        "exit_ts": cycle * 60,
+                    }
+                )
             live_api("POST", f"/api/ingest/{bot}", {"recent_trades": recs})
         completed += len(exits)
     return completed
@@ -260,8 +269,13 @@ def test_min_trades_completed(live_api):
 
 def test_reflection_after_cadence():
     """Reflection L1 fires after >=5 closed trades (cadence override = 5)."""
-    trades = [{"pnl_pct": -2.0}, {"pnl_pct": -1.5}, {"pnl_pct": -3.0},
-              {"pnl_pct": -0.5}, {"pnl_pct": -2.5}]
+    trades = [
+        {"pnl_pct": -2.0},
+        {"pnl_pct": -1.5},
+        {"pnl_pct": -3.0},
+        {"pnl_pct": -0.5},
+        {"pnl_pct": -2.5},
+    ]
     strat = {"stop_loss_pct": 1.5, "profit_target_pct": 3.0}
     goal = {"max_drawdown": 2.0}
     recs = reflect.combined_reflect("EUR/USD", trades, goal, strategy=strat, bot="forex")
@@ -272,8 +286,11 @@ def test_reflection_after_cadence():
 def test_bot_separation_dashboard(live_api):
     """Forex trades never appear under gold/crypto (composite PK isolation)."""
     for bot, pair in (("forex", "EUR/USD"), ("gold", "XAU/USD"), ("crypto", "BTC/USD")):
-        live_api("POST", f"/api/ingest/{bot}",
-                 {"recent_trades": [{"id": "SHARED", "pair": pair, "pnl_pct": 1.1}]})
+        live_api(
+            "POST",
+            f"/api/ingest/{bot}",
+            {"recent_trades": [{"id": "SHARED", "pair": pair, "pnl_pct": 1.1}]},
+        )
     fx = live_api("GET", "/api/trades/forex")[1]
     gd = live_api("GET", "/api/trades/gold")[1]
     cr = live_api("GET", "/api/trades/crypto")[1]
@@ -291,9 +308,16 @@ def test_health_engines_after_run(live_api):
     h = _capture()
     reg = {}
     try:
-        run_cycle("forex", 1, fetch_fn=_Feed(1.10), health_registry=reg,
-                  now_fn=lambda: 10 * 3600.0, chart_context_fn=lambda p: "",
-                  ensemble_fn=lambda p: "neutral", consecutive_failures=0)
+        run_cycle(
+            "forex",
+            1,
+            fetch_fn=_Feed(1.10),
+            health_registry=reg,
+            now_fn=lambda: 10 * 3600.0,
+            chart_context_fn=lambda p: "",
+            ensemble_fn=lambda p: "neutral",
+            consecutive_failures=0,
+        )
     finally:
         _release(h)
     assert reg.get("price_adapter") is True
@@ -326,7 +350,8 @@ def test_discord_alert():
     reentry: dict = {}
     for cyc in range(1, 80):
         run_cycle(
-            bot, cyc,
+            bot,
+            cyc,
             fetch_fn=feed,
             now_fn=lambda c=cyc: c * 3600.0,
             chart_context_fn=lambda p: "",
@@ -337,8 +362,7 @@ def test_discord_alert():
             consecutive_failures=0,
         )
     # at least one close must have fired an alert
-    assert any(c[0] == bot and c[2] in ("stop_loss", "take_profit", "time_exit")
-               for c in calls), (
+    assert any(c[0] == bot and c[2] in ("stop_loss", "take_profit", "time_exit") for c in calls), (
         f"alert_fn not called on a real trade close; calls={calls[:3]}"
     )
 
@@ -362,8 +386,12 @@ def test_discord_alert():
 
     with mock.patch("urllib.request.urlopen", _fake_urlopen):
         ok = send_trade_alert(
-            "forex", "EUR/USD", "tp", 1.23,
-            entry_price=1.10000, exit_price=1.10123,
+            "forex",
+            "EUR/USD",
+            "tp",
+            1.23,
+            entry_price=1.10000,
+            exit_price=1.10123,
             webhook_url="https://discord.example/webhook/XYZ",
         )
     assert ok is True
@@ -382,8 +410,7 @@ def test_discord_alert_fail_soft_on_bad_url():
         raise urllib.error.URLError("unreachable")
 
     with mock.patch("urllib.request.urlopen", _boom):
-        ok = send_trade_alert("forex", "EUR/USD", "sl", -0.5,
-                              webhook_url="https://nope.invalid/wh")
+        ok = send_trade_alert("forex", "EUR/USD", "sl", -0.5, webhook_url="https://nope.invalid/wh")
     assert ok is False
 
 
@@ -399,38 +426,53 @@ def test_every_guard_fires_with_log_line(tmp_path):
         strat = load_strategy_for_pair("EUR/USD", "forex")
 
         # L04 session filter (MR only in window) — EUR/USD is london_only
-        assert entry.evaluate_entry("EUR/USD", _prices(1.1), strat,
-                                    session_token="NY") is None
+        assert entry.evaluate_entry("EUR/USD", _prices(1.1), strat, session_token="NY") is None
         fired.add("L04")
 
         # L13 ensemble-context skip (bearish)
-        assert entry.evaluate_entry("EUR/USD", _prices(1.1), strat,
-                                    ensemble_consensus="bearish") is None
+        assert (
+            entry.evaluate_entry("EUR/USD", _prices(1.1), strat, ensemble_consensus="bearish")
+            is None
+        )
         fired.add("L13")
 
         # L14 chart hard-block
-        assert hard_block("avoid downtrend") and entry.evaluate_entry(
-            "EUR/USD", _prices(1.1), strat, context="avoid downtrend") is None
+        assert (
+            hard_block("avoid downtrend")
+            and entry.evaluate_entry("EUR/USD", _prices(1.1), strat, context="avoid downtrend")
+            is None
+        )
         fired.add("L14")
 
         # L16 chart soft-filter (low-quality sell)
-        assert soft_block("(conf=0.2) sell") and entry.evaluate_entry(
-            "EUR/USD", _prices(1.1), strat,
-            context="(conf=0.2) sell") is None
+        assert (
+            soft_block("(conf=0.2) sell")
+            and entry.evaluate_entry("EUR/USD", _prices(1.1), strat, context="(conf=0.2) sell")
+            is None
+        )
         fired.add("L16")
 
         # L18 multi-pair confluence gate (YAML min_oversold_pairs; default 1)
         mom = dict(strat)
         mom["strategy_type"] = "rsi_momentum"
         mom["entry"] = {**(mom.get("entry") or {}), "min_oversold_pairs": 2}
-        assert entry.evaluate_entry("EUR/USD", _prices(1.1), mom,
-                                    oversold_pairs=1, vol_above=True) is None
+        assert (
+            entry.evaluate_entry("EUR/USD", _prices(1.1), mom, oversold_pairs=1, vol_above=True)
+            is None
+        )
         fired.add("L18")
 
         # L23 re-entry cooldown
-        assert entry.evaluate_entry("EUR/USD", _prices(1.1), strat,
-                                    reentry={"EUR/USD": {"last_exit_cycle": 100}},
-                                    current_cycle=110) is None
+        assert (
+            entry.evaluate_entry(
+                "EUR/USD",
+                _prices(1.1),
+                strat,
+                reentry={"EUR/USD": {"last_exit_cycle": 100}},
+                current_cycle=110,
+            )
+            is None
+        )
         fired.add("L23")
 
         # L24 circuit breaker open at cap
@@ -438,10 +480,19 @@ def test_every_guard_fires_with_log_line(tmp_path):
         fired.add("L24")
 
         # L26 breakeven / L27 partial — exercise exit engine
-        pos = {"entry_price": 100.0, "size": 0.1, "stop_loss_pct": 1.5,
-               "profit_target_pct": 3.0, "time_exit_cycles": 288, "held_cycles": 0,
-               "breakeven_set": False, "partial_done": False,
-               "partial_enabled": True, "current_stop": 98.5, "atr": 1.0}
+        pos = {
+            "entry_price": 100.0,
+            "size": 0.1,
+            "stop_loss_pct": 1.5,
+            "profit_target_pct": 3.0,
+            "time_exit_cycles": 288,
+            "held_cycles": 0,
+            "breakeven_set": False,
+            "partial_done": False,
+            "partial_enabled": True,
+            "current_stop": 98.5,
+            "atr": 1.0,
+        }
         ex = exit_mod.evaluate_exit(pos, 102.0, _prices(100.0))
         assert ex is not None and ex.reason in ("breakeven", "partial", "trailing")
         fired.add("L26")
@@ -484,8 +535,8 @@ def test_every_guard_fires_with_log_line(tmp_path):
 
         # L45 reflection stop floor (never below 0.5)
         recs = reflect.layer1_rule_based(
-            "EUR/USD", [{"pnl_pct": -5.0}] * 6, {"max_drawdown": 2.0},
-            {"stop_loss_pct": 0.5})
+            "EUR/USD", [{"pnl_pct": -5.0}] * 6, {"max_drawdown": 2.0}, {"stop_loss_pct": 0.5}
+        )
         assert recs is not None and recs[2] >= 0.5
         fired.add("L45")
 
@@ -494,16 +545,19 @@ def test_every_guard_fires_with_log_line(tmp_path):
         # blows past CRISIS_DD_LIMIT (0.20)
         crash = [100.0, 100.0, 98.0, 95.0, 90.0, 82.0, 70.0, 60.0, 55.0, 52.0]
         crisis_res = backtest._crisis_backtest(
-            crash, "mean_reversion", 40, stop_pct=10.0, target_pct=6.0)
+            crash, "mean_reversion", 40, stop_pct=10.0, target_pct=6.0
+        )
         assert crisis_res["approved"] is False
         fired.add("L53")
-        cons = reflect.call_llm_consensus({"variable": "x", "old": 1, "new": 2},
-                                          score=50.0, confidence=0.4)
+        cons = reflect.call_llm_consensus(
+            {"variable": "x", "old": 1, "new": 2}, score=50.0, confidence=0.4
+        )
         assert cons.decision is False and cons.votes_total == 0
         fired.add("L53")
 
         # L02 flat-price guard
         from hermes_core.engines.guards import bb_bandwidth_guard, flat_price_guard
+
         assert flat_price_guard({"rsi": 0.0, "roc": 0.0, "adx": 0.0}, [1.0] * 10)[0]
         fired.add("L02")
 
@@ -524,6 +578,25 @@ def test_every_guard_fires_with_log_line(tmp_path):
 
     log = LOG_PATH.read_text(encoding="utf-8")
     assert "Traceback" not in log
-    expected = {"L02", "L03", "L04", "L13", "L14", "L15", "L16", "L18", "L21", "L23",
-                "L24", "L26", "L27", "L29", "L35", "L36", "L40", "L45", "L53"}
+    expected = {
+        "L02",
+        "L03",
+        "L04",
+        "L13",
+        "L14",
+        "L15",
+        "L16",
+        "L18",
+        "L21",
+        "L23",
+        "L24",
+        "L26",
+        "L27",
+        "L29",
+        "L35",
+        "L36",
+        "L40",
+        "L45",
+        "L53",
+    }
     assert fired >= expected, f"guards not all fired: {expected - fired}"

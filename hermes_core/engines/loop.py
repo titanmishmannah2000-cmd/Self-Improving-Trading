@@ -24,41 +24,34 @@ import json
 import time
 import traceback
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
 def _now_iso() -> str:
     """UTC ISO-8601 timestamp (matches the dashboard's entry_ts/exit_ts format)."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
+
 
 from hermes_core.adapters import make_default_fetch
 from hermes_core.config import load_config, load_strategy_for_pair, state_root
 from hermes_core.engines.decision_cortex import Cortex
 from hermes_core.engines.entry import (
-    evaluate_entry,
-    evaluate_entry_detailed,
     _entry_rsi_threshold,
-)
-from hermes_core.engines.soak_controls import (
-    ensure_state_files,
-    entries_halted,
-    feed_error_rate,
-    price_sanity_book,
-    price_sanity_pair,
-    write_halt,
+    evaluate_entry_detailed,
 )
 from hermes_core.engines.exit import evaluate_exit
-from hermes_core.engines.genetic import discover as gp_discover
-from hermes_core.engines.policy_engine import PolicyEngine, soft_weights_enabled
 from hermes_core.engines.expert_weights import apply_expert_weight, expert_weight
-from hermes_core.engines.regime_sizing import apply_regime_sizing, regime_sizing_enabled
+from hermes_core.engines.genetic import discover as gp_discover
+from hermes_core.engines.guards import bb_bandwidth_guard, flat_price_guard
 from hermes_core.engines.kelly_sizing import apply_kelly_sizing, kelly_sizing_enabled
 from hermes_core.engines.mom_range_guard import (
     apply_mom_range_guard,
     gp_agree_bullish,
     mom_range_guard_enabled,
 )
+from hermes_core.engines.policy_engine import PolicyEngine, soft_weights_enabled
+from hermes_core.engines.regime_sizing import apply_regime_sizing, regime_sizing_enabled
 from hermes_core.engines.risk import (
     MAX_POSITION_SIZE,
     apply_probe_sizing,
@@ -68,13 +61,20 @@ from hermes_core.engines.risk import (
     param_range_gate,
     size_regime_from_market,
 )
+from hermes_core.engines.soak_controls import (
+    ensure_state_files,
+    entries_halted,
+    feed_error_rate,
+    price_sanity_book,
+    price_sanity_pair,
+    write_halt,
+)
 from hermes_core.env import get_env, load_env
-from hermes_core.engines.guards import bb_bandwidth_guard, flat_price_guard
 from hermes_core.indicators import compute_all
 
-MAX_CONSECUTIVE_FAILURES = 5          # [GUARD L24]
-CIRCUIT_SLEEP_S = 300                 # 5-minute pause on circuit open
-CYCLE_SECONDS = 60                    # 60s cadence
+MAX_CONSECUTIVE_FAILURES = 5  # [GUARD L24]
+CIRCUIT_SLEEP_S = 300  # 5-minute pause on circuit open
+CYCLE_SECONDS = 60  # 60s cadence
 # Discovery is expensive (GP evolution over price history); throttle per
 # (bot, pair) so it runs at most once per ~hour of wall-clock, or on first run.
 DISCOVERY_INTERVAL_S = int(get_env("DISCOVERY_INTERVAL_S", "3600"))
@@ -102,7 +102,6 @@ def _session_token_for(hour: int) -> str:
     return "OTHER"
 
 
-
 def _precount_oversold(bot: str, pairs: list, fetch_fn, history_fn) -> int:
     """Count how many bot pairs are RSI-oversold this cycle (both-metal confluence).
 
@@ -112,10 +111,7 @@ def _precount_oversold(bot: str, pairs: list, fetch_fn, history_fn) -> int:
     for pair in pairs or []:
         try:
             strategy = load_strategy_for_pair(pair, bot)
-            if history_fn is not None:
-                hist = history_fn(pair)
-            else:
-                hist = fetch_fn(pair + ":history")
+            hist = history_fn(pair) if history_fn is not None else fetch_fn(pair + ":history")
             prices = [c["price"] for c in (hist or [])]
             if len(prices) < 5:
                 continue
@@ -185,8 +181,13 @@ def _log_skip(bot: str, pair: str, cycle: int, reason: str) -> None:
     SKIPS_PATH = _state_dir(bot) / "skips.jsonl"
     # `reason_skipped` is the dashboard's DB column key; keep `reason` too for
     # any consumer that read the legacy key.
-    row = {"ts": time.time(), "pair": pair, "cycle": cycle,
-           "reason": reason, "reason_skipped": reason}
+    row = {
+        "ts": time.time(),
+        "pair": pair,
+        "cycle": cycle,
+        "reason": reason,
+        "reason_skipped": reason,
+    }
     try:
         with open(SKIPS_PATH, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, default=str) + "\n")
@@ -203,9 +204,23 @@ def _log_trade(bot: str, rec: dict) -> None:
         pass
 
 
-def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
-                  open_positions, summary, alert_fn,
-                  prices=None, chart_context="", goal=None) -> None:
+def _process_exit(
+    bot,
+    pair,
+    cycle,
+    pos,
+    price,
+    ex,
+    *,
+    cortex,
+    reentry,
+    open_positions,
+    summary,
+    alert_fn,
+    prices=None,
+    chart_context="",
+    goal=None,
+) -> None:
     """Apply the result of `evaluate_exit` to an OPEN position.
 
     Stop-adjustments (breakeven / trailing) only move the stop — the
@@ -240,24 +255,39 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
         _exc = {}
         with contextlib.suppress(Exception):
             from hermes_core.engines.excursion import excursion_from_position
+
             _exc = excursion_from_position(pos, pnl)
-        _log_trade(bot, {
-            "id": (pos.get("id") or f"{bot}:{pair}:{int(time.time())}") + ":partial",
-            "bot": bot, "pair": pair, "cycle": cycle,
-            "reason": ex.reason, "exit_reason": ex.reason,
-            "entry_type": entry_type,
-            "strategy_version": pos.get("strategy_version") or entry_type,
-            "entry_price": pos["entry_price"], "exit_price": price,
-            "entry_ts": pos.get("entry_ts"), "exit_ts": _now_iso(),
-            "pnl_pct": pnl, "size": closed_size,
-            "hold_cycles": pos.get("held_cycles", 0),
-            "partial": True,
-            **{k: _exc[k] for k in ("mfe_pct", "mae_pct", "giveback_pct", "giveback_frac", "mfe_capture")
-               if k in _exc},
-        })
+        _log_trade(
+            bot,
+            {
+                "id": (pos.get("id") or f"{bot}:{pair}:{int(time.time())}") + ":partial",
+                "bot": bot,
+                "pair": pair,
+                "cycle": cycle,
+                "reason": ex.reason,
+                "exit_reason": ex.reason,
+                "entry_type": entry_type,
+                "strategy_version": pos.get("strategy_version") or entry_type,
+                "entry_price": pos["entry_price"],
+                "exit_price": price,
+                "entry_ts": pos.get("entry_ts"),
+                "exit_ts": _now_iso(),
+                "pnl_pct": pnl,
+                "size": closed_size,
+                "hold_cycles": pos.get("held_cycles", 0),
+                "partial": True,
+                **{
+                    k: _exc[k]
+                    for k in ("mfe_pct", "mae_pct", "giveback_pct", "giveback_frac", "mfe_capture")
+                    if k in _exc
+                },
+            },
+        )
         with contextlib.suppress(Exception):
             cortex.record_outcome(
-                pair, entry_type, pnl,
+                pair,
+                entry_type,
+                pnl,
                 mfe_pct=_exc.get("mfe_pct"),
                 mae_pct=_exc.get("mae_pct"),
                 giveback_pct=_exc.get("giveback_pct"),
@@ -276,21 +306,34 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
     _exc = {}
     with contextlib.suppress(Exception):
         from hermes_core.engines.excursion import excursion_from_position
+
         _exc = excursion_from_position(pos, pnl)
-    _log_trade(bot, {
-        "id": pos.get("id") or f"{bot}:{pair}:{int(time.time())}",
-        "bot": bot, "pair": pair, "cycle": cycle,
-        "reason": ex.reason, "exit_reason": ex.reason,
-        "entry_type": entry_type,
-        # Prefer the stamped strategy version; fall back to entry style.
-        "strategy_version": pos.get("strategy_version") or entry_type,
-        "entry_price": pos["entry_price"], "exit_price": price,
-        "entry_ts": pos.get("entry_ts"), "exit_ts": _now_iso(),
-        "pnl_pct": pnl, "size": pos["size"],
-        "hold_cycles": pos.get("held_cycles", 0),
-        **{k: _exc[k] for k in ("mfe_pct", "mae_pct", "giveback_pct", "giveback_frac", "mfe_capture")
-           if k in _exc},
-    })
+    _log_trade(
+        bot,
+        {
+            "id": pos.get("id") or f"{bot}:{pair}:{int(time.time())}",
+            "bot": bot,
+            "pair": pair,
+            "cycle": cycle,
+            "reason": ex.reason,
+            "exit_reason": ex.reason,
+            "entry_type": entry_type,
+            # Prefer the stamped strategy version; fall back to entry style.
+            "strategy_version": pos.get("strategy_version") or entry_type,
+            "entry_price": pos["entry_price"],
+            "exit_price": price,
+            "entry_ts": pos.get("entry_ts"),
+            "exit_ts": _now_iso(),
+            "pnl_pct": pnl,
+            "size": pos["size"],
+            "hold_cycles": pos.get("held_cycles", 0),
+            **{
+                k: _exc[k]
+                for k in ("mfe_pct", "mae_pct", "giveback_pct", "giveback_frac", "mfe_capture")
+                if k in _exc
+            },
+        },
+    )
     reentry[pair] = {"last_exit_cycle": cycle}
     del open_positions[pair]
     # [CORTEX] record the outcome under the REAL entry_type;
@@ -303,26 +346,27 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
     # (gp_indicators non-empty), not only when already promoted to live.
     with contextlib.suppress(Exception):
         is_gp = bool(pos.get("gp_indicators")) or entry_type in (
-            "gp_ensemble", "shadow",
+            "gp_ensemble",
+            "shadow",
         )
         _record_type = "gp_ensemble" if is_gp else entry_type
         cortex.record_outcome(
-            pair, _record_type, pnl,
+            pair,
+            _record_type,
+            pnl,
             mfe_pct=_exc.get("mfe_pct"),
             mae_pct=_exc.get("mae_pct"),
             giveback_pct=_exc.get("giveback_pct"),
             giveback_frac=_exc.get("giveback_frac"),
             mfe_capture=_exc.get("mfe_capture"),
         )
-        if is_gp:
-            _credited = pos.get("gp_indicators") or []
-        else:
-            _credited = []
+        _credited = pos.get("gp_indicators") or [] if is_gp else []
         for ind_id in _credited:
             cortex.record_indicator_outcome(ind_id, pnl, entry_type="gp_ensemble")
         # GPIntelligence consecutive-loss lockout (feeds should_suppress).
         if is_gp:
             from hermes_core.engines import gp_intelligence as gpi
+
             if pnl > 0:
                 gpi.record_win(pair)
             else:
@@ -330,6 +374,7 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
             # Feed paper GP closes into the promote gate (ban/unban evidence).
             with contextlib.suppress(Exception):
                 from hermes_core.engines import gp_promote_gate as gpg
+
                 gpg.record_pnl(bot, pair, float(pnl))
     # [S18] Discord/webhook alert on real trade close (fail-soft)
     if alert_fn is not None:
@@ -339,7 +384,10 @@ def _process_exit(bot, pair, cycle, pos, price, ex, *, cortex, reentry,
     # Fail-soft: never let reflection break the close/heartbeat path.
     with contextlib.suppress(Exception):
         _maybe_reflect_after_close(
-            bot, pair, prices=prices, chart_context=chart_context or "",
+            bot,
+            pair,
+            prices=prices,
+            chart_context=chart_context or "",
             goal=goal,
         )
 
@@ -368,20 +416,29 @@ def _maybe_reflect_after_close(
     def _work() -> None:
         try:
             result = maybe_reflect_pair(
-                bot, pair, goal=goal, chart_context=chart_context,
-                prices=prices, auto_deploy=auto,
+                bot,
+                pair,
+                goal=goal,
+                chart_context=chart_context,
+                prices=prices,
+                auto_deploy=auto,
             )
             if result is not None:
                 log.info(
                     "[reflect] %s/%s: %s closed=%s deployed=%s",
-                    bot, pair, result.get("status"), result.get("closed"),
+                    bot,
+                    pair,
+                    result.get("status"),
+                    result.get("closed"),
                     result.get("deployed"),
                 )
         except Exception as exc:  # noqa: BLE001
             log.warning("[reflect] %s/%s: error -> %s", bot, pair, exc)
 
     threading.Thread(
-        target=_work, name=f"reflect-{bot}-{pair}", daemon=True,
+        target=_work,
+        name=f"reflect-{bot}-{pair}",
+        daemon=True,
     ).start()
     return None
 
@@ -390,6 +447,7 @@ def _discovered_indicator_ids(bot: str, pair: str) -> list[str]:
     """Stable ids of the GP indicators admitted for `pair` (for cortex exile tracking)."""
     try:
         from hermes_core.engines.genetic import load_discovered_indicators
+
         return [i.get("name", "") for i in load_discovered_indicators(pair) if i.get("name")]
     except Exception:
         return []
@@ -404,9 +462,17 @@ _GP_CONSENSUS_CACHE: dict[str, str] = {}  # pair -> last known consensus (L13)
 GP_SHADOW_LOG_INTERVAL_S = 300  # at most one shadow record per 5 min per pair
 
 
-def _gp_vote(pair: str, prices: list[float], strategy: dict, *,
-             cortex=None, promote: bool = False, use_invent_tf: bool = True,
-             bot: str | None = None, use_daily: bool | None = None):
+def _gp_vote(
+    pair: str,
+    prices: list[float],
+    strategy: dict,
+    *,
+    cortex=None,
+    promote: bool = False,
+    use_invent_tf: bool = True,
+    bot: str | None = None,
+    use_daily: bool | None = None,
+):
     """Evaluate GP ensemble once; apply L36 exile filter. Fail-soft -> None.
 
     ``use_invent_tf=True`` (default) evaluates on the bot invent candle TF so
@@ -435,7 +501,9 @@ def _gp_vote(pair: str, prices: list[float], strategy: dict, *,
                 max_candles=prof["max_candles"],
             )
         return gp_ensemble_signal(
-            pair, prices, strategy,
+            pair,
+            prices,
+            strategy,
             daily_prices=invent_px,
             promote=promote,
             exiled_ids=exiled,
@@ -446,8 +514,9 @@ def _gp_vote(pair: str, prices: list[float], strategy: dict, *,
         return None
 
 
-def _log_gp_shadow(bot: str, pair: str, prices: list[float], strategy: dict,
-                   *, cortex=None, sig=None) -> str:
+def _log_gp_shadow(
+    bot: str, pair: str, prices: list[float], strategy: dict, *, cortex=None, sig=None
+) -> str:
     """Evaluate/log the GP shadow entry; return consensus label for L13.
 
     Fail-soft: any exception is swallowed (logging must never break the cycle).
@@ -462,8 +531,13 @@ def _log_gp_shadow(bot: str, pair: str, prices: list[float], strategy: dict,
         if sig is None:
             # Shadow observation on invent TF (same regime as formulas).
             sig = _gp_vote(
-                pair, prices, strategy, cortex=cortex, bot=bot,
-                promote=False, use_invent_tf=True,
+                pair,
+                prices,
+                strategy,
+                cortex=cortex,
+                bot=bot,
+                promote=False,
+                use_invent_tf=True,
             )
         if sig is not None:
             consensus = sig.meta.get("consensus") or "neutral"
@@ -473,6 +547,7 @@ def _log_gp_shadow(bot: str, pair: str, prices: list[float], strategy: dict,
         # still accumulate evidence while invent/shadow keep running).
         with contextlib.suppress(Exception):
             from hermes_core.engines import gp_promote_gate as gpg
+
             _dir = None
             if sig is not None:
                 _gs = float(sig.meta.get("gp_strength") or 0.0)
@@ -504,8 +579,7 @@ def _log_gp_shadow(bot: str, pair: str, prices: list[float], strategy: dict,
     return _GP_CONSENSUS_CACHE.get(pair, "neutral")
 
 
-def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
-                    *, cortex=None) -> None:
+def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, cortex=None) -> None:
     """Throttled GP discovery + live feedback for one pair (B10 closes the loop).
 
     On each throttled pass it:
@@ -522,7 +596,7 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
     heartbeat cycle. The heavy work runs in a thread with a hard timeout; if it
     stalls, the cycle proceeds and the next attempt retries. Fail-soft.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from hermes_core.adapters.price import seed_history_interval_sync
     from hermes_core.engines.genetic import (
@@ -536,6 +610,7 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
         has_votable_for_regime,
         invent_profile,
     )
+
     now = time.time()
     key = (bot, pair)
     if key in _DISCOVERY_LAST and (now - _DISCOVERY_LAST[key]) < DISCOVERY_INTERVAL_S:
@@ -547,7 +622,9 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
     # must not block a fresh 1h invent.
     own = load_discovered_indicators(pair, include_shared=False)
     discovered = has_votable_for_regime(
-        own, interval=prof["interval"], horizon=prof["horizon"],
+        own,
+        interval=prof["interval"],
+        horizon=prof["horizon"],
     )
 
     def _status_pulse(**extra) -> None:
@@ -557,7 +634,7 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
                 "pair": pair,
                 "_bot": bot,
                 "engine_version": ENGINE_VERSION,
-                "ts": datetime.now(timezone.utc).isoformat(),
+                "ts": datetime.now(UTC).isoformat(),
                 "interval": prof["interval"],
                 "horizon": prof["horizon"],
                 "generations": prof["generations"],
@@ -569,8 +646,11 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
                 "best_oos": extra.get("best_oos"),
                 "status": extra.get("status") or "ok",
                 "reason": extra.get("reason"),
-                "map_elites": extra.get("map_elites") or {
-                    "filled": 0, "total_cells": 27, "coverage": 0.0,
+                "map_elites": extra.get("map_elites")
+                or {
+                    "filled": 0,
+                    "total_cells": 27,
+                    "coverage": 0.0,
                 },
                 "lexicase_cases": extra.get("lexicase_cases"),
             }
@@ -580,14 +660,14 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
 
     def _work() -> None:
         import logging as _logging
+
         _log = _logging.getLogger("hermes.discovery")
         # B10 live feedback: re-rank persisted indicators toward realized PnL.
         # Runs on every throttled pass (even when re-discovery isn't needed)
         # so the ensemble keeps learning from closed paper trades.
         updated = apply_live_feedback(pair, cortex)
         if updated:
-            _log.info("[discovery] %s: live feedback updated %d indicators",
-                      pair, updated)
+            _log.info("[discovery] %s: live feedback updated %d indicators", pair, updated)
         # (Re)discover only when THIS pair has no votable own formulas yet
         # for the active invent regime.
         if discovered:
@@ -613,17 +693,21 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
         series = [c["price"] for c in (hist or [])] or (prices or [])
         _log.info(
             "[discovery] %s: fetched %d %s candles (h=%s) for GP",
-            pair, len(series), prof["interval"], prof["horizon"],
+            pair,
+            len(series),
+            prof["interval"],
+            prof["horizon"],
         )
         print(
-            f"[hermes][discovery] {bot}/{pair}: fetched {len(series)} "
-            f"{prof['interval']} candles",
+            f"[hermes][discovery] {bot}/{pair}: fetched {len(series)} {prof['interval']} candles",
             flush=True,
         )
         if len(series) < int(prof["min_bars"]):
             _log.warning(
                 "[discovery] %s: <%s %s candles, GP skipped",
-                pair, prof["min_bars"], prof["interval"],
+                pair,
+                prof["min_bars"],
+                prof["interval"],
             )
             _status_pulse(
                 status="skipped_short_history",
@@ -631,18 +715,19 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
             )
             return
         inds = gp_discover(
-            pair, series,
+            pair,
+            series,
             horizon=int(prof["horizon"]),
             generations=int(prof["generations"]),
             pop_size=int(prof["pop_size"]),
             n_islands=int(prof["n_islands"]),
             interval=str(prof["interval"]),
         )
-        _log.info("[discovery] %s: admitted=%d -> %s",
-                  pair, len(inds), _discovered_path(pair))
+        _log.info("[discovery] %s: admitted=%d -> %s", pair, len(inds), _discovered_path(pair))
         # discover() already writes a full pulse; tag bot for the dashboard.
         try:
             from hermes_core.engines.genetic import load_discovery_pulse
+
             existing = load_discovery_pulse(pair) or {}
             existing["_bot"] = bot
             existing["pair"] = pair
@@ -656,19 +741,17 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
     # Discovery runs in its own background thread; crypto gets a longer cap so
     # invent can finish and appear on Discovered.
     try:
-        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+        from concurrent.futures import ThreadPoolExecutor
+        from concurrent.futures import TimeoutError as FuturesTimeout
+
         print(
-            f"[hermes][discovery] {bot}/{pair}: pass begin "
-            f"(have_votable={discovered})",
+            f"[hermes][discovery] {bot}/{pair}: pass begin (have_votable={discovered})",
             flush=True,
         )
         with ThreadPoolExecutor(max_workers=1) as ex:
             ex.submit(_work).result(timeout=int(prof["timeout_s"]))
     except FuturesTimeout:
-        msg = (
-            f"[discovery] {bot}/{pair}: error -> TimeoutError "
-            f"after {prof['timeout_s']}s"
-        )
+        msg = f"[discovery] {bot}/{pair}: error -> TimeoutError after {prof['timeout_s']}s"
         print(msg, flush=True)
         _status_pulse(
             status="timeout",
@@ -677,6 +760,7 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
         return
     except Exception as _exc:  # surface the real reason instead of silent drop
         import logging as _logging
+
         msg = f"[discovery] {bot}/{pair}: error -> {type(_exc).__name__}: {_exc}"
         _logging.getLogger("hermes.discovery").warning(msg)
         print(msg, flush=True)
@@ -689,6 +773,7 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None,
         f"timeout={prof['timeout_s']}s done",
         flush=True,
     )
+
 
 def run_cycle(
     bot: str,
@@ -722,19 +807,18 @@ def run_cycle(
     # Rolling price history for the sparkline (last N ticks per pair). Persisted
     # by the caller across cycles so the card chart is continuous, not per-cycle.
     price_history = dict(getattr(run_cycle, "_price_history", {}) or {})
-    oversold_pairs = 0            # RSI-confluence count, accumulated across pairs this cycle
+    oversold_pairs = 0  # RSI-confluence count, accumulated across pairs this cycle
     # consecutive_failures is carried in (persists across cycles for the L24 breaker)
-    try:
+    with contextlib.suppress(Exception):  # bootstrap must never block the cycle
         ensure_state_files(bot)
-    except Exception:  # noqa: BLE001 — bootstrap must never block the cycle
-        pass
     try:
         cfg = load_config(bot)
     except Exception:  # noqa: BLE001 — config load is a hard boundary
         health_registry["config"] = False
         summary["errors"] += 1
-        write_heartbeat(bot, cycle, consecutive_failures, 0.0,
-                        status="error", health=dict(health_registry))
+        write_heartbeat(
+            bot, cycle, consecutive_failures, 0.0, status="error", health=dict(health_registry)
+        )
         traceback.print_exc()
         return summary
 
@@ -770,10 +854,9 @@ def run_cycle(
     # Sticky regimes: start from last cycle so a transient no_candle (common for
     # single-source XAG) doesn't blank the dashboard Regime field.
     regimes: dict[str, str] = {
-        p: r for p, r in (getattr(run_cycle, "_regimes", {}) or {}).items()
-        if p in pairs
+        p: r for p, r in (getattr(run_cycle, "_regimes", {}) or {}).items() if p in pairs
     }
-    cortex = Cortex(bot)                   # per-cycle; exile SET persists to disk
+    cortex = Cortex(bot)  # per-cycle; exile SET persists to disk
     # [GUARD L35] evaluate policy once per cycle from cortex WRs, then apply
     # suppressions before opening new positions.
     try:
@@ -817,10 +900,7 @@ def run_cycle(
         # FX/metals, which makes indicators degenerate -> bot can't trade.
         # Fall back to fetch_fn(":history"), then a single price.
         try:
-            if history_fn is not None:
-                hist = history_fn(pair)
-            else:
-                hist = fetch_fn(pair + ":history")
+            hist = history_fn(pair) if history_fn is not None else fetch_fn(pair + ":history")
             prices = [c["price"] for c in (hist or [])]
         except Exception:  # noqa: BLE001
             prices = []
@@ -878,11 +958,21 @@ def run_cycle(
         # [GUARD L13] MR longs are blocked when GP consensus is bearish.
         # Invent TF == live GP eval TF (cached); mismatched formulas cannot vote.
         gp_shadow_sig = _gp_vote(
-            pair, prices, strategy, cortex=cortex, bot=bot,
-            promote=False, use_invent_tf=True,
+            pair,
+            prices,
+            strategy,
+            cortex=cortex,
+            bot=bot,
+            promote=False,
+            use_invent_tf=True,
         )
         gp_consensus = _log_gp_shadow(
-            bot, pair, prices, strategy, cortex=cortex, sig=gp_shadow_sig,
+            bot,
+            pair,
+            prices,
+            strategy,
+            cortex=cortex,
+            sig=gp_shadow_sig,
         )
 
         # --- chart context (fail-open; an error yields neutral) -------------
@@ -932,9 +1022,15 @@ def run_cycle(
             # Prefer pre-scanned multi-pair count so XAU sees XAG the same cycle.
             _os_count = max(int(oversold_pairs), int(oversold_total))
             trad_sig, _trad_skip = evaluate_entry_detailed(
-                prices, strategy, pair=pair, context=context,
-                ensemble_consensus=ensemble, oversold_pairs=_os_count,
-                vol_above=vol_above, reentry=reentry, current_cycle=cycle,
+                prices,
+                strategy,
+                pair=pair,
+                context=context,
+                ensemble_consensus=ensemble,
+                oversold_pairs=_os_count,
+                vol_above=vol_above,
+                reentry=reentry,
+                current_cycle=cycle,
                 session_token=session_token,
             )
             gp_sig = None
@@ -944,6 +1040,7 @@ def run_cycle(
             if get_env("GP_PROMOTE") == "1":
                 try:
                     from hermes_core.engines import gp_promote_gate as gpg
+
                     _want_gp = gpg.is_promote_allowed(bot, pair)
                 except Exception:  # noqa: BLE001 — fail open to env list only
                     _excl = {
@@ -957,6 +1054,7 @@ def run_cycle(
             if _want_gp and (trad_sig is None or _rank_on):
                 try:
                     from hermes_core.engines import gp_intelligence as gpi
+
                     _sup, _reason = gpi.should_suppress(pair)
                     if _sup and trad_sig is None and not _rank_on:
                         _log_skip(bot, pair, cycle, f"gp_intel_suppress:{_reason}")
@@ -964,8 +1062,13 @@ def run_cycle(
                         continue
                     if not _sup:
                         gp_sig = _gp_vote(
-                            pair, prices, strategy, cortex=cortex, bot=bot,
-                            promote=True, use_invent_tf=True,
+                            pair,
+                            prices,
+                            strategy,
+                            cortex=cortex,
+                            bot=bot,
+                            promote=True,
+                            use_invent_tf=True,
                         )
                 except Exception:  # noqa: BLE001 — GP must never break the cycle
                     gp_sig = None
@@ -982,11 +1085,7 @@ def run_cycle(
                 for _s in (trad_sig, gp_sig):
                     if _s is None:
                         continue
-                    _et = (
-                        _s.meta.get("entry_type")
-                        or getattr(_s, "type", None)
-                        or "mean_reversion"
-                    )
+                    _et = _s.meta.get("entry_type") or getattr(_s, "type", None) or "mean_reversion"
                     _wr = None
                     _pb = None
                     _ew = 1.0
@@ -1006,15 +1105,16 @@ def run_cycle(
                         pass
                     try:
                         _soft_tmp = soft_weights_enabled()
-                        _sup_tmp = bool(
-                            policy is not None and policy.is_suppressed(pair, _et)
+                        _sup_tmp = bool(policy is not None and policy.is_suppressed(pair, _et))
+                        _ew = float(
+                            expert_weight(
+                                enabled=_soft_tmp,
+                                suppressed=_sup_tmp,
+                                evidence_n=cortex.evidence_n(pair, _et),
+                                wr=_wr,
+                            ).get("weight")
+                            or 1.0
                         )
-                        _ew = float(expert_weight(
-                            enabled=_soft_tmp,
-                            suppressed=_sup_tmp,
-                            evidence_n=cortex.evidence_n(pair, _et),
-                            wr=_wr,
-                        ).get("weight") or 1.0)
                     except Exception:  # noqa: BLE001
                         _ew = 1.0
                     _sc = score_candidate(
@@ -1025,12 +1125,14 @@ def run_cycle(
                         expert_weight=_ew,
                         gp_strength=_s.meta.get("gp_strength"),
                     )
-                    cands.append({
-                        "sig": _s,
-                        "entry_type": _et,
-                        "score": _sc["score"],
-                        "components": _sc["components"],
-                    })
+                    cands.append(
+                        {
+                            "sig": _s,
+                            "entry_type": _et,
+                            "score": _sc["score"],
+                            "components": _sc["components"],
+                        }
+                    )
                 _picked = rank_candidates(cands)
                 _win = _picked.get("winner")
                 if _win is not None:
@@ -1048,8 +1150,9 @@ def run_cycle(
                 _skip = _trad_skip or "no_signal"
                 if _skip == "no_signal":
                     _skip = "no_signal"
-                elif not _skip.startswith(("session", "rsi", "vol", "quality",
-                                           "chart", "cooldown", "ensemble", "other")):
+                elif not _skip.startswith(
+                    ("session", "rsi", "vol", "quality", "chart", "cooldown", "ensemble", "other")
+                ):
                     _skip = f"no_signal:{_skip}"
                 else:
                     # Keep structured sub-reason; prefix for dashboard filters.
@@ -1058,7 +1161,7 @@ def run_cycle(
                 summary["skips"] += 1
                 # Gold diagnostics: snapshot why metals stay idle.
                 if bot == "gold":
-                    try:
+                    with contextlib.suppress(Exception):
                         print(
                             f"[hermes][gold-diag] {pair} cycle={cycle} "
                             f"skip={_skip} rsi={ind.get('rsi')} "
@@ -1067,8 +1170,6 @@ def run_cycle(
                             f"{((ind.get('bb') or {}).get('upper', 0) - (ind.get('bb') or {}).get('lower', 0)) / max((ind.get('bb') or {}).get('middle') or 1, 1e-9):.6f}",
                             flush=True,
                         )
-                    except Exception:  # noqa: BLE001
-                        pass
                 continue
             # Halt blocks NEW entries only (exits still managed above).
             if _halted:
@@ -1087,9 +1188,7 @@ def run_cycle(
             # Prefer meta.entry_type; fall back to Signal.type so momentum is never
             # mis-labelled as mean_reversion (which poisoned cortex/policy WRs).
             _etype = sig.meta.get("entry_type") or getattr(sig, "type", None) or "mean_reversion"
-            _suppressed = bool(
-                policy is not None and policy.is_suppressed(pair, _etype)
-            )
+            _suppressed = bool(policy is not None and policy.is_suppressed(pair, _etype))
             # HIF Phase-2: soft weights turn L35 benches into size shrinks.
             # Flag OFF → hard skip (legacy). Flag ON → never skip for policy.
             _soft = False
@@ -1116,7 +1215,10 @@ def run_cycle(
             )
             _open_bullish = sum(1 for p in open_positions if p != pair)
             size = compute_position_size(
-                _size_regime, atr, _open_bullish, strategy,
+                _size_regime,
+                atr,
+                _open_bullish,
+                strategy,
             )
             # HIF Phase-1 probe sizing: shrink only when PROBE_SIZING=1 and
             # cortex evidence for (pair, entry_type) is thin. Never skips.
@@ -1129,7 +1231,9 @@ def run_cycle(
                 except Exception:  # noqa: BLE001 — fail-open → full
                     _evidence_n = None
             _probe = apply_probe_sizing(
-                size, enabled=_probe_enabled, evidence_n=_evidence_n,
+                size,
+                enabled=_probe_enabled,
+                evidence_n=_evidence_n,
             )
             size = float(_probe["size"])
             # HIF: momentum range/confluence guard (Jul 23 gold — chop lesson).
@@ -1161,7 +1265,9 @@ def run_cycle(
                 )
                 if _mg.get("mom_guard_action") == "bench":
                     _log_skip(
-                        bot, pair, cycle,
+                        bot,
+                        pair,
+                        cycle,
                         "mom_range_bench:" + ",".join(_mg.get("mom_guard_reasons") or []),
                     )
                     summary["skips"] += 1
@@ -1205,10 +1311,8 @@ def run_cycle(
                 _kelly_on = False
             _edge = {"wins": 0, "losses": 0, "avg_win": None, "avg_loss": None}
             if _kelly_on:
-                try:
+                with contextlib.suppress(Exception):
                     _edge = cortex.edge_stats(pair, _etype) or _edge
-                except Exception:  # noqa: BLE001
-                    pass
             _rr_b = None
             try:
                 if sl > 0:
@@ -1227,6 +1331,7 @@ def run_cycle(
             size = float(_kelly["size"])
             # HIF book-level risk (after Kelly, before hard cap).
             from hermes_core.engines.book_risk import apply_book_risk, book_risk_enabled
+
             _book_on = False
             try:
                 _book_on = book_risk_enabled()
@@ -1243,6 +1348,7 @@ def run_cycle(
             size = float(_book["size"])
             # HIF exit intelligence — stamp knobs only (no size / fill change).
             from hermes_core.engines.exit_intel import apply_exit_intel, exit_intel_enabled
+
             _xi_on = False
             try:
                 _xi_on = exit_intel_enabled()
@@ -1262,6 +1368,7 @@ def run_cycle(
                 DEFAULT_MFE_GIVEBACK_MIN_PCT,
                 DEFAULT_TIME_EXIT_CYCLES,
             )
+
             _trail = _xi.get("trailing_atr_mult")
             if _trail is None:
                 try:
@@ -1270,15 +1377,21 @@ def run_cycle(
                     _trail = 1.5
             _honor = bool(_xi.get("honor_current_stop")) or _trail is not None
             try:
-                _gb_min = float(strategy.get(
-                    "mfe_giveback_min_pct", DEFAULT_MFE_GIVEBACK_MIN_PCT,
-                ))
+                _gb_min = float(
+                    strategy.get(
+                        "mfe_giveback_min_pct",
+                        DEFAULT_MFE_GIVEBACK_MIN_PCT,
+                    )
+                )
             except (TypeError, ValueError):
                 _gb_min = DEFAULT_MFE_GIVEBACK_MIN_PCT
             try:
-                _gb_frac = float(strategy.get(
-                    "mfe_giveback_frac", DEFAULT_MFE_GIVEBACK_FRAC,
-                ))
+                _gb_frac = float(
+                    strategy.get(
+                        "mfe_giveback_frac",
+                        DEFAULT_MFE_GIVEBACK_FRAC,
+                    )
+                )
             except (TypeError, ValueError):
                 _gb_frac = DEFAULT_MFE_GIVEBACK_FRAC
             _gb_on = strategy.get("mfe_giveback_enabled", True) is not False
@@ -1286,14 +1399,22 @@ def run_cycle(
             open_positions[pair] = {
                 "id": f"{bot}:{pair}:{int(time.time())}",
                 "entry_ts": _now_iso(),
-                "entry_price": price, "size": min(size, MAX_POSITION_SIZE),
-                "stop_loss_pct": sl, "profit_target_pct": tp,
-                "time_exit_cycles": int(strategy.get(
-                    "time_exit_cycles", DEFAULT_TIME_EXIT_CYCLES,
-                )),
-                "held_cycles": 0, "breakeven_set": False, "partial_done": False,
+                "entry_price": price,
+                "size": min(size, MAX_POSITION_SIZE),
+                "stop_loss_pct": sl,
+                "profit_target_pct": tp,
+                "time_exit_cycles": int(
+                    strategy.get(
+                        "time_exit_cycles",
+                        DEFAULT_TIME_EXIT_CYCLES,
+                    )
+                ),
+                "held_cycles": 0,
+                "breakeven_set": False,
+                "partial_done": False,
                 "partial_enabled": bool(_xi.get("partial_enabled")),
-                "current_stop": stop, "atr": atr,
+                "current_stop": stop,
+                "atr": atr,
                 "entry_type": _etype,
                 "strategy_version": str(strategy.get("version", "00")),
                 # B9: firing GP indicator IDs so that on close ONLY these are
@@ -1378,6 +1499,7 @@ def run_cycle(
                     DEFAULT_MFE_GIVEBACK_FRAC,
                     DEFAULT_MFE_GIVEBACK_MIN_PCT,
                 )
+
                 if "mfe_giveback_min_pct" not in pos:
                     pos["mfe_giveback_min_pct"] = DEFAULT_MFE_GIVEBACK_MIN_PCT
                 if "mfe_giveback_frac" not in pos:
@@ -1399,15 +1521,23 @@ def run_cycle(
                     mfe_tracking_enabled,
                     update_position_excursions,
                 )
+
                 update_position_excursions(pos, pos["unrealised_pct"])
                 if mfe_tracking_enabled():
                     pos["mfe_tracking"] = True
             ex = evaluate_exit(pos, price, prices)
             if ex is not None:
                 _process_exit(
-                    bot, pair, cycle, pos, price, ex,
-                    cortex=cortex, reentry=reentry,
-                    open_positions=open_positions, summary=summary,
+                    bot,
+                    pair,
+                    cycle,
+                    pos,
+                    price,
+                    ex,
+                    cortex=cortex,
+                    reentry=reentry,
+                    open_positions=open_positions,
+                    summary=summary,
                     alert_fn=alert_fn,
                     prices=prices,
                     chart_context=chart_contexts.get(pair, context),
@@ -1420,16 +1550,20 @@ def run_cycle(
             maybe_promote_skip_shadow,
             maybe_skip_shadow_learn,
         )
+
         _strats: dict = {}
         for p in pairs:
             with contextlib.suppress(Exception):
                 _strats[p] = load_strategy_for_pair(p, bot)
         summary["skip_shadow"] = maybe_skip_shadow_learn(
-            bot, list(pairs), strategies=_strats,
+            bot,
+            list(pairs),
+            strategies=_strats,
         )
         # HIF: gated promote of deployable skip_shadow_proposed (never blind).
         summary["skip_shadow_promote"] = maybe_promote_skip_shadow(
-            bot, strategies=_strats,
+            bot,
+            strategies=_strats,
         )
     except Exception:  # noqa: BLE001
         summary["skip_shadow"] = {"enabled": False}
@@ -1438,18 +1572,26 @@ def run_cycle(
     # --- heartbeat every cycle without exception --------------------------
     status = "ok" if consecutive_failures == 0 else "degraded"
     _book_ok, _book_reason = price_sanity_book(
-        summary.get("prices") or {}, price_history,
+        summary.get("prices") or {},
+        price_history,
     )
     if not _book_ok:
         status = "degraded"
         summary["price_sanity"] = _book_reason
         write_halt(bot, _book_reason)
         summary["halted"] = True
-    write_heartbeat(bot, cycle, consecutive_failures, last_price,
-                    status=status, health=dict(health_registry),
-                    chart_contexts=chart_contexts, regimes=regimes,
-                    prices=summary.get("prices") or {},
-                    price_history=price_history)
+    write_heartbeat(
+        bot,
+        cycle,
+        consecutive_failures,
+        last_price,
+        status=status,
+        health=dict(health_registry),
+        chart_contexts=chart_contexts,
+        regimes=regimes,
+        prices=summary.get("prices") or {},
+        price_history=price_history,
+    )
     summary["consecutive_failures"] = consecutive_failures
     summary["oversold_pairs"] = oversold_pairs
     # The caller persists these across cycles so entries are tracked to exit
@@ -1463,7 +1605,10 @@ def run_cycle(
         except Exception:  # noqa: BLE001
             traceback.print_exc()
     # Persist rolling price history across cycles (continuous sparkline).
-    run_cycle._price_history = {p: price_history.get(p, []) for p in set(price_history) | set(getattr(run_cycle, "_price_history", {}) or {})}
+    run_cycle._price_history = {
+        p: price_history.get(p, [])
+        for p in set(price_history) | set(getattr(run_cycle, "_price_history", {}) or {})
+    }
     run_cycle._regimes = dict(regimes)
     if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
         # [GUARD L24] circuit open: caller should pause; reset the counter so a

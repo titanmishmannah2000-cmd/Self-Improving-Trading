@@ -18,16 +18,16 @@ HIF Phase 1 — Probe sizing (L30/L33-lite):
 
 from __future__ import annotations
 
-MAX_POSITION_SIZE = 0.5          # hard cap (roadmap S6 DO-NOT)
+MAX_POSITION_SIZE = 0.5  # hard cap (roadmap S6 DO-NOT)
 BULL_MULT = 1.0
 NEUTRAL_MULT = 0.6
 BEAR_MULT = 0.3
-OPEN_BULLISH_PENALTY = 0.15      # per open bullish position beyond the first
-RR_GUARD_MIN = 1.0               # reward:risk below this is rejected
+OPEN_BULLISH_PENALTY = 0.15  # per open bullish position beyond the first
+RR_GUARD_MIN = 1.0  # reward:risk below this is rejected
 
 # HIF Phase 1 — probe sizing (matches policy_engine.PROBE_CORTEX_THRESHOLD)
-PROBE_EVIDENCE_MIN = 5           # closed outcomes before full size
-PROBE_SIZE_FRACTION = 0.25       # 25% of computed size while evidence is thin
+PROBE_EVIDENCE_MIN = 5  # closed outcomes before full size
+PROBE_SIZE_FRACTION = 0.25  # 25% of computed size while evidence is thin
 
 # Session tokens must NEVER be treated as size regimes (loop bug: LDN/NY → NEUTRAL).
 _SESSION_TOKENS = frozenset({"ASIA", "LDN", "NY", "OTHER", "LONDON", "NEWYORK"})
@@ -75,7 +75,7 @@ def _raw_size(base: float, regime: str, open_bullish: int) -> float:
     else:  # NEUTRAL or unknown -> conservative
         s = base * NEUTRAL_MULT
         if open_bullish > 0:
-            s *= (1 - OPEN_BULLISH_PENALTY * open_bullish)
+            s *= 1 - OPEN_BULLISH_PENALTY * open_bullish
     s = max(0.0, s)
     return min(s, MAX_POSITION_SIZE)
 
@@ -121,7 +121,9 @@ def apply_probe_sizing(
     base = float(base_size)
     base_clamped = min(max(0.0, base), MAX_POSITION_SIZE)
     state = evidence_state_for(
-        evidence_n, enabled=enabled, evidence_min=evidence_min,
+        evidence_n,
+        enabled=enabled,
+        evidence_min=evidence_min,
     )
     if state in ("disabled", "unknown", "ok"):
         return {

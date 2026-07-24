@@ -61,8 +61,9 @@ def reset_alert_budget() -> None:
     _budget.clear()
 
 
-def send_alert(message: str, *, webhook_url: str | None = None,
-               username: str = "Hermes", timeout: float = 10.0) -> bool:
+def send_alert(
+    message: str, *, webhook_url: str | None = None, username: str = "Hermes", timeout: float = 10.0
+) -> bool:
     """POST ``message`` to a Discord webhook. Returns True on 2xx, else False.
 
     Fail-soft: any transport/HTTP error returns False (never raises).
@@ -85,11 +86,17 @@ def send_alert(message: str, *, webhook_url: str | None = None,
         return False
 
 
-def send_trade_alert(bot: str, pair: str, reason: str, pnl_pct: float,
-                     *, entry_price: float | None = None,
-                     exit_price: float | None = None,
-                     webhook_url: str | None = None,
-                     cycle: int | None = None) -> bool:
+def send_trade_alert(
+    bot: str,
+    pair: str,
+    reason: str,
+    pnl_pct: float,
+    *,
+    entry_price: float | None = None,
+    exit_price: float | None = None,
+    webhook_url: str | None = None,
+    cycle: int | None = None,
+) -> bool:
     """Compose and send a trade-close alert for ``bot``/``pair``.
 
     Fail-soft: never raises; returns False on any failure or budget suppression.
@@ -108,9 +115,14 @@ def send_trade_alert(bot: str, pair: str, reason: str, pnl_pct: float,
     return send_alert(" ".join(bits), webhook_url=webhook_url)
 
 
-def send_text_alert(message: str, *, webhook_url: str | None = None,
-                    bot: str = "system", pair: str = "*",
-                    guard: str = "text") -> bool:
+def send_text_alert(
+    message: str,
+    *,
+    webhook_url: str | None = None,
+    bot: str = "system",
+    pair: str = "*",
+    guard: str = "text",
+) -> bool:
     """Generic text alert (heartbeat, error, flatline notice). Fail-soft."""
     allowed, suffix = take_alert_budget(bot, pair, guard)
     if not allowed:

@@ -11,7 +11,6 @@ Required blueprint names kept verbatim:
 
 from __future__ import annotations
 
-import math
 import random
 
 import pytest
@@ -57,7 +56,9 @@ STRAT_MR = {
     "strategy_type": "mean_reversion",
     "session_filter": "24h",
     "entry": {"threshold": 30, "session_filter": "24h"},
-    "stop_loss_pct": 1.5, "profit_target_pct": 3.0, "version": "03",
+    "stop_loss_pct": 1.5,
+    "profit_target_pct": 3.0,
+    "version": "03",
 }
 
 
@@ -71,7 +72,13 @@ def _gate(pair, param, old, new, *, strategy=STRAT_MR, prices=None, **kw):
     """backtest_with_history with ensemble pinned neutral (no disk GP bleed)."""
     kw.setdefault("ensemble_consensus", "neutral")
     return backtest_with_history(
-        pair, param, old, new, strategy=strategy, prices=prices, **kw,
+        pair,
+        param,
+        old,
+        new,
+        strategy=strategy,
+        prices=prices,
+        **kw,
     )
 
 
@@ -81,8 +88,12 @@ def test_oos_pass_crisis_fail_rejected():
     # ceiling, so the crisis gate fires and approval is refused.
     prices = _volatile()  # crisis regime -> crisis backtest fails
     res = _gate(
-        "EUR/USD", "stop_loss_pct", 1.5, 3.0,
-        strategy=STRAT_MR, prices=prices,
+        "EUR/USD",
+        "stop_loss_pct",
+        1.5,
+        3.0,
+        strategy=STRAT_MR,
+        prices=prices,
     )
     assert res["approved"] is False
     assert "crisis" in res["reason"].lower()
@@ -92,8 +103,12 @@ def test_all_phases_pass():
     # blueprint: identical params on an MR-friendly series -> all gates pass + bump.
     prices = _mr_friendly()
     res = _gate(
-        "EUR/USD", "stop_loss_pct", 1.5, 1.5,
-        strategy=STRAT_MR, prices=prices,
+        "EUR/USD",
+        "stop_loss_pct",
+        1.5,
+        1.5,
+        strategy=STRAT_MR,
+        prices=prices,
     )
     assert res["approved"] is True
     assert res["phases"]["phase6_deploy"]["version_bumped"] is not None
@@ -104,13 +119,21 @@ def test_historical_kb_blocks():
     # (no re-run; cached rejection returned).
     prices = _volatile()
     first = _gate(
-        "EUR/USD", "stop_loss_pct", 1.5, 3.0,
-        strategy=STRAT_MR, prices=prices,
+        "EUR/USD",
+        "stop_loss_pct",
+        1.5,
+        3.0,
+        strategy=STRAT_MR,
+        prices=prices,
     )
     assert first["approved"] is False
     second = _gate(
-        "EUR/USD", "stop_loss_pct", 1.5, 3.0,
-        strategy=STRAT_MR, prices=prices,
+        "EUR/USD",
+        "stop_loss_pct",
+        1.5,
+        3.0,
+        strategy=STRAT_MR,
+        prices=prices,
     )
     assert second["kb_hit"] is True
     assert second["approved"] is False
@@ -137,41 +160,61 @@ def test_permutation_flags_noise():
     rng = random.Random(99)
     noise = [rng.uniform(-1, 1) for _ in range(len(prices) - 1)]
     real_sig = bt._strategy_signal(
-        prices, "mean_reversion", 30,
-        strategy=STRAT_MR, ensemble_consensus="neutral",
+        prices,
+        "mean_reversion",
+        30,
+        strategy=STRAT_MR,
+        ensemble_consensus="neutral",
     )
     p_noise, _, _ = bt._permutation_pvalue(noise, prices)
     p_real, _, _ = bt._permutation_pvalue(real_sig, prices)
-    assert p_noise > p_real          # noise ranks below the genuine edge
-    assert p_real < 0.05             # the real MR signal IS significant
+    assert p_noise > p_real  # noise ranks below the genuine edge
+    assert p_real < 0.05  # the real MR signal IS significant
 
 
 def test_entry_signal_matches_bb_rsi_adx():
     """Gate entries require BB lower + RSI + ADX calm (live evaluate_entry core)."""
     prices = _mr_friendly()
     sig = bt._entry_signal(
-        prices, "mean_reversion", 30,
-        strategy=STRAT_MR, ensemble_consensus="neutral",
+        prices,
+        "mean_reversion",
+        30,
+        strategy=STRAT_MR,
+        ensemble_consensus="neutral",
     )
     assert sum(sig) >= 5
     # A flat series should not produce MR entries.
     flat = _flat(n=100)
-    assert sum(bt._entry_signal(
-        flat, "mean_reversion", 30,
-        strategy=STRAT_MR, ensemble_consensus="neutral",
-    )) == 0
+    assert (
+        sum(
+            bt._entry_signal(
+                flat,
+                "mean_reversion",
+                30,
+                strategy=STRAT_MR,
+                ensemble_consensus="neutral",
+            )
+        )
+        == 0
+    )
 
 
 def test_gate_blocks_bearish_ensemble():
     """L13: bearish ensemble consensus must suppress MR gate entries."""
     prices = _mr_friendly()
     open_sig = bt._entry_signal(
-        prices, "mean_reversion", 30,
-        strategy=STRAT_MR, ensemble_consensus="neutral",
+        prices,
+        "mean_reversion",
+        30,
+        strategy=STRAT_MR,
+        ensemble_consensus="neutral",
     )
     blocked = bt._entry_signal(
-        prices, "mean_reversion", 30,
-        strategy=STRAT_MR, ensemble_consensus="strong_bearish",
+        prices,
+        "mean_reversion",
+        30,
+        strategy=STRAT_MR,
+        ensemble_consensus="strong_bearish",
     )
     assert sum(open_sig) > 0
     assert sum(blocked) == 0
@@ -188,8 +231,12 @@ def test_gate_respects_session_filter():
         "entry": {"threshold": 30, "session_filter": "london_only"},
     }
     sig = bt._entry_signal(
-        prices, "mean_reversion", 30,
-        strategy=strat, candle_ts=asia_ts, ensemble_consensus="neutral",
+        prices,
+        "mean_reversion",
+        30,
+        strategy=strat,
+        candle_ts=asia_ts,
+        ensemble_consensus="neutral",
     )
     assert sum(sig) == 0
 
@@ -204,16 +251,29 @@ def test_gate_cooldown_after_stop():
         "strategy_type": "rsi_momentum",
         "session_filter": "24h",
         "entry": {"threshold": 100, "session_filter": "24h"},
-        "stop_loss_pct": 1.0, "profit_target_pct": 3.0,
+        "stop_loss_pct": 1.0,
+        "profit_target_pct": 3.0,
     }
     # Without cooldown many entries; with cooldown after stop, fewer.
     res_cd = bt._simulate(
-        prices, "rsi_momentum", 100, 1.0, 3.0,
-        strategy=strat, ensemble_consensus="neutral", apply_cooldown=True,
+        prices,
+        "rsi_momentum",
+        100,
+        1.0,
+        3.0,
+        strategy=strat,
+        ensemble_consensus="neutral",
+        apply_cooldown=True,
     )
     res_no = bt._simulate(
-        prices, "rsi_momentum", 100, 1.0, 3.0,
-        strategy=strat, ensemble_consensus="neutral", apply_cooldown=False,
+        prices,
+        "rsi_momentum",
+        100,
+        1.0,
+        3.0,
+        strategy=strat,
+        ensemble_consensus="neutral",
+        apply_cooldown=False,
     )
     assert res_no["entries"] >= res_cd["entries"]
 
@@ -227,7 +287,8 @@ def test_default_fetch_uses_shared_ticker_map(monkeypatch):
         return [{"price": 100.0 + i * 0.1} for i in range(50)]
 
     monkeypatch.setattr(
-        "hermes_core.adapters.price.seed_history_interval_sync", fake_seed,
+        "hermes_core.adapters.price.seed_history_interval_sync",
+        fake_seed,
     )
     for pair in ("XAU/USD", "BTC/USD", "EUR/USD", "XAG/USD"):
         closes = bt._default_fetch(pair)

@@ -1821,11 +1821,19 @@ from hermes_forex.chart_vision import get_chart_context, get_all_chart_contexts
 
 # ── Level 6 imports ──
 try:
-    from hermes_forex.crisis_learning import find_nearest_crisis, save_lived_crisis, get_crisis_recommendation
+    from hermes_forex.crisis_learning import (
+        find_nearest_crisis,
+        save_lived_crisis,
+        get_crisis_recommendation,
+    )
+
     _HAS_CRISIS = True
 except ImportError:
     _HAS_CRISIS = False
-    def _noop(*a, **kw): return None
+
+    def _noop(*a, **kw):
+        return None
+
     find_nearest_crisis = _noop
     save_lived_crisis = _noop
     get_crisis_recommendation = _noop
@@ -1837,9 +1845,14 @@ _DISCORD_DAILY_WEBHOOK = os.environ.get("DISCORD_DAILY_WEBHOOK", "")
 _DISCORD_WEBHOOKS_LOADED = False
 _discord_session = None
 
+
 def _load_discord_webhooks():
     """Lazy-load webhook URLs from state files if not set via env vars."""
-    global _DISCORD_ALERTS_WEBHOOK, _DISCORD_REFLECTION_WEBHOOK, _DISCORD_DAILY_WEBHOOK, _DISCORD_WEBHOOKS_LOADED
+    global \
+        _DISCORD_ALERTS_WEBHOOK, \
+        _DISCORD_REFLECTION_WEBHOOK, \
+        _DISCORD_DAILY_WEBHOOK, \
+        _DISCORD_WEBHOOKS_LOADED
     if _DISCORD_WEBHOOKS_LOADED:
         return
     _DISCORD_WEBHOOKS_LOADED = True
@@ -1862,6 +1875,7 @@ def _load_discord_webhooks():
     except Exception as e:
         print(f"[DISCORD] Webhook file load error: {e}", flush=True)
 
+
 async def send_discord_alert(message: str, target: str = "alerts"):
     """Send an alert to Discord via webhook.
     target="alerts"     -> #bot-alerts webhook
@@ -1881,22 +1895,30 @@ async def send_discord_alert(message: str, target: str = "alerts"):
         return
     try:
         import httpx as _httpx
+
         if _discord_session is None:
             _discord_session = _httpx.AsyncClient(timeout=10)
         payload = {"content": message[:2000]}
         resp = await _discord_session.post(url, json=payload)
         if resp.status_code >= 400:
-            print(f"[DISCORD] Webhook error {resp.status_code} ({target}): {resp.text[:200]}", flush=True)
+            print(
+                f"[DISCORD] Webhook error {resp.status_code} ({target}): {resp.text[:200]}",
+                flush=True,
+            )
         else:
             print(f"[DISCORD] Sent OK ({resp.status_code}) -> {target}", flush=True)
     except Exception as e:
         print(f"[DISCORD] Send failed ({target}): {e}", flush=True)
 
+
 # ── Dashboard push ──
-_DASHBOARD_URL = os.environ.get("DASHBOARD_API_URL", os.environ.get("RAILWAY_SERVICE_HERMES_DASHBOARD_API_URL", ""))
+_DASHBOARD_URL = os.environ.get(
+    "DASHBOARD_API_URL", os.environ.get("RAILWAY_SERVICE_HERMES_DASHBOARD_API_URL", "")
+)
 if _DASHBOARD_URL and not _DASHBOARD_URL.startswith("http"):
     _DASHBOARD_URL = f"https://{_DASHBOARD_URL}"
 print(f"[DASHBOARD] Module load — _DASHBOARD_URL = '{_DASHBOARD_URL}'", flush=True)
+
 
 async def push_to_dashboard(bot_name: str):
     """Push a JSON snapshot of current state to the dashboard backend.
@@ -1906,6 +1928,7 @@ async def push_to_dashboard(bot_name: str):
         return
     try:
         import httpx as _httpx
+
         _push_url = f"{_DASHBOARD_URL}/api/ingest/{bot_name}"
         print(f"[DASHBOARD] Pushing to: {_push_url}", flush=True)
         strats = {}
@@ -1972,33 +1995,58 @@ async def push_to_dashboard(bot_name: str):
         }
         try:
             from hermes_forex.backtest import load_discovered_indicators
+
             for pair in _pairs:
                 inds = load_discovered_indicators(pair)
                 if inds:
-                    snapshot["discovered"][pair] = [{
-                        "name": i.get("name","?"),
-                        "expr": i.get("expr_str","")[:60],
-                        "fitness": round(i.get("fitness",0),4),
-                        "win_rate": i.get("win_rate",0),
-                        "total_pnl": round(i.get("total_pnl",0),4),
-                        "uses": [k for k in ["volume","dxy","vix","tnx","spx","oil","gold","btc","fvx","eem"]
-                                 if k in i.get("expr_str","")],
-                    } for i in inds]
+                    snapshot["discovered"][pair] = [
+                        {
+                            "name": i.get("name", "?"),
+                            "expr": i.get("expr_str", "")[:60],
+                            "fitness": round(i.get("fitness", 0), 4),
+                            "win_rate": i.get("win_rate", 0),
+                            "total_pnl": round(i.get("total_pnl", 0), 4),
+                            "uses": [
+                                k
+                                for k in [
+                                    "volume",
+                                    "dxy",
+                                    "vix",
+                                    "tnx",
+                                    "spx",
+                                    "oil",
+                                    "gold",
+                                    "btc",
+                                    "fvx",
+                                    "eem",
+                                ]
+                                if k in i.get("expr_str", "")
+                            ],
+                        }
+                        for i in inds
+                    ]
         except Exception:
             pass
         # ── Cortex summary for dashboard ──
         try:
-            from hermes_forex.decision_cortex import summary as cortex_summary, get_exiled_indicators
+            from hermes_forex.decision_cortex import (
+                summary as cortex_summary,
+                get_exiled_indicators,
+            )
             from hermes_forex.decision_cortex import _load_json as _cj
             from hermes_forex.policy_engine import get_policy
+
             snapshot["cortex"] = {
                 "summary": cortex_summary(),
                 "exiled": list(get_exiled_indicators().keys()),
                 "indicators": _cj("indicator_tracker.json"),
                 "policy": get_policy(),
             }
-            print(f"[CORTEX] Push data: {len(snapshot['cortex']['exiled'])} exiled, "
-                  f"{snapshot['cortex']['summary']['entries_total']} entries tracked", flush=True)
+            print(
+                f"[CORTEX] Push data: {len(snapshot['cortex']['exiled'])} exiled, "
+                f"{snapshot['cortex']['summary']['entries_total']} entries tracked",
+                flush=True,
+            )
         except Exception as e:
             print(f"[CORTEX] Push failed: {e}", flush=True)
         async with _httpx.AsyncClient(timeout=5) as client:
@@ -2006,6 +2054,7 @@ async def push_to_dashboard(bot_name: str):
             print(f"[DASHBOARD] Push response: {resp.status_code} — {resp.text[:200]}", flush=True)
     except Exception as e:
         print(f"[DASHBOARD] Push failed (non-critical): {e}", flush=True)
+
 
 STATE_DIR = Path("/app/state")
 TRADES_FILE = STATE_DIR / "trades.jsonl"
@@ -2020,14 +2069,18 @@ CHART_ANALYSIS_INTERVAL = 3600  # 60 minutes
 
 _price_histories = {}
 
+
 def _recover_trades_from_dashboard():
     """On restart, restore trades.jsonl from dashboard API if local file is empty."""
     if TRADES_FILE.exists() and TRADES_FILE.stat().st_size > 100:
         return  # Already has data
     try:
         import httpx as _h
+
         bot_name = os.environ.get("HERMES_BOT_NAME", "forex")
-        dash_url = os.environ.get("DASHBOARD_URL", "https://hermes-dashboard-api-production.up.railway.app")
+        dash_url = os.environ.get(
+            "DASHBOARD_URL", "https://hermes-dashboard-api-production.up.railway.app"
+        )
         resp = _h.get(f"{dash_url}/api/bot/{bot_name}/trades?limit=200", timeout=15)
         if resp.status_code != 200:
             return
@@ -2045,7 +2098,9 @@ def _recover_trades_from_dashboard():
     except Exception:
         pass
 
+
 _recover_trades_from_dashboard()
+
 
 def _seed_default_state():
     """On startup, create default state files if the volume is empty.
@@ -2056,6 +2111,7 @@ def _seed_default_state():
     after initial recovery), if this fires it means state was silently lost —
     logs CRITICAL + sends Discord alert."""
     from pathlib import Path as _P
+
     _state = _P("/app/state")
     _seeded_anything = False
 
@@ -2206,14 +2262,15 @@ atr_floor_pct: 0.3
     # ── If we seeded anything on hermes-forex, sound the alarm ──
     if _seeded_anything:
         import os as _os
+
         _bot = _os.environ.get("HERMES_BOT_NAME", "forex")
-        print(f"\n{'='*60}", flush=True)
+        print(f"\n{'=' * 60}", flush=True)
         print(f"[CRITICAL] {_bot}: State files missing at startup!", flush=True)
         print(f"[CRITICAL] Volume at /app/state is empty or unreachable.", flush=True)
         print(f"[CRITICAL] goal.yaml and strategy YAMLs were re-seeded.", flush=True)
         print(f"[CRITICAL] All entries, hypotheses, indicator stats, exiles,", flush=True)
         print(f"[CRITICAL] and policy decisions from prior runs are LOST.", flush=True)
-        print(f"{'='*60}\n", flush=True)
+        print(f"{'=' * 60}\n", flush=True)
         _wh = _os.environ.get("DISCORD_ALERTS_WEBHOOK", "")
         if not _wh:
             _whf = _state / ".discord_alerts_webhook"
@@ -2222,17 +2279,23 @@ atr_floor_pct: 0.3
         if _wh:
             try:
                 import httpx as _hx
-                _hx.post(_wh, json={
-                    "content": "🚨 **CRITICAL: {} state recovery**\n"
-                               "Volume at `/app/state` was EMPTY at startup.\n"
-                               "All historical state (entries, hypotheses,\n"
-                               "indicators, exiles, policy) LOST.\n"
-                               "Default goal.yaml + strategy files re-seeded.\n"
-                               "⚠️ Should never happen on volume-equipped service.".format(_bot)
-                }, timeout=5)
+
+                _hx.post(
+                    _wh,
+                    json={
+                        "content": "🚨 **CRITICAL: {} state recovery**\n"
+                        "Volume at `/app/state` was EMPTY at startup.\n"
+                        "All historical state (entries, hypotheses,\n"
+                        "indicators, exiles, policy) LOST.\n"
+                        "Default goal.yaml + strategy files re-seeded.\n"
+                        "⚠️ Should never happen on volume-equipped service.".format(_bot)
+                    },
+                    timeout=5,
+                )
                 print(f"[CRITICAL] Discord alert sent.", flush=True)
             except Exception:
                 pass
+
 
 _seed_default_state()
 
@@ -2254,15 +2317,20 @@ _feature_training_buffer = {}  # pair -> list of feature vectors for novelty det
 
 # ── GP Intelligence (Stages 1-3) ──
 _gp_intel = None  # Lazy init
+
+
 def _get_gp_intel():
     global _gp_intel
     if _gp_intel is None:
         try:
             from hermes_forex.gp_intelligence import GpIntelligence
+
             _gp_intel = GpIntelligence()
         except Exception:
             _gp_intel = False  # Sentinel
     return _gp_intel if _gp_intel is not False else None
+
+
 _NOVELTY_THRESHOLD_MULT = 3.0  # how many median-distances before flagging as novel
 _FEATURE_WINDOW = 500  # max feature vectors to keep for training
 _ANOMALY_DIM = 9  # feature vector dimension
@@ -2272,6 +2340,7 @@ _last_discovery_run_ts = None
 
 # ── Safety state persistence (survives restarts) ──
 _SAFETY_STATE_FILE = STATE_DIR / ".safety_state.json"
+
 
 def _load_safety_state():
     """Load flatline + consecutive-loss + stop-loss-blocklist + discovery ts from disk."""
@@ -2284,10 +2353,14 @@ def _load_safety_state():
             _stop_loss_blocklist.update(data.get("stop_loss_blocklist", {}))
             _gp_consecutive_bad.update(data.get("gp_consecutive_bad", {}))
             _last_discovery_run_ts = data.get("last_discovery_run_ts")
-            print(f"[SAFETY] Restored state: {len(_flatline)} flatlined, "
-                  f"{len(_consecutive_losses)} consecutive-loss counters", flush=True)
+            print(
+                f"[SAFETY] Restored state: {len(_flatline)} flatlined, "
+                f"{len(_consecutive_losses)} consecutive-loss counters",
+                flush=True,
+            )
         except Exception:
             pass
+
 
 def _save_safety_state():
     """Persist flatline + consecutive-loss + stop-loss-blocklist + discovery ts to disk."""
@@ -2303,11 +2376,13 @@ def _save_safety_state():
     except Exception:
         pass
 
+
 _load_safety_state()
 
 # ── Reflection latch (file-based, persists across restarts) ──
 # Per-pair latch: tracks {pair: {"version": str, "reflected_count": int}}
 _REFLECTION_LATCH_FILE = STATE_DIR / ".reflection_latches.json"
+
 
 def _load_reflection_latches():
     try:
@@ -2317,11 +2392,13 @@ def _load_reflection_latches():
         return {}
     return {}
 
+
 def _save_reflection_latches(latches):
     try:
         _REFLECTION_LATCH_FILE.write_text(json.dumps(latches))
     except Exception:
         pass
+
 
 def _is_reflection_done(pair, closed_count):
     latches = _load_reflection_latches()
@@ -2331,13 +2408,16 @@ def _is_reflection_done(pair, closed_count):
     # Done if we already reflected at this trade count (NOT version-keyed — prevents rapid-fire cascade)
     return entry.get("reflected_count") == closed_count
 
+
 def _mark_reflection_done(pair, closed_count):
     latches = _load_reflection_latches()
     latches[pair] = {"reflected_count": closed_count}
     _save_reflection_latches(latches)
 
+
 def _strategy_filename(pair):
     return pair.replace("/", "_").replace("-", "_") + ".yaml"
+
 
 def load_strategy_for_pair(pair):
     per_pair = STRATEGY_DIR / _strategy_filename(pair)
@@ -2345,6 +2425,7 @@ def load_strategy_for_pair(pair):
         with open(per_pair) as f:
             data = yaml.safe_load(f)
             from hermes_forex.reflect import validate_strategy_params
+
             validate_strategy_params(data, raise_on_fail=False)
             return data
     default = STATE_DIR / "strategy.yaml"
@@ -2352,24 +2433,28 @@ def load_strategy_for_pair(pair):
         with open(default) as f:
             data = yaml.safe_load(f)
             from hermes_forex.reflect import validate_strategy_params
+
             validate_strategy_params(data, raise_on_fail=False)
             return data
     raise FileNotFoundError(f"No strategy for {pair}")
+
 
 async def fetch_with_retry(fetch_fn, name):
     for attempt in range(1, RETRY_ATTEMPTS + 1):
         try:
             return await fetch_fn()
         except Exception as e:
-            delay = RETRY_BASE_DELAY ** attempt
+            delay = RETRY_BASE_DELAY**attempt
             print(f"[{name}] Attempt {attempt} failed: {e}. Retrying in {delay}s...", flush=True)
             await asyncio.sleep(delay)
     print(f"[{name}] All attempts failed.", flush=True)
     return {}
 
+
 def load_goal():
     with open(GOAL_FILE) as f:
         return yaml.safe_load(f)
+
 
 def load_trades():
     if not TRADES_FILE.exists():
@@ -2381,6 +2466,7 @@ def load_trades():
             if line:
                 trades.append(json.loads(line))
     return trades
+
 
 import tempfile
 
@@ -2398,39 +2484,56 @@ def _atomic_write(path, data, mode="w"):
         tmp.close()
         os.replace(tmp.name, str(path))
     except Exception:
-        try: os.unlink(tmp.name)
-        except: pass
+        try:
+            os.unlink(tmp.name)
+        except:
+            pass
         raise
 
 
 def write_heartbeat(asset, cycle, consecutive_failures, last_price):
-    data = {"ts": datetime.now(timezone.utc).isoformat(), "asset": asset, "cycle": cycle, "consecutive_failures": consecutive_failures, "last_price": last_price, "status": "ok" if consecutive_failures < MAX_CONSECUTIVE_FAILURES else "circuit_open"}
+    data = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "asset": asset,
+        "cycle": cycle,
+        "consecutive_failures": consecutive_failures,
+        "last_price": last_price,
+        "status": "ok" if consecutive_failures < MAX_CONSECUTIVE_FAILURES else "circuit_open",
+    }
     _atomic_write(HEARTBEAT_FILE, data)
+
 
 def _get_session(hour):
     """Classify UTC hour into trading session."""
-    if 8 <= hour < 17: return "LDN"
-    if 13 <= hour < 21: return "NY"
-    if 0 <= hour < 8: return "ASIA"
+    if 8 <= hour < 17:
+        return "LDN"
+    if 13 <= hour < 21:
+        return "NY"
+    if 0 <= hour < 8:
+        return "ASIA"
     return "OTHER"
+
 
 def _get_day_name(ts_iso):
     """Return day of week name from ISO timestamp."""
     try:
         dt = datetime.fromisoformat(ts_iso)
         return dt.strftime("%A")
-    except Exception: return "UNKNOWN"
+    except Exception:
+        return "UNKNOWN"
+
 
 def compute_rsi(prices, period=14):
     if len(prices) < period + 1:
         return 50.0
-    deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
+    deltas = [prices[i] - prices[i - 1] for i in range(1, len(prices))]
     gains = [d for d in deltas if d > 0]
     losses = [-d for d in deltas if d < 0]
     avg_gain = sum(gains[-period:]) / period if gains else 0
     avg_loss = sum(losses[-period:]) / period if losses else 1e-10
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
+
 
 def compute_roc(prices, period=20):
     """Rate of change over N periods. Negative = price declining."""
@@ -2442,11 +2545,12 @@ def compute_roc(prices, period=20):
         return 0.0
     return (new - old) / old * 100
 
+
 def compute_atr(prices, period=14):
     """Average True Range using Wilder's smoothing. Uses close-to-close TR."""
     if len(prices) < period + 1:
         return None
-    trs = [abs(prices[i] - prices[i-1]) for i in range(1, len(prices))]
+    trs = [abs(prices[i] - prices[i - 1]) for i in range(1, len(prices))]
     if len(trs) < period:
         return None
     atr = sum(trs[:period]) / period
@@ -2515,7 +2619,12 @@ def compute_rsi_divergence(prices, period=14):
     recent = prices[-20:]
     lows = []
     for i in range(2, len(recent) - 2):
-        if recent[i] < recent[i-1] and recent[i] < recent[i-2] and recent[i] < recent[i+1] and recent[i] < recent[i+2]:
+        if (
+            recent[i] < recent[i - 1]
+            and recent[i] < recent[i - 2]
+            and recent[i] < recent[i + 1]
+            and recent[i] < recent[i + 2]
+        ):
             lows.append((i, recent[i]))
     if len(lows) < 2:
         return False
@@ -2525,37 +2634,59 @@ def compute_rsi_divergence(prices, period=14):
     if not (price2 < price1):  # Need lower low in price
         return False
     # Compute RSI at each swing low point (using window from start to that point)
-    rsi_at_low1 = compute_rsi(prices[:len(prices)-20+idx1+1], period)
-    rsi_at_low2 = compute_rsi(prices[:len(prices)-20+idx2+1], period)
+    rsi_at_low1 = compute_rsi(prices[: len(prices) - 20 + idx1 + 1], period)
+    rsi_at_low2 = compute_rsi(prices[: len(prices) - 20 + idx2 + 1], period)
     if rsi_at_low1 is None or rsi_at_low2 is None:
         return False
     # Bullish divergence: price lower low, RSI higher low
     return rsi_at_low2 > rsi_at_low1
 
 
-def compute_entry_quality_score(rsi, threshold, regime, volume_above_avg, fg_boost=False, adx_above=False, fast_regime="NEUTRAL", divergence=False, session_bonus=0, daily_rsi_bonus=0):
+def compute_entry_quality_score(
+    rsi,
+    threshold,
+    regime,
+    volume_above_avg,
+    fg_boost=False,
+    adx_above=False,
+    fast_regime="NEUTRAL",
+    divergence=False,
+    session_bonus=0,
+    daily_rsi_bonus=0,
+):
     """Compute entry quality score 0-10 with enhanced scoring."""
     score = 0
     # RSI margin — ratio-based: deeper oversold = higher score
     rsi_margin = threshold - rsi
     rsi_ratio = rsi_margin / max(threshold, 1)  # how far below threshold as a fraction
-    if rsi_ratio >= 0.4: score += 3       # 40%+ below threshold (e.g., RSI 24 vs threshold 40)
-    elif rsi_ratio >= 0.25: score += 2    # 25%+ below
-    elif rsi_ratio > 0: score += 1        # any margin
+    if rsi_ratio >= 0.4:
+        score += 3  # 40%+ below threshold (e.g., RSI 24 vs threshold 40)
+    elif rsi_ratio >= 0.25:
+        score += 2  # 25%+ below
+    elif rsi_ratio > 0:
+        score += 1  # any margin
     # Regime (slow 50/200)
-    if regime == "BULL": score += 2
-    elif regime == "NEUTRAL": score += 1
+    if regime == "BULL":
+        score += 2
+    elif regime == "NEUTRAL":
+        score += 1
     # Fast regime (20/50 EMA) — timing bonus
-    if fast_regime == "BULL": score += 1
-    elif fast_regime == "BEAR": score -= 1  # penalty for buying into EMA downtrend
+    if fast_regime == "BULL":
+        score += 1
+    elif fast_regime == "BEAR":
+        score -= 1  # penalty for buying into EMA downtrend
     # Volume
-    if volume_above_avg: score += 2
+    if volume_above_avg:
+        score += 2
     # Fear & Greed (crypto only)
-    if fg_boost: score += 2
+    if fg_boost:
+        score += 2
     # ADX
-    if adx_above: score += 1
+    if adx_above:
+        score += 1
     # Divergence bonus
-    if divergence: score += 1
+    if divergence:
+        score += 1
     # Session quality bonus
     score += session_bonus
     # Multi-timeframe RSI bonus (Layer 20): daily trend confluence
@@ -2632,6 +2763,7 @@ _PAIR_ZONES = {
 _CALENDAR_CACHE = {"events": [], "ts": 0.0}
 _CALENDAR_CACHE_TTL = 3600  # 1 hour
 
+
 def _fetch_calendar_events():
     """Fetch upcoming economic events from FMP API. Cached for 1 hour.
     Returns list of {time_str, name, zone, label}."""
@@ -2644,10 +2776,11 @@ def _fetch_calendar_events():
         api_key = os.environ.get("FINANCIALMODELINGPREP_API_KEY", "")
         if api_key:
             import httpx as _cal_httpx
+
             resp = _cal_httpx.get(
                 f"https://financialmodelingprep.com/api/v3/economic_calendar",
                 params={"apikey": api_key, "from": datetime.now(timezone.utc).strftime("%Y-%m-%d")},
-                timeout=10
+                timeout=10,
             )
             if resp.status_code == 200:
                 data = resp.json()
@@ -2660,12 +2793,14 @@ def _fetch_calendar_events():
                             continue
                         dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
                         h, m = dt.hour, dt.minute
-                        events.append({
-                            "time_str": f"{h:02d}:{m:02d}",
-                            "name": event_name.replace(" ", ""),
-                            "zone": "US",
-                            "label": event_name,
-                        })
+                        events.append(
+                            {
+                                "time_str": f"{h:02d}:{m:02d}",
+                                "name": event_name.replace(" ", ""),
+                                "zone": "US",
+                                "label": event_name,
+                            }
+                        )
                     except Exception:
                         pass
     except Exception:
@@ -2675,14 +2810,17 @@ def _fetch_calendar_events():
         return events
     return _CALENDAR_CACHE.get("events", [])
 
+
 def _get_zones_for_pair(pair):
     """Return list of economic zones relevant to this pair."""
     return _PAIR_ZONES.get(pair.replace("-", "/"), ["US"])
+
 
 def _is_fomc_week():
     """Approximate FOMC week: 8 meetings/year, ~every 6 weeks."""
     # Simplified: week-of-year mod 6 ≈ 0 is FOMC week (rough)
     import datetime as _dt
+
     iso = _dt.date.today().isocalendar()
     week = iso[1]
     # FOMC months: ~Jan, Mar, May, Jun, Jul, Sep, Nov, Dec
@@ -2692,13 +2830,16 @@ def _is_fomc_week():
         return week % 6 < 2  # first or second week of FOMC months
     return False
 
+
 def _is_first_friday():
     """Check if today is the first Friday of the month (NFP day)."""
     from datetime import date as _dd
+
     today = _dd.today()
     if today.weekday() != 4:  # Not Friday
         return False
     return today.day <= 7
+
 
 def _is_near_economic_event(pair=None):
     """Block entries 10min before/after major economic events.
@@ -2758,7 +2899,9 @@ def _is_near_economic_event(pair=None):
 
     return False, ""
 
+
 # ── PHASE 1a: Anomaly Detection / Feature Extraction ──
+
 
 def _extract_features(prices, volumes, pair=None):
     """Compute feature vector for current market state.
@@ -2846,7 +2989,7 @@ def _compute_novelty_score(features, training_buf):
         if len(tf) != len(features):
             continue
         sq_sum = sum((features[i] - tf[i]) ** 2 for i in range(len(features)))
-        distances.append(sq_sum ** 0.5)
+        distances.append(sq_sum**0.5)
     if not distances:
         return 0.0, False, 0.0
     min_dist = min(distances)
@@ -2876,11 +3019,16 @@ def _is_novel_regime(pair, prices, volumes):
     buf_normed = [_normalize_features(f, buf) for f in buf[:-1]]  # exclude current
     score, is_novel, median_dist = _compute_novelty_score(normed, buf_normed)
     if is_novel:
-        return True, score, f"novelty_score={score} median={median_dist} threshold={median_dist*_NOVELTY_THRESHOLD_MULT:.4f}"
+        return (
+            True,
+            score,
+            f"novelty_score={score} median={median_dist} threshold={median_dist * _NOVELTY_THRESHOLD_MULT:.4f}",
+        )
     return False, score, "normal"
 
 
 # ── PHASE 1b: Consecutive-Loss Cooldown ──
+
 
 def _update_consecutive_losses(pair, exit_reason):
     """Update consecutive-loss counter and return flatline action.
@@ -2903,6 +3051,7 @@ def _update_consecutive_losses(pair, exit_reason):
 
 
 # ── PHASE 1c: Spread / Slippage Guard ──
+
 
 def _check_spread(pair, current_price, stop_loss_pct):
     """Check if spread is too large relative to stop loss.
@@ -2928,6 +3077,7 @@ def _check_spread(pair, current_price, stop_loss_pct):
 
 FLATLINE_LOG_FILE = STATE_DIR / "flatline_log.jsonl"
 
+
 def _log_flatline(pair, reason, details=""):
     """Log flatline event to flatline_log.jsonl and in-memory cache."""
     entry = {
@@ -2945,8 +3095,11 @@ def _log_flatline(pair, reason, details=""):
     except Exception:
         pass
     print(f"[FLATLINE] {pair}: {reason} | {details}", flush=True)
+
+
 _DAILY_RSI_CACHE = {}  # pair -> {"rsi": float, "ts": timestamp}
 _DAILY_RSI_TTL = 3600  # 1 hour
+
 
 def _get_daily_rsi_bonus(pair):
     """Fetch daily RSI from yfinance and return quality bonus [-1, 0, +1].
@@ -2960,6 +3113,7 @@ def _get_daily_rsi_bonus(pair):
         return cached["bonus"]
     try:
         import yfinance as yf
+
         ticker = yf.Ticker(pair.replace("/", "") + "=X")
         df = ticker.history(period="1mo", interval="1d")
         if df.empty or len(df) < 20:
@@ -2985,6 +3139,7 @@ def _get_daily_rsi_bonus(pair):
     except Exception:
         _DAILY_RSI_CACHE[pair] = {"bonus": 0, "ts": now_ts}
         return 0
+
 
 def session_quality_bonus():
     """Return quality score bonus based on current session.
@@ -3023,21 +3178,21 @@ def compute_adx(prices, period=14):
     plus_dm = []
     minus_dm = []
     for i in range(1, len(prices)):
-        up = prices[i] - prices[i-1]
-        down = prices[i-1] - prices[i]
+        up = prices[i] - prices[i - 1]
+        down = prices[i - 1] - prices[i]
         plus_dm.append(up if up > down and up > 0 else 0.0)
         minus_dm.append(down if down > up and down > 0 else 0.0)
     if len(plus_dm) < period:
         return None
     # Wilder's smoothing
-    atr = sum(abs(prices[i] - prices[i-1]) for i in range(1, period + 1)) / period
+    atr = sum(abs(prices[i] - prices[i - 1]) for i in range(1, period + 1)) / period
     plus_di = 100.0
     minus_di = 100.0
     for i in range(period, len(plus_dm)):
         if atr > 0:
             plus_di = (plus_di * (period - 1) + (plus_dm[i] / atr * 100)) / period
             minus_di = (minus_di * (period - 1) + (minus_dm[i] / atr * 100)) / period
-            atr = (atr * (period - 1) + abs(prices[i+1] - prices[i])) / period
+            atr = (atr * (period - 1) + abs(prices[i + 1] - prices[i])) / period
         else:
             atr = 0.001
     if plus_di + minus_di == 0:
@@ -3058,7 +3213,7 @@ def compute_bollinger(prices, period=20, num_std=2.0):
     window = prices[-period:]
     middle = sum(window) / period
     variance = sum((p - middle) ** 2 for p in window) / period
-    std = variance ** 0.5
+    std = variance**0.5
     upper = middle + num_std * std
     lower = middle - num_std * std
     bandwidth = (upper - lower) / middle * 100 if middle != 0 else 0
@@ -3089,6 +3244,8 @@ def get_pairs():
 
 
 _SKIPPED_FILE = STATE_DIR / "skipped_signals.jsonl"
+
+
 def load_skipped():
     if not _SKIPPED_FILE.exists():
         return []
@@ -3100,6 +3257,7 @@ def load_skipped():
                 skipped.append(json.loads(line))
     return skipped
 
+
 def save_skipped(skipped):
     # Cap at last 500 entries to prevent unbounded growth on Railway volume
     if len(skipped) > 500:
@@ -3108,10 +3266,12 @@ def save_skipped(skipped):
         for s in skipped:
             f.write(json.dumps(s) + "\n")
 
+
 def log_skip(pair, reason, rsi, price, regime, adx=None):
     entry = {
         "ts": datetime.now(timezone.utc).isoformat(),
-        "pair": pair, "bot_id": "hermes-forex",
+        "pair": pair,
+        "bot_id": "hermes-forex",
         "reason_skipped": reason,
         "rsi_at_skip": round(rsi, 2) if rsi is not None else "N/A",
         "price_at_skip": price,
@@ -3124,6 +3284,7 @@ def log_skip(pair, reason, rsi, price, regime, adx=None):
     with open(_SKIPPED_FILE, "a") as f:
         f.write(json.dumps(entry) + "\n")
     print(f"[SKIP] {pair}: {reason} | RSI {rsi:.1f} @ {price:.5f}", flush=True)
+
 
 async def backfill_skipped(pairs):
     """Update skips older than 24h with actual 24h-later price and missed PnL."""
@@ -3152,7 +3313,10 @@ async def backfill_skipped(pairs):
                     s["price_24h_later"] = current_price
                     s["missed_pnl"] = round((current_price - entry_price) / entry_price * 100, 4)
                     changed = True
-                    print(f"[SKIP-BACKFILL] {pair}: entry {entry_price:.5f} -> 24h {current_price:.5f} | missed PnL: {s['missed_pnl']:+.4f}%", flush=True)
+                    print(
+                        f"[SKIP-BACKFILL] {pair}: entry {entry_price:.5f} -> 24h {current_price:.5f} | missed PnL: {s['missed_pnl']:+.4f}%",
+                        flush=True,
+                    )
         except Exception:
             pass
     if changed:
@@ -3163,6 +3327,7 @@ async def seed_forex_price_history(pairs):
     """Pre-seed forex price history on startup using 5 days of real 5m candles.
     This gives RSI, ATR, regime, ADX, and Bollinger accurate values from cycle 1."""
     from hermes_forex.adapters.price import fetch_history_df
+
     for pair in pairs:
         try:
             df = fetch_history_df(pair, period="5d")
@@ -3171,8 +3336,8 @@ async def seed_forex_price_history(pairs):
                 continue
 
             closes = df["Close"].dropna().tolist()
-            highs  = df["High"].dropna().tolist()
-            lows   = df["Low"].dropna().tolist()
+            highs = df["High"].dropna().tolist()
+            lows = df["Low"].dropna().tolist()
 
             _price_histories[pair] = closes[-300:]
 
@@ -3184,10 +3349,10 @@ async def seed_forex_price_history(pairs):
             if vols:
                 _volume_histories[pair] = vols[-300:]
 
-            rsi    = compute_rsi(closes)
-            atr    = compute_atr(closes)
+            rsi = compute_rsi(closes)
+            atr = compute_atr(closes)
             regime = compute_regime(closes)
-            adx    = compute_adx(closes)
+            adx = compute_adx(closes)
             print(
                 f"[SEED] {pair}: {len(closes)} x 5m candles | "
                 f"RSI: {rsi:.1f} | ATR: {atr:.6f} | Regime: {regime} | ADX: {adx:.1f}",
@@ -3207,7 +3372,10 @@ async def run_loop(run_once=False):
     pairs = get_pairs()
     cycle = 0
     consecutive_failures = 0
-    print(f"[{datetime.now(timezone.utc).isoformat()}] Starting multi-pair forex bot for {', '.join(pairs)}.", flush=True)
+    print(
+        f"[{datetime.now(timezone.utc).isoformat()}] Starting multi-pair forex bot for {', '.join(pairs)}.",
+        flush=True,
+    )
     # Pre-seed price history from yfinance so RSI/ATR/regime/ADX are real from cycle 1
     await seed_forex_price_history(pairs)
 
@@ -3229,9 +3397,11 @@ async def run_loop(run_once=False):
             status = "ok"
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    "python", "-c",
+                    "python",
+                    "-c",
                     f"from hermes_forex.genetic_discovery import run_and_register as r; r('{pair}')",
-                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
                 )
                 stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=900)
                 output = stdout.decode() if stdout else ""
@@ -3268,7 +3438,8 @@ async def run_loop(run_once=False):
         wall_time = time.time() - start_wall
         # Build Discord summary
         indicator_total = sum(
-            int(c.split("/")[0]) for _, s, _, c in results
+            int(c.split("/")[0])
+            for _, s, _, c in results
             if s == "ok" and c not in ("0?", "N/A") and "/" in c
         )
         lines = [f"**🔬 GP Discovery — forex** ({int(wall_time)}s, {indicator_total} indicators)"]
@@ -3287,7 +3458,10 @@ async def run_loop(run_once=False):
         print(f"[CYCLE {cycle}] {datetime.now(timezone.utc).isoformat()}", flush=True)
         try:
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                print(f"[CIRCUIT OPEN] {consecutive_failures} consecutive failures. Waiting 5 min.", flush=True)
+                print(
+                    f"[CIRCUIT OPEN] {consecutive_failures} consecutive failures. Waiting 5 min.",
+                    flush=True,
+                )
                 await asyncio.sleep(300)
                 consecutive_failures = 0
                 continue
@@ -3295,14 +3469,20 @@ async def run_loop(run_once=False):
             # ── Pause check: honor dashboard pause signal ──
             try:
                 import httpx as _httpx_pulse
+
                 pulse_url = f"{_DASHBOARD_URL}/api/bot/forex/pulse" if _DASHBOARD_URL else ""
                 if pulse_url:
                     pr = await _httpx_pulse.AsyncClient(timeout=3).get(pulse_url)
                     if pr.status_code == 200:
                         pulse = pr.json()
                         if pulse.get("desired_state") == "paused":
-                            print(f"[PAUSE] Bot paused via dashboard. Entering sleep mode.", flush=True)
-                            await send_discord_alert("⏸ **Bot paused via dashboard — entering sleep mode.**")
+                            print(
+                                f"[PAUSE] Bot paused via dashboard. Entering sleep mode.",
+                                flush=True,
+                            )
+                            await send_discord_alert(
+                                "⏸ **Bot paused via dashboard — entering sleep mode.**"
+                            )
                             # Internal pause: just sleep and re-check periodically instead of killing deployment
                             for _ in range(60):
                                 await asyncio.sleep(60)
@@ -3326,13 +3506,18 @@ async def run_loop(run_once=False):
                         strategies[pair]["paused"] = True
                         strategies[pair].pop("paused_reatry_half_size", None)
                         from hermes_forex.reflect import save_strategy
+
                         save_strategy(pair, strategies[pair])
-                        print(f"[FROZEN] {pair}: kept paused per explicit user decision (not auto-unpaused).", flush=True)
+                        print(
+                            f"[FROZEN] {pair}: kept paused per explicit user decision (not auto-unpaused).",
+                            flush=True,
+                        )
                         continue
                     # Self-healing unpause: a paused pair never closes trades,
                     # so combined_reflect never runs for it — unpause it here
                     # every cycle instead (rolling recovery or max-pause timeout).
                     from hermes_forex.reflect import maybe_auto_unpause
+
                     maybe_auto_unpause(pair, strategies[pair])
                 except FileNotFoundError:
                     print(f"[WARN] No strategy for {pair}, skipping.", flush=True)
@@ -3348,7 +3533,9 @@ async def run_loop(run_once=False):
                     if not price_data or "price" not in price_data:
                         continue
                     current_price = float(price_data["price"])
-                    unrealised_pct = (current_price - trade["entry_price"]) / trade["entry_price"] * 100
+                    unrealised_pct = (
+                        (current_price - trade["entry_price"]) / trade["entry_price"] * 100
+                    )
                     trade["_unrealised_pct"] = round(unrealised_pct, 4)
                     trade["current_price"] = current_price
                     hold_cycles = cycle - trade.get("_entry_cycle", cycle)
@@ -3365,7 +3552,11 @@ async def run_loop(run_once=False):
                         trade["_regime_changes"] = 0
                         trade["_last_regime"] = trade.get("entry_regime", "UNKNOWN")
                     current_regime = compute_regime(_price_histories.get(asset, []))
-                    if current_regime and trade.get("_last_regime") and current_regime != trade["_last_regime"]:
+                    if (
+                        current_regime
+                        and trade.get("_last_regime")
+                        and current_regime != trade["_last_regime"]
+                    ):
                         trade["_regime_changes"] = trade.get("_regime_changes", 0) + 1
                         trade["_last_regime"] = current_regime
                     # Use ATR stop stored at entry time, or recalculate if missing (legacy trades)
@@ -3376,15 +3567,23 @@ async def run_loop(run_once=False):
                         if atr is not None and atr > 0:
                             stop_price = trade["entry_price"] - (atr * 1.5)
                         else:
-                            stop_price = trade["entry_price"] * (1 - pair_strategy["stop_loss_pct"] / 100)
-                    trailing_stop_price = trade["_peak_price"] * (1 - pair_strategy.get("trailing_stop_pct", 0.10) / 100)
+                            stop_price = trade["entry_price"] * (
+                                1 - pair_strategy["stop_loss_pct"] / 100
+                            )
+                    trailing_stop_price = trade["_peak_price"] * (
+                        1 - pair_strategy.get("trailing_stop_pct", 0.10) / 100
+                    )
                     # ATR dynamic trailing stop: once in profit (>0.3%), trail ATR-based distance
                     att = compute_atr(_price_histories.get(asset, []))
                     if att is not None and att > 0 and unrealised_pct > 0.3:
                         atr_trail = trade["_peak_price"] - (att * 1.5)
-                        fixed_trail = trade["_peak_price"] * (1 - pair_strategy.get("trailing_stop_pct", 0.10) / 100)
+                        fixed_trail = trade["_peak_price"] * (
+                            1 - pair_strategy.get("trailing_stop_pct", 0.10) / 100
+                        )
                         trailing_stop_price = max(trailing_stop_price, atr_trail, fixed_trail)
-                    profit_target_price = trade["entry_price"] * (1 + pair_strategy.get("profit_target_pct", 0.15) / 100)
+                    profit_target_price = trade["entry_price"] * (
+                        1 + pair_strategy.get("profit_target_pct", 0.15) / 100
+                    )
                     time_exit_cycles = pair_strategy.get("time_exit_cycles", 120)
 
                     # ── Layer 17: Breakeven management ──
@@ -3393,7 +3592,10 @@ async def run_loop(run_once=False):
                     if not trade.get("_breakeven_set") and unrealised_pct >= breakeven_trigger:
                         trade["_breakeven_set"] = True
                         stop_price = max(stop_price, trade["entry_price"])
-                        print(f"[{asset}] BREAKEVEN: profit {unrealised_pct:.2f}% >= {breakeven_trigger:.2f}% — stop moved to entry {trade['entry_price']:.5f}", flush=True)
+                        print(
+                            f"[{asset}] BREAKEVEN: profit {unrealised_pct:.2f}% >= {breakeven_trigger:.2f}% — stop moved to entry {trade['entry_price']:.5f}",
+                            flush=True,
+                        )
                         await send_discord_alert(
                             f"🔒 **BREAKEVEN: {asset}** | Profit {unrealised_pct:.2f}% >= {breakeven_trigger:.2f}%\n"
                             f"Stop moved to entry {trade['entry_price']:.5f} | Trail active"
@@ -3406,7 +3608,10 @@ async def run_loop(run_once=False):
                         trade["_partial_taken"] = True
                         # Reset stop to breakeven for remaining 50%
                         stop_price = max(stop_price, trade["entry_price"])
-                        print(f"[{asset}] PARTIAL PROFIT: {unrealised_pct:.2f}% >= target {partial_target_pct:.2f}% — took 50% profit, trailing rest at breakeven", flush=True)
+                        print(
+                            f"[{asset}] PARTIAL PROFIT: {unrealised_pct:.2f}% >= target {partial_target_pct:.2f}% — took 50% profit, trailing rest at breakeven",
+                            flush=True,
+                        )
                         await send_discord_alert(
                             f"💰 **PARTIAL PROFIT: {asset}** | Hit target +{unrealised_pct:.2f}%\n"
                             f"Took 50% profit. Stop at breakeven, trailing remainder."
@@ -3417,13 +3622,20 @@ async def run_loop(run_once=False):
 
                     if trade_stype == "mean_reversion":
                         # ── Mean Reversion Exit: price returns to BB middle band ──
-                        bb_result = compute_bollinger(_price_histories.get(asset, []), period=20, num_std=pair_strategy.get("bb_std_dev", 1.5))
+                        bb_result = compute_bollinger(
+                            _price_histories.get(asset, []),
+                            period=20,
+                            num_std=pair_strategy.get("bb_std_dev", 1.5),
+                        )
                         if bb_result is not None:
                             bb_middle, bb_upper, bb_lower, bb_bw = bb_result
                             # Exit long when price reaches or exceeds middle band (but NOT on flat prices)
                             if bb_bw >= 0.001 and current_price >= bb_middle:
                                 exit_reason = "profit_target"
-                                print(f"[{asset}] MR PROFIT TARGET: price {current_price:.5f} >= BB middle {bb_middle:.5f}", flush=True)
+                                print(
+                                    f"[{asset}] MR PROFIT TARGET: price {current_price:.5f} >= BB middle {bb_middle:.5f}",
+                                    flush=True,
+                                )
                         # MR also has stop loss and time exit
                         if exit_reason is None and current_price <= stop_price:
                             exit_reason = "stop_loss"
@@ -3433,10 +3645,19 @@ async def run_loop(run_once=False):
                         # ── RSI Momentum Exit (original logic) ──
                         # Secondary take-profit: if held > 120 cycles and profitable,
                         # exit at 50% of original target to lock in gains
-                        half_target_price = trade["entry_price"] * (1 + pair_strategy.get("profit_target_pct", 0.15) / 200)
-                        if hold_cycles > 120 and unrealised_pct > 0 and current_price >= half_target_price:  # noqa
+                        half_target_price = trade["entry_price"] * (
+                            1 + pair_strategy.get("profit_target_pct", 0.15) / 200
+                        )
+                        if (
+                            hold_cycles > 120
+                            and unrealised_pct > 0
+                            and current_price >= half_target_price
+                        ):  # noqa
                             exit_reason = "profit_target"
-                            print(f"[{asset}] HALF-TARGET exit (held {hold_cycles}c > 120, profitable {unrealised_pct:.4f}%)", flush=True)
+                            print(
+                                f"[{asset}] HALF-TARGET exit (held {hold_cycles}c > 120, profitable {unrealised_pct:.4f}%)",
+                                flush=True,
+                            )
                         elif current_price <= stop_price:
                             exit_reason = "stop_loss"
                         elif current_price >= profit_target_price:
@@ -3448,18 +3669,33 @@ async def run_loop(run_once=False):
 
                     if exit_reason:
                         pnl_pct = unrealised_pct
-                        print(f"[{asset}] {exit_reason.upper()}. Exit @ {current_price:.5f} | PnL: {pnl_pct:.4f}% | Held {hold_cycles} cycles", flush=True)
-                        exit_emoji = {"stop_loss": "⚠️", "profit_target": "🎯", "trailing_stop": "📉", "time_exit": "⏰"}.get(exit_reason, "📊")
+                        print(
+                            f"[{asset}] {exit_reason.upper()}. Exit @ {current_price:.5f} | PnL: {pnl_pct:.4f}% | Held {hold_cycles} cycles",
+                            flush=True,
+                        )
+                        exit_emoji = {
+                            "stop_loss": "⚠️",
+                            "profit_target": "🎯",
+                            "trailing_stop": "📉",
+                            "time_exit": "⏰",
+                        }.get(exit_reason, "📊")
                         await send_discord_alert(
                             f"{exit_emoji} **TRADE CLOSED: {asset}** | {exit_reason.replace('_', ' ').title()}\n"
                             f"Exit: {current_price:.5f} | PnL: {pnl_pct:.4f}% | Held: {hold_cycles} cycles"
                         )
                         record = {
-                            "id": trade["id"], "asset": asset, "pair": asset, "bot_id": "hermes-forex",
-                            "entry_price": trade["entry_price"], "exit_price": current_price,
-                            "entry_ts": trade["entry_ts"], "exit_ts": datetime.now(timezone.utc).isoformat(),
-                            "pnl_pct": round(pnl_pct, 4), "exit_reason": exit_reason,
-                            "strategy_version": pair_strategy["version"], "mode": "paper",
+                            "id": trade["id"],
+                            "asset": asset,
+                            "pair": asset,
+                            "bot_id": "hermes-forex",
+                            "entry_price": trade["entry_price"],
+                            "exit_price": current_price,
+                            "entry_ts": trade["entry_ts"],
+                            "exit_ts": datetime.now(timezone.utc).isoformat(),
+                            "pnl_pct": round(pnl_pct, 4),
+                            "exit_reason": exit_reason,
+                            "strategy_version": pair_strategy["version"],
+                            "mode": "paper",
                             "hold_cycles": hold_cycles,
                             "price_high": trade.get("_peak_price", current_price),
                             "price_low": trade.get("_low_price", current_price),
@@ -3469,36 +3705,70 @@ async def run_loop(run_once=False):
                             "chart_context": trade.get("chart_context", "unavailable"),
                             "entry_quality_score": trade.get("entry_quality_score", "N/A"),
                             "strategy_type": trade_stype,
-                            "entry_session": _get_session(int(trade.get("entry_ts", "T").split("T")[1].split(":")[0]) if "T" in trade.get("entry_ts", "") else 0),
+                            "entry_session": _get_session(
+                                int(trade.get("entry_ts", "T").split("T")[1].split(":")[0])
+                                if "T" in trade.get("entry_ts", "")
+                                else 0
+                            ),
                             "entry_day": _get_day_name(trade.get("entry_ts", "")),
-                            "entry_hour_utc": int(trade.get("entry_ts", "T").split("T")[1].split(":")[0]) if "T" in trade.get("entry_ts", "") else 0,
+                            "entry_hour_utc": int(
+                                trade.get("entry_ts", "T").split("T")[1].split(":")[0]
+                            )
+                            if "T" in trade.get("entry_ts", "")
+                            else 0,
                             "concurrent_entries": len(_open_trades),
                             "regime_changes": trade.get("_regime_changes", 0),
-                            "exit_regime": best_fast_regime if 'best_fast_regime' in locals() and best_fast_regime else \
-                                           best_regime if 'best_regime' in locals() and best_regime else "UNKNOWN",
-                            "market_move_pct": round((current_price - trade["entry_price"]) / trade["entry_price"] * 100, 4),
-                            "alpha_pct": round(pnl_pct - ((current_price - trade["entry_price"]) / trade["entry_price"] * 100), 4),
+                            "exit_regime": best_fast_regime
+                            if "best_fast_regime" in locals() and best_fast_regime
+                            else best_regime
+                            if "best_regime" in locals() and best_regime
+                            else "UNKNOWN",
+                            "market_move_pct": round(
+                                (current_price - trade["entry_price"]) / trade["entry_price"] * 100,
+                                4,
+                            ),
+                            "alpha_pct": round(
+                                pnl_pct
+                                - (
+                                    (current_price - trade["entry_price"])
+                                    / trade["entry_price"]
+                                    * 100
+                                ),
+                                4,
+                            ),
                         }
                         with open(TRADES_FILE, "a") as f:
                             f.write(json.dumps(record) + "\n")
                         # Save candle data for future backtesting
                         try:
                             from hermes_forex.backtest import save_candle_series
-                            save_candle_series(asset, trade["id"], _price_histories.get(asset, []), STATE_DIR / "candles")
+
+                            save_candle_series(
+                                asset,
+                                trade["id"],
+                                _price_histories.get(asset, []),
+                                STATE_DIR / "candles",
+                            )
                         except Exception:
                             pass
                         # ── Decision Cortex: record trade outcome ──
                         try:
                             from hermes_forex.decision_cortex import record_outcome
+
                             record_outcome(asset, trade_stype, pnl_pct, exit_reason)
                         except Exception:
                             pass
                         # Track stop-loss exits for re-entry cooldown
                         if exit_reason == "stop_loss":
                             _stop_loss_blocklist[asset] = cycle
-                            print(f"[{asset}] STOP-LOSS COOLDOWN: Re-entry blocked for 30 cycles", flush=True)
+                            print(
+                                f"[{asset}] STOP-LOSS COOLDOWN: Re-entry blocked for 30 cycles",
+                                flush=True,
+                            )
                             # ── Level 6: Consecutive-loss cooldown ──
-                            cons_flatline, cons_cycles, cons_reason = _update_consecutive_losses(asset, exit_reason)
+                            cons_flatline, cons_cycles, cons_reason = _update_consecutive_losses(
+                                asset, exit_reason
+                            )
                             if cons_flatline:
                                 # Use the longer of the existing flatline and this one
                                 existing = _flatline.get(asset, 0)
@@ -3516,7 +3786,10 @@ async def run_loop(run_once=False):
                         # ── Degradation tracking: record signal outcome for discovered indicators ──
                         try:
                             from hermes_forex.backtest import record_signal_outcome
-                            record_signal_outcome(asset, 1, pnl_pct)  # bullish signal → trade result
+
+                            record_signal_outcome(
+                                asset, 1, pnl_pct
+                            )  # bullish signal → trade result
                         except Exception:
                             pass
                         # ── GP ensemble signal degradation: track consecutive wrong entries ──
@@ -3524,9 +3797,15 @@ async def run_loop(run_once=False):
                             if exit_reason in ("stop_loss", "time_exit") and pnl_pct < 0:
                                 _gp_consecutive_bad[asset] = _gp_consecutive_bad.get(asset, 0) + 1
                                 n = _gp_consecutive_bad[asset]
-                                print(f"[GP-DEGRADE] {asset}: GP entry lost ({pnl_pct:+.2f}%) — {n} consecutive bad signals", flush=True)
+                                print(
+                                    f"[GP-DEGRADE] {asset}: GP entry lost ({pnl_pct:+.2f}%) — {n} consecutive bad signals",
+                                    flush=True,
+                                )
                                 if n >= 3:
-                                    print(f"[GP-DEGRADE] {asset}: 3+ consecutive GP losses — blocking further GP entries on this pair", flush=True)
+                                    print(
+                                        f"[GP-DEGRADE] {asset}: 3+ consecutive GP losses — blocking further GP entries on this pair",
+                                        flush=True,
+                                    )
                                 # GP Intelligence: record outcome + lockout
                                 gpi = _get_gp_intel()
                                 if gpi:
@@ -3536,31 +3815,52 @@ async def run_loop(run_once=False):
                                 prev = _gp_consecutive_bad.get(asset, 0)
                                 _gp_consecutive_bad[asset] = 0
                                 if prev > 0:
-                                    print(f"[GP-DEGRADE] {asset}: GP entry won ({pnl_pct:+.2f}%) — reset bad counter", flush=True)
+                                    print(
+                                        f"[GP-DEGRADE] {asset}: GP entry won ({pnl_pct:+.2f}%) — reset bad counter",
+                                        flush=True,
+                                    )
                                 # GP Intelligence: record outcome + reset lockout
                                 gpi = _get_gp_intel()
                                 if gpi:
                                     gpi.record_outcome(asset, pnl_pct, exit_reason)
                                     gpi.record_win(asset)
                         # ── GP Intelligence: record traditional entry outcomes for allocation matrix ──
-                        elif (_get_gp_intel() and trade_stype in ("mean_reversion", "rsi_momentum")):
+                        elif _get_gp_intel() and trade_stype in ("mean_reversion", "rsi_momentum"):
                             try:
                                 _get_gp_intel().record_traditional_outcome(
-                                    asset, pnl_pct, trade_stype, trade.get("exit_regime", "UNKNOWN"),
-                                    trade.get("entry_adx", 0), 0.0,
+                                    asset,
+                                    pnl_pct,
+                                    trade_stype,
+                                    trade.get("exit_regime", "UNKNOWN"),
+                                    trade.get("entry_adx", 0),
+                                    0.0,
                                     trade.get("entry_session", "UNKNOWN"),
                                 )
                             except Exception:
                                 pass
                         del _open_trades[asset]
                     else:
-                        stop_label = "ATR" if "_stop_price" in trade else f"fixed {pair_strategy['stop_loss_pct']}%"
-                        half_target_display = f" | Half-Target: {half_target_price:.5f}" if hold_cycles > 100 else ""
-                        print(f"[{asset}] Holding. Unrealised: {unrealised_pct:.4f}% | Stop: {stop_price:.5f} ({stop_label}) | Target: {profit_target_price:.5f}{half_target_display} | Held: {hold_cycles}/{time_exit_cycles}", flush=True)
+                        stop_label = (
+                            "ATR"
+                            if "_stop_price" in trade
+                            else f"fixed {pair_strategy['stop_loss_pct']}%"
+                        )
+                        half_target_display = (
+                            f" | Half-Target: {half_target_price:.5f}" if hold_cycles > 100 else ""
+                        )
+                        print(
+                            f"[{asset}] Holding. Unrealised: {unrealised_pct:.4f}% | Stop: {stop_price:.5f} ({stop_label}) | Target: {profit_target_price:.5f}{half_target_display} | Held: {hold_cycles}/{time_exit_cycles}",
+                            flush=True,
+                        )
                         # Stop loss warning: within 0.5% of stop
-                        stop_distance_pct = abs(current_price - stop_price) / trade["entry_price"] * 100
+                        stop_distance_pct = (
+                            abs(current_price - stop_price) / trade["entry_price"] * 100
+                        )
                         if stop_distance_pct <= 0.5:
-                            print(f"⚠️  STOP WARNING: {asset} within {stop_distance_pct:.2f}% of stop (price {current_price:.5f}, stop {stop_price:.5f})", flush=True)
+                            print(
+                                f"⚠️  STOP WARNING: {asset} within {stop_distance_pct:.2f}% of stop (price {current_price:.5f}, stop {stop_price:.5f})",
+                                flush=True,
+                            )
                             await send_discord_alert(
                                 f"⚠️ **STOP WARNING: {asset}** within {stop_distance_pct:.2f}% of stop\\n"
                                 f"Price: {current_price:.5f} | Stop: {stop_price:.5f} | Held: {hold_cycles}c"
@@ -3585,7 +3885,7 @@ async def run_loop(run_once=False):
             pair_rsi_snapshot = {}
             pair_thresholds = {}
 
-            for pair in ([] if _market_closed else pairs):
+            for pair in [] if _market_closed else pairs:
                 if pair in _open_trades:
                     continue
 
@@ -3593,11 +3893,16 @@ async def run_loop(run_once=False):
                 if _flatline.get(pair, 0) > cycle:
                     remaining = _flatline[pair] - cycle
                     reason = _last_flatline_reason.get(pair, "unknown")
-                    print(f"[SAFETY] {pair}: FLATLINED ({remaining}c remaining) — reason: {reason}", flush=True)
+                    print(
+                        f"[SAFETY] {pair}: FLATLINED ({remaining}c remaining) — reason: {reason}",
+                        flush=True,
+                    )
                     continue
                 elif _flatline.get(pair, 0) != 0 and _flatline[pair] <= cycle:
                     # Flatline expired — log lived experience
-                    print(f"[SAFETY] {pair}: flatline expired — resuming entry scanning", flush=True)
+                    print(
+                        f"[SAFETY] {pair}: flatline expired — resuming entry scanning", flush=True
+                    )
                     if _HAS_CRISIS:
                         try:
                             lived_hist = _price_histories.get(pair, [])
@@ -3637,8 +3942,11 @@ async def run_loop(run_once=False):
                                             f"Distance: {rec['distance']} | PnL Impact: {rec['pnl_impact']:+.1f}%\n"
                                             f"Recommended Stop: {rec['recommended_stop_pct']}% | Target: {rec['recommended_target_pct']}%"
                                         )
-                                        print(f"[CRISIS] {pair}: nearest crisis '{rec['crisis_name']}' "
-                                              f"at distance {rec['distance']} — stopping at {rec['recommended_stop_pct']}%", flush=True)
+                                        print(
+                                            f"[CRISIS] {pair}: nearest crisis '{rec['crisis_name']}' "
+                                            f"at distance {rec['distance']} — stopping at {rec['recommended_stop_pct']}%",
+                                            flush=True,
+                                        )
                             except Exception as e:
                                 print(f"[CRISIS] Lookup error: {e}", flush=True)
                         await send_discord_alert(msg)
@@ -3654,7 +3962,10 @@ async def run_loop(run_once=False):
                         open_in_group = _open_trades.keys() & group
                         if open_in_group:
                             correlated_pair_open = True
-                            print(f"[{pair}] SKIP: correlated pair {list(open_in_group)[0]} already open — {group}", flush=True)
+                            print(
+                                f"[{pair}] SKIP: correlated pair {list(open_in_group)[0]} already open — {group}",
+                                flush=True,
+                            )
                         break
                 if correlated_pair_open:
                     continue
@@ -3668,7 +3979,9 @@ async def run_loop(run_once=False):
                 if pair_stype == "mean_reversion":
                     sym_threshold = float(pair_strategy.get("entry", {}).get("mr_entry_rsi", 40))
                 else:
-                    sym_threshold = float(os.environ.get("ENTRY_THRESHOLD", pair_strategy["entry"]["threshold"]))
+                    sym_threshold = float(
+                        os.environ.get("ENTRY_THRESHOLD", pair_strategy["entry"]["threshold"])
+                    )
                 try:
                     price_data = await fetch_pair_price(pair)
                     if not price_data or "price" not in price_data:
@@ -3680,7 +3993,10 @@ async def run_loop(run_once=False):
                     # breaking RSI, ATR, ADX, and BB bandwidth to zero.
                     candle_ts = price_data.get("candle_ts", "")
                     if candle_ts and candle_ts == _last_candle_ts.get(pair):
-                        print(f"[{pair}] SKIP: same candle {candle_ts} — no new data (market closed?)", flush=True)
+                        print(
+                            f"[{pair}] SKIP: same candle {candle_ts} — no new data (market closed?)",
+                            flush=True,
+                        )
                         continue
                     _last_candle_ts[pair] = candle_ts
                     # --- end stale candle guard ---
@@ -3692,6 +4008,7 @@ async def run_loop(run_once=False):
                     # ── Tier 2 (D): shadow scorecard tick (advisory, no entries) ──
                     try:
                         from hermes_forex.backtest import evaluate_shadow_signals
+
                         evaluate_shadow_signals(pair, _price_histories[pair])
                     except Exception:
                         pass  # shadow tracking is purely observational
@@ -3713,57 +4030,98 @@ async def run_loop(run_once=False):
                     avg_vol = compute_avg_volume(_volume_histories.get(pair, []))
                     avg_vol_str = f"{avg_vol:.2f}" if avg_vol is not None else "N/A"
                     adx_str = f"{adx:.1f}" if adx is not None else "N/A"
-                    print(f"[{pair}] Price: {current_price:.5f} | RSI: {rsi:.1f} | ROC(20): {roc:.4f}% | RangeVol: {range_vol:.2f} (avg:{avg_vol_str}) | ADX: {adx_str} | SType: {pair_stype}", flush=True)
+                    print(
+                        f"[{pair}] Price: {current_price:.5f} | RSI: {rsi:.1f} | ROC(20): {roc:.4f}% | RangeVol: {range_vol:.2f} (avg:{avg_vol_str}) | ADX: {adx_str} | SType: {pair_stype}",
+                        flush=True,
+                    )
 
                     # Flat-price guard: skip if all indicators are zero (stale/weekend data)
                     if rsi < 0.01 and roc == 0.0 and adx in (None, 0.0):
-                        print(f"[{pair}] SKIP: flat prices — all indicators at zero (stale/weekend data)", flush=True)
+                        print(
+                            f"[{pair}] SKIP: flat prices — all indicators at zero (stale/weekend data)",
+                            flush=True,
+                        )
                         continue
 
                     if pair_stype == "mean_reversion":
                         # ── Mean Reversion Entry (Bollinger Band) ──
                         mr_entry_rsi = pair_strategy.get("entry", {}).get("mr_entry_rsi", 40)
                         bb_std = pair_strategy.get("entry", {}).get("bb_std_dev", 1.5)
-                        bb_result = compute_bollinger(_price_histories[pair], period=20, num_std=bb_std)
+                        bb_result = compute_bollinger(
+                            _price_histories[pair], period=20, num_std=bb_std
+                        )
                         if bb_result is None:
                             print(f"[{pair}] SKIP: not enough data for Bollinger Bands", flush=True)
                             continue
                         bb_middle, bb_upper, bb_lower, bb_bw = bb_result
                         # Zero-variance guard: if BB bandwidth is near zero, prices are flat (stale/weekend data)
                         if bb_bw < 0.001:
-                            print(f"[{pair}] SKIP: BB bandwidth {bb_bw:.6f} — flat prices, no mean reversion edge", flush=True)
+                            print(
+                                f"[{pair}] SKIP: BB bandwidth {bb_bw:.6f} — flat prices, no mean reversion edge",
+                                flush=True,
+                            )
                             continue
                         # Session filter for MR pairs
                         session_filter = pair_strategy.get("entry", {}).get("session_filter", "24h")
                         if session_filter == "ny_only" and not is_ny_session():
-                            print(f"[{pair}] SKIP: NY session only (current UTC hour {datetime.now(timezone.utc).hour})", flush=True)
+                            print(
+                                f"[{pair}] SKIP: NY session only (current UTC hour {datetime.now(timezone.utc).hour})",
+                                flush=True,
+                            )
                             continue
                         if session_filter == "london_only" and not is_london_session():
-                            print(f"[{pair}] SKIP: London session only (current UTC hour {datetime.now(timezone.utc).hour})", flush=True)
+                            print(
+                                f"[{pair}] SKIP: London session only (current UTC hour {datetime.now(timezone.utc).hour})",
+                                flush=True,
+                            )
                             continue
                         if session_filter == "asian_only" and not is_asian_session():
-                            print(f"[{pair}] SKIP: Asian session only (current UTC hour {datetime.now(timezone.utc).hour})", flush=True)
+                            print(
+                                f"[{pair}] SKIP: Asian session only (current UTC hour {datetime.now(timezone.utc).hour})",
+                                flush=True,
+                            )
                             continue
                         # Correlation filter: skip GBP pair if the other GBP pair is already open
                         if pair == "GBP/USD" and "GBP/JPY" in _open_trades:
-                            print(f"[{pair}] SKIP: correlated GBP/JPY trade already open", flush=True)
+                            print(
+                                f"[{pair}] SKIP: correlated GBP/JPY trade already open", flush=True
+                            )
                             continue
                         if pair == "GBP/JPY" and "GBP/USD" in _open_trades:
-                            print(f"[{pair}] SKIP: correlated GBP/USD trade already open", flush=True)
+                            print(
+                                f"[{pair}] SKIP: correlated GBP/USD trade already open", flush=True
+                            )
                             continue
                         # Correlation: XAU/USD ↔ XAG/USD
                         if pair == "XAU/USD" and "XAG/USD" in _open_trades:
-                            print(f"[{pair}] SKIP: correlated XAG/USD trade already open", flush=True)
+                            print(
+                                f"[{pair}] SKIP: correlated XAG/USD trade already open", flush=True
+                            )
                             continue
                         if pair == "XAG/USD" and "XAU/USD" in _open_trades:
-                            print(f"[{pair}] SKIP: correlated XAU/USD trade already open", flush=True)
+                            print(
+                                f"[{pair}] SKIP: correlated XAU/USD trade already open", flush=True
+                            )
                             continue
                         # Volatility flag: EUR/USD stop loss → tighten all USD pair position sizes
-                        if (pair in ("GBP/USD", "AUD/USD") and "EUR/USD" in _open_trades
-                                and _open_trades.get("EUR/USD", {}).get("exit_reason") == "stop_loss"):
+                        if (
+                            pair in ("GBP/USD", "AUD/USD")
+                            and "EUR/USD" in _open_trades
+                            and _open_trades.get("EUR/USD", {}).get("exit_reason") == "stop_loss"
+                        ):
                             last_stop_ts = _open_trades.get("EUR/USD", {}).get("exit_ts", "")
-                            if last_stop_ts and (datetime.now(timezone.utc) - datetime.fromisoformat(last_stop_ts.replace("Z","+00:00"))).total_seconds() < 3600:
-                                print(f"[{pair}] SKIP: EUR/USD stop loss within last hour — USD volatility flag", flush=True)
+                            if (
+                                last_stop_ts
+                                and (
+                                    datetime.now(timezone.utc)
+                                    - datetime.fromisoformat(last_stop_ts.replace("Z", "+00:00"))
+                                ).total_seconds()
+                                < 3600
+                            ):
+                                print(
+                                    f"[{pair}] SKIP: EUR/USD stop loss within last hour — USD volatility flag",
+                                    flush=True,
+                                )
                                 continue
                         # MR entry: price touches or crosses below lower BB + RSI confirmation
                         if current_price <= bb_lower and rsi < mr_entry_rsi:
@@ -3773,12 +4131,25 @@ async def run_loop(run_once=False):
                                 # MR ADX bypass: same 50-cycle logic as RSI pairs
                                 _adx_bypass_cycles[pair] = _adx_bypass_cycles.get(pair, 0) + 1
                                 if _adx_bypass_cycles[pair] <= 50:
-                                    print(f"[{pair}] SKIP MR: ADX {adx:.1f} < {adx_threshold} — market ranging ({_adx_bypass_cycles[pair]}c)", flush=True)
+                                    print(
+                                        f"[{pair}] SKIP MR: ADX {adx:.1f} < {adx_threshold} — market ranging ({_adx_bypass_cycles[pair]}c)",
+                                        flush=True,
+                                    )
                                     regime = compute_regime(_price_histories.get(pair, []))
-                                    log_skip(pair, "mr_adx_below_threshold", rsi, current_price, regime, adx)
+                                    log_skip(
+                                        pair,
+                                        "mr_adx_below_threshold",
+                                        rsi,
+                                        current_price,
+                                        regime,
+                                        adx,
+                                    )
                                     continue
                                 else:
-                                    print(f"[{pair}] MR ADX BYPASS: ranging too long ({_adx_bypass_cycles[pair]}c)", flush=True)
+                                    print(
+                                        f"[{pair}] MR ADX BYPASS: ranging too long ({_adx_bypass_cycles[pair]}c)",
+                                        flush=True,
+                                    )
                             else:
                                 _adx_bypass_cycles[pair] = 0
 
@@ -3788,45 +4159,80 @@ async def run_loop(run_once=False):
                             # BEAR regime skip for MR pairs (per-pair configurable via allow_bear_entries)
                             block_bear = not pair_strategy.get("allow_bear_entries", False)
                             if regime == "BEAR" and block_bear:
-                                print(f"[{pair}] SKIP MR: BEAR regime — no long entries", flush=True)
+                                print(
+                                    f"[{pair}] SKIP MR: BEAR regime — no long entries", flush=True
+                                )
                                 log_skip(pair, "bear_regime", rsi, current_price, regime, adx)
                                 continue
 
                             # Economic calendar guard (Layer 19): block 10min before/after major events
                             econ_event, econ_name = _is_near_economic_event(pair=pair)
                             if econ_event:
-                                print(f"[{pair}] SKIP MR: near economic event ({econ_name}) — blocking entry", flush=True)
-                                log_skip(pair, "economic_event", rsi, current_price, compute_regime(_price_histories.get(pair, [])), adx)
+                                print(
+                                    f"[{pair}] SKIP MR: near economic event ({econ_name}) — blocking entry",
+                                    flush=True,
+                                )
+                                log_skip(
+                                    pair,
+                                    "economic_event",
+                                    rsi,
+                                    current_price,
+                                    compute_regime(_price_histories.get(pair, [])),
+                                    adx,
+                                )
                                 continue
 
                             # Quality score for MR pairs (same as RSI momentum)
                             min_quality = pair_strategy.get("minimum_entry_quality", 0)
-                            vol_above = avg_vol is not None and range_vol >= avg_vol * pair_strategy.get("vol_threshold_pct", 0.15)
-                            adx_above = adx is not None and (adx >= adx_threshold if adx_threshold > 0 else True)
+                            vol_above = (
+                                avg_vol is not None
+                                and range_vol
+                                >= avg_vol * pair_strategy.get("vol_threshold_pct", 0.15)
+                            )
+                            adx_above = adx is not None and (
+                                adx >= adx_threshold if adx_threshold > 0 else True
+                            )
                             mr_quality = compute_entry_quality_score(
-                                rsi=rsi, threshold=mr_entry_rsi, regime=regime,
-                                volume_above_avg=vol_above, adx_above=adx_above,
+                                rsi=rsi,
+                                threshold=mr_entry_rsi,
+                                regime=regime,
+                                volume_above_avg=vol_above,
+                                adx_above=adx_above,
                                 fast_regime=compute_regime_fast(_price_histories[pair])[0],
                                 divergence=compute_rsi_divergence(_price_histories[pair]),
                                 session_bonus=session_bonus,
-                                daily_rsi_bonus=_get_daily_rsi_bonus(pair)
+                                daily_rsi_bonus=_get_daily_rsi_bonus(pair),
                             )
                             # Collect RSI for correlation check
                             pair_rsi_snapshot[pair] = rsi
                             pair_thresholds[pair] = mr_entry_rsi
                             if mr_quality < min_quality:
-                                print(f"[{pair}] SKIP MR: quality {mr_quality}/10 < min {min_quality}/10", flush=True)
+                                print(
+                                    f"[{pair}] SKIP MR: quality {mr_quality}/10 < min {min_quality}/10",
+                                    flush=True,
+                                )
                                 log_skip(pair, "quality_below_min", rsi, current_price, regime, adx)
                                 continue
 
                             # ── Discovered indicator guard: skip MR long if ensemble is bearish ──
                             try:
-                                from hermes_forex.backtest import check_discovered_signals, init_discovered_storage
+                                from hermes_forex.backtest import (
+                                    check_discovered_signals,
+                                    init_discovered_storage,
+                                )
+
                                 init_discovered_storage()
-                                _, _, gp_det = check_discovered_signals(pair, _price_histories.get(pair, []))
+                                _, _, gp_det = check_discovered_signals(
+                                    pair, _price_histories.get(pair, [])
+                                )
                                 if gp_det.get("consensus") in ("bearish", "strong_bearish"):
-                                    print(f"[{pair}] SKIP MR: discovered ensemble is {gp_det.get('consensus')} — blocking long entry", flush=True)
-                                    log_skip(pair, "discovered_bearish", rsi, current_price, regime, adx)
+                                    print(
+                                        f"[{pair}] SKIP MR: discovered ensemble is {gp_det.get('consensus')} — blocking long entry",
+                                        flush=True,
+                                    )
+                                    log_skip(
+                                        pair, "discovered_bearish", rsi, current_price, regime, adx
+                                    )
                                     continue
                             except Exception:
                                 pass
@@ -3835,19 +4241,38 @@ async def run_loop(run_once=False):
                             chart_ctx = _chart_state["contexts"].get(pair, "")
                             chart_lower = chart_ctx.lower()
                             if "avoid" in chart_lower or "downtrend" in chart_lower:
-                                print(f"[{pair}] CHART BLOCK: Gemini says avoid/downtrend — blocking MR entry", flush=True)
+                                print(
+                                    f"[{pair}] CHART BLOCK: Gemini says avoid/downtrend — blocking MR entry",
+                                    flush=True,
+                                )
                                 log_skip(pair, "chart_hard_block", rsi, current_price, regime, adx)
                                 continue
                             # Re-entry cooldown: skip if stopped out in last 30 cycles
-                            if pair in _stop_loss_blocklist and cycle - _stop_loss_blocklist.get(pair, 0) < 30:
+                            if (
+                                pair in _stop_loss_blocklist
+                                and cycle - _stop_loss_blocklist.get(pair, 0) < 30
+                            ):
                                 remaining = 30 - (cycle - _stop_loss_blocklist[pair])
-                                print(f"[{pair}] SKIP MR: re-entry cooldown {remaining}/30 cycles", flush=True)
+                                print(
+                                    f"[{pair}] SKIP MR: re-entry cooldown {remaining}/30 cycles",
+                                    flush=True,
+                                )
                                 log_skip(pair, "reentry_cooldown", rsi, current_price, regime, adx)
                                 continue
-                            chart_warns = ("sell" in chart_lower)
+                            chart_warns = "sell" in chart_lower
                             if chart_warns and mr_quality < 5:
-                                print(f"[{pair}] SKIP MR: chart warns '{chart_ctx[:60]}...' + quality {mr_quality}/10 < 5", flush=True)
-                                log_skip(pair, "chart_downtrend_quality_filter", rsi, current_price, regime, adx)
+                                print(
+                                    f"[{pair}] SKIP MR: chart warns '{chart_ctx[:60]}...' + quality {mr_quality}/10 < 5",
+                                    flush=True,
+                                )
+                                log_skip(
+                                    pair,
+                                    "chart_downtrend_quality_filter",
+                                    rsi,
+                                    current_price,
+                                    regime,
+                                    adx,
+                                )
                                 continue
 
                             # Use best RSI among MR candidates (lowest RSI wins)
@@ -3861,31 +4286,55 @@ async def run_loop(run_once=False):
                                 best_strategy_type = "mean_reversion"
                                 best_entry_quality = mr_quality
                                 best_fast_regime = compute_regime_fast(_price_histories[pair])[0]
-                                print(f"[{pair}] MR SIGNAL: price {current_price:.5f} <= BB lower {bb_lower:.5f} | RSI {rsi:.1f} < {mr_entry_rsi} | BB bw: {bb_bw:.4f} | Regime: {regime} | Quality: {mr_quality}/10", flush=True)
+                                print(
+                                    f"[{pair}] MR SIGNAL: price {current_price:.5f} <= BB lower {bb_lower:.5f} | RSI {rsi:.1f} < {mr_entry_rsi} | BB bw: {bb_bw:.4f} | Regime: {regime} | Quality: {mr_quality}/10",
+                                    flush=True,
+                                )
                         else:
-                            reason = f"price {current_price:.5f} > BB lower {bb_lower:.5f}" if rsi >= mr_entry_rsi else f"RSI {rsi:.1f} >= {mr_entry_rsi}"
+                            reason = (
+                                f"price {current_price:.5f} > BB lower {bb_lower:.5f}"
+                                if rsi >= mr_entry_rsi
+                                else f"RSI {rsi:.1f} >= {mr_entry_rsi}"
+                            )
                             regime = compute_regime(_price_histories.get(pair, []))
                             log_skip(pair, "mr_no_signal", rsi, current_price, regime, adx)
                     else:
                         # ── RSI Momentary Entry (original logic) ──
                         if rsi < sym_threshold and roc < 0 and rsi < best_rsi:
                             # Session filter for RSI momentum entries
-                            rsi_session_filter = pair_strategy.get("entry", {}).get("session_filter", "24h")
+                            rsi_session_filter = pair_strategy.get("entry", {}).get(
+                                "session_filter", "24h"
+                            )
                             if rsi_session_filter == "london_only" and not is_london_session():
-                                print(f"[{pair}] SKIP: London session only (current UTC hour {datetime.now(timezone.utc).hour})", flush=True)
+                                print(
+                                    f"[{pair}] SKIP: London session only (current UTC hour {datetime.now(timezone.utc).hour})",
+                                    flush=True,
+                                )
                                 continue
                             if rsi_session_filter == "asian_only" and not is_asian_session():
-                                print(f"[{pair}] SKIP: Asian session only (current UTC hour {datetime.now(timezone.utc).hour})", flush=True)
+                                print(
+                                    f"[{pair}] SKIP: Asian session only (current UTC hour {datetime.now(timezone.utc).hour})",
+                                    flush=True,
+                                )
                                 continue
                             if rsi_session_filter == "ny_only" and not is_ny_session():
-                                print(f"[{pair}] SKIP: NY session only (current UTC hour {datetime.now(timezone.utc).hour})", flush=True)
+                                print(
+                                    f"[{pair}] SKIP: NY session only (current UTC hour {datetime.now(timezone.utc).hour})",
+                                    flush=True,
+                                )
                                 continue
                             # Correlation filter for RSI momentum entries
                             if pair == "GBP/USD" and "GBP/JPY" in _open_trades:
-                                print(f"[{pair}] SKIP RSI: correlated GBP/JPY trade already open", flush=True)
+                                print(
+                                    f"[{pair}] SKIP RSI: correlated GBP/JPY trade already open",
+                                    flush=True,
+                                )
                                 continue
                             if pair == "GBP/JPY" and "GBP/USD" in _open_trades:
-                                print(f"[{pair}] SKIP RSI: correlated GBP/USD trade already open", flush=True)
+                                print(
+                                    f"[{pair}] SKIP RSI: correlated GBP/USD trade already open",
+                                    flush=True,
+                                )
                                 continue
                             # ADX trend filter
                             # Bypass: if ADX has been below threshold for >50 consecutive cycles,
@@ -3897,20 +4346,28 @@ async def run_loop(run_once=False):
                                 if _adx_bypass_cycles[pair] > 50:
                                     adx_bypassed = True
                                     best_adx_bypass = True
-                                    print(f"[{pair}] ADX BYPASS: ranging too long ({_adx_bypass_cycles[pair]}c), using RSI+regime only", flush=True)
+                                    print(
+                                        f"[{pair}] ADX BYPASS: ranging too long ({_adx_bypass_cycles[pair]}c), using RSI+regime only",
+                                        flush=True,
+                                    )
                                     try:
                                         regime_now = compute_regime(_price_histories.get(pair, []))
                                         alert = {
                                             "type": "adx_bypass_entry",
-                                            "pair": pair, "price": current_price,
-                                            "rsi": round(rsi, 2), "regime": regime_now,
+                                            "pair": pair,
+                                            "price": current_price,
+                                            "rsi": round(rsi, 2),
+                                            "regime": regime_now,
                                             "bypass_cycles": _adx_bypass_cycles[pair],
                                             "ts": datetime.now(timezone.utc).isoformat(),
                                         }
                                         alert_file = STATE_DIR / "pending_adx_bypass.json"
                                         with open(alert_file, "w") as af:
                                             json.dump(alert, af)
-                                        print(f"[ALERT:ADBYPASS] {pair} | Price: {current_price:.5f} | RSI: {rsi:.1f} | Regime: {regime_now} | Bypass: {_adx_bypass_cycles[pair]}c", flush=True)
+                                        print(
+                                            f"[ALERT:ADBYPASS] {pair} | Price: {current_price:.5f} | RSI: {rsi:.1f} | Regime: {regime_now} | Bypass: {_adx_bypass_cycles[pair]}c",
+                                            flush=True,
+                                        )
                                         await send_discord_alert(
                                             f"⚡ **ADX BYPASS TRIGGERED: {pair} entering on RSI+regime only**\n"
                                             f"Entry price: {current_price:.5f} | RSI: {rsi:.1f} | Regime: {regime_now} | Bypass: {_adx_bypass_cycles[pair]}c"
@@ -3918,18 +4375,28 @@ async def run_loop(run_once=False):
                                     except Exception as e:
                                         print(f"[ALERT WRITE ERROR] {e}", flush=True)
                                 else:
-                                    print(f"[{pair}] SKIP: ADX {adx:.1f} < {adx_threshold} — market ranging, no trend ({_adx_bypass_cycles[pair]}c)", flush=True)
+                                    print(
+                                        f"[{pair}] SKIP: ADX {adx:.1f} < {adx_threshold} — market ranging, no trend ({_adx_bypass_cycles[pair]}c)",
+                                        flush=True,
+                                    )
                                     regime = compute_regime(_price_histories.get(pair, []))
-                                    log_skip(pair, "adx_below_threshold", rsi, current_price, regime, adx)
+                                    log_skip(
+                                        pair, "adx_below_threshold", rsi, current_price, regime, adx
+                                    )
                                     continue
                             else:
                                 _adx_bypass_cycles[pair] = 0
                             # Volume confirmation
                             vol_threshold_pct = pair_strategy.get("vol_threshold_pct", 0.15)
                             avg_vol = compute_avg_volume(_volume_histories.get(pair, []))
-                            vol_threshold = avg_vol * vol_threshold_pct if avg_vol is not None else 0
+                            vol_threshold = (
+                                avg_vol * vol_threshold_pct if avg_vol is not None else 0
+                            )
                             if avg_vol is not None and range_vol < vol_threshold:
-                                print(f"[{pair}] SKIP: RangeVol {range_vol:.2f} < {vol_threshold_pct*100:.0f}% of avg {vol_threshold:.2f} — no momentum", flush=True)
+                                print(
+                                    f"[{pair}] SKIP: RangeVol {range_vol:.2f} < {vol_threshold_pct * 100:.0f}% of avg {vol_threshold:.2f} — no momentum",
+                                    flush=True,
+                                )
                                 regime = compute_regime(_price_histories.get(pair, []))
                                 log_skip(pair, "volume_below_avg", rsi, current_price, regime, adx)
                                 continue
@@ -3943,46 +4410,76 @@ async def run_loop(run_once=False):
                             min_quality = pair_strategy.get("minimum_entry_quality", 0)
                             # BUG FIX: avg_vol is None when insufficient data — default to
                             # False so quality score isn't inflated during early cycles.
-                            vol_above = avg_vol is not None and range_vol >= avg_vol * vol_threshold_pct
+                            vol_above = (
+                                avg_vol is not None and range_vol >= avg_vol * vol_threshold_pct
+                            )
                             adx_above = adx is not None and adx >= adx_threshold
                             entry_quality_preview = compute_entry_quality_score(
-                                rsi=rsi, threshold=sym_threshold, regime=regime,
-                                volume_above_avg=vol_above, adx_above=adx_above,
+                                rsi=rsi,
+                                threshold=sym_threshold,
+                                regime=regime,
+                                volume_above_avg=vol_above,
+                                adx_above=adx_above,
                                 fast_regime=compute_regime_fast(_price_histories[pair])[0],
                                 divergence=compute_rsi_divergence(_price_histories[pair]),
                                 session_bonus=session_bonus,
-                                daily_rsi_bonus=_get_daily_rsi_bonus(pair)
+                                daily_rsi_bonus=_get_daily_rsi_bonus(pair),
                             )
                             # Collect RSI for correlation check
                             pair_rsi_snapshot[pair] = rsi
                             pair_thresholds[pair] = sym_threshold
                             if entry_quality_preview < min_quality:
-                                print(f"[{pair}] SKIP: quality {entry_quality_preview}/10 < min {min_quality}/10", flush=True)
+                                print(
+                                    f"[{pair}] SKIP: quality {entry_quality_preview}/10 < min {min_quality}/10",
+                                    flush=True,
+                                )
                                 log_skip(pair, "quality_below_min", rsi, current_price, regime, adx)
                                 continue
                             # Economic calendar guard (Layer 19): block 10min before/after major events
                             econ_event, econ_name = _is_near_economic_event(pair=pair)
                             if econ_event:
-                                print(f"[{pair}] SKIP RSI: near economic event ({econ_name}) — blocking entry", flush=True)
+                                print(
+                                    f"[{pair}] SKIP RSI: near economic event ({econ_name}) — blocking entry",
+                                    flush=True,
+                                )
                                 log_skip(pair, "economic_event", rsi, current_price, regime, adx)
                                 continue
                             # Chart vision: hard block on avoid/downtrend, soft filter on sell
                             rsi_chart = _chart_state["contexts"].get(pair, "")
                             rsi_chart_lower = rsi_chart.lower()
                             if "avoid" in rsi_chart_lower or "downtrend" in rsi_chart_lower:
-                                print(f"[{pair}] CHART BLOCK: Gemini says avoid/downtrend — blocking RSI entry", flush=True)
+                                print(
+                                    f"[{pair}] CHART BLOCK: Gemini says avoid/downtrend — blocking RSI entry",
+                                    flush=True,
+                                )
                                 log_skip(pair, "chart_hard_block", rsi, current_price, regime, adx)
                                 continue
                             # Re-entry cooldown: skip if stopped out in last 30 cycles
-                            if pair in _stop_loss_blocklist and cycle - _stop_loss_blocklist.get(pair, 0) < 30:
+                            if (
+                                pair in _stop_loss_blocklist
+                                and cycle - _stop_loss_blocklist.get(pair, 0) < 30
+                            ):
                                 remaining = 30 - (cycle - _stop_loss_blocklist[pair])
-                                print(f"[{pair}] SKIP RSI: re-entry cooldown {remaining}/30 cycles", flush=True)
+                                print(
+                                    f"[{pair}] SKIP RSI: re-entry cooldown {remaining}/30 cycles",
+                                    flush=True,
+                                )
                                 log_skip(pair, "reentry_cooldown", rsi, current_price, regime, adx)
                                 continue
-                            rsi_chart_warns = ("sell" in rsi_chart_lower)
+                            rsi_chart_warns = "sell" in rsi_chart_lower
                             if rsi_chart_warns and entry_quality_preview < 5:
-                                print(f"[{pair}] SKIP: chart warns '{rsi_chart[:60]}...' + quality {entry_quality_preview}/10 < 5", flush=True)
-                                log_skip(pair, "chart_downtrend_quality_filter", rsi, current_price, regime, adx)
+                                print(
+                                    f"[{pair}] SKIP: chart warns '{rsi_chart[:60]}...' + quality {entry_quality_preview}/10 < 5",
+                                    flush=True,
+                                )
+                                log_skip(
+                                    pair,
+                                    "chart_downtrend_quality_filter",
+                                    rsi,
+                                    current_price,
+                                    regime,
+                                    adx,
+                                )
                                 continue
                             regime_label = regime
                             best_rsi = rsi
@@ -4001,7 +4498,9 @@ async def run_loop(run_once=False):
             now_ts = time.time()
             if now_ts - _chart_state["last_analysis_ts"] > CHART_ANALYSIS_INTERVAL:
                 try:
-                    _chart_state["contexts"] = await asyncio.to_thread(get_all_chart_contexts, pairs)
+                    _chart_state["contexts"] = await asyncio.to_thread(
+                        get_all_chart_contexts, pairs
+                    )
                     _chart_state["last_analysis_ts"] = now_ts
                     for sym, ctx in _chart_state["contexts"].items():
                         first_line = ctx.splitlines()[0] if ctx else "N/A"
@@ -4013,7 +4512,11 @@ async def run_loop(run_once=False):
             # ── Gap 1: GP ensemble entry trigger (no traditional signal, but discovered indicators say strong_bullish) ──
             if not best_pair:
                 try:
-                    from hermes_forex.backtest import check_discovered_signals, init_discovered_storage
+                    from hermes_forex.backtest import (
+                        check_discovered_signals,
+                        init_discovered_storage,
+                    )
+
                     init_discovered_storage()
                     gp_pairs = []
                     for pair in pairs:
@@ -4030,40 +4533,76 @@ async def run_loop(run_once=False):
                             gp_bad = _gp_consecutive_bad.get(pair, 0)
                             # ── GP Intelligence: fingerprint + lockout + allocation ──
                             gpi = _get_gp_intel()
-                            gp_score = gpi.gp_entry_score(pair, compute_regime(hist_p), adx_val,
-                                                          0.0, _get_session(datetime.now(timezone.utc).hour), rsi_val) if gpi else 0.0
+                            gp_score = (
+                                gpi.gp_entry_score(
+                                    pair,
+                                    compute_regime(hist_p),
+                                    adx_val,
+                                    0.0,
+                                    _get_session(datetime.now(timezone.utc).hour),
+                                    rsi_val,
+                                )
+                                if gpi
+                                else 0.0
+                            )
                             regime = compute_regime(hist_p)
                             session = _get_session(datetime.now(timezone.utc).hour)
                             # ── Cortex: condition-aware routing (P5) ──
                             try:
                                 from hermes_forex.decision_cortex import best_entry_type
-                                _bet = best_entry_type(pair, regime, adx_val, 0.0, session, min_data=3)
+
+                                _bet = best_entry_type(
+                                    pair, regime, adx_val, 0.0, session, min_data=3
+                                )
                                 if _bet == "mean_reversion" and gp_score > -0.3:
                                     gp_score = -0.3  # Suppress GP when MR is proven better
                                 elif _bet == "gp_ensemble":
-                                    gp_score = max(gp_score, 0.2)  # Boost GP when it's proven better
+                                    gp_score = max(
+                                        gp_score, 0.2
+                                    )  # Boost GP when it's proven better
                             except Exception:
                                 pass
-                            if (det.get("consensus") == "strong_bullish" and n >= 2
-                                    and rsi_val < 65
-                                    and det.get("total_weight", 0) >= 0.5
-                                    and (adx_val is None or adx_val >= 20)
-                                    and gp_bad < 3
-                                    and gp_score >= 0.0):
+                            if (
+                                det.get("consensus") == "strong_bullish"
+                                and n >= 2
+                                and rsi_val < 65
+                                and det.get("total_weight", 0) >= 0.5
+                                and (adx_val is None or adx_val >= 20)
+                                and gp_bad < 3
+                                and gp_score >= 0.0
+                            ):
                                 # ── Exile check: filter out exiled indicators ──
                                 try:
                                     from hermes_forex.decision_cortex import is_indicator_exiled
+
                                     inds = det.get("indicators", [])
-                                    active_inds = [i for i in inds if not is_indicator_exiled(i.get("name", i.get("expr", "?")))]
-                                    active_exprs = [i.get("expr_str", i.get("expr", ""))[:40] for i in active_inds]
+                                    active_inds = [
+                                        i
+                                        for i in inds
+                                        if not is_indicator_exiled(
+                                            i.get("name", i.get("expr", "?"))
+                                        )
+                                    ]
+                                    active_exprs = [
+                                        i.get("expr_str", i.get("expr", ""))[:40]
+                                        for i in active_inds
+                                    ]
                                     exiled = len(inds) - len(active_inds)
                                     if exiled:
-                                        print(f"[GP-EXILE] {pair}: {exiled} indicators exiled, {len(active_inds)}/{len(inds)} active", flush=True)
+                                        print(
+                                            f"[GP-EXILE] {pair}: {exiled} indicators exiled, {len(active_inds)}/{len(inds)} active",
+                                            flush=True,
+                                        )
                                     # ── Policy suppression check (Level 9) ──
                                     try:
                                         from hermes_forex.policy_engine import get_policy
+
                                         _pol = get_policy()
-                                        if _pol.get("suppressions", {}).get(pair, {}).get("gp_ensemble"):
+                                        if (
+                                            _pol.get("suppressions", {})
+                                            .get(pair, {})
+                                            .get("gp_ensemble")
+                                        ):
                                             # Skip — policy has suppressed GP entries on this pair
                                             continue
                                     except Exception:
@@ -4074,8 +4613,15 @@ async def run_loop(run_once=False):
                                     gp_pairs.append((pair, sig, det.get("total_weight", 0)))
                                 # Log the candidate for intelligence tracking
                                 if gpi and det.get("indicators"):
-                                    gpi.log_entry(pair, det["indicators"], regime, adx_val,
-                                                  0.0, session, rsi_val)
+                                    gpi.log_entry(
+                                        pair,
+                                        det["indicators"],
+                                        regime,
+                                        adx_val,
+                                        0.0,
+                                        session,
+                                        rsi_val,
+                                    )
                     if gp_pairs:
                         gp_pairs.sort(key=lambda x: x[1], reverse=True)
                         gp_pair = gp_pairs[0][0]
@@ -4087,8 +4633,15 @@ async def run_loop(run_once=False):
                         best_chart_context = ""
                         best_adx = compute_adx(_price_histories.get(gp_pair, []))
                         best_entry_quality = 7
-                        best_fast_regime = compute_regime_fast(_price_histories.get(gp_pair, []))[0] if _price_histories.get(gp_pair) else "NEUTRAL"
-                        print(f"[GP-ENTRY] {gp_pair}: ensemble signal ({gp_pairs[0][1]:+.2f}), entering via GP discovery", flush=True)
+                        best_fast_regime = (
+                            compute_regime_fast(_price_histories.get(gp_pair, []))[0]
+                            if _price_histories.get(gp_pair)
+                            else "NEUTRAL"
+                        )
+                        print(
+                            f"[GP-ENTRY] {gp_pair}: ensemble signal ({gp_pairs[0][1]:+.2f}), entering via GP discovery",
+                            flush=True,
+                        )
                 except Exception:
                     pass
 
@@ -4096,11 +4649,13 @@ async def run_loop(run_once=False):
             if not best_pair:
                 try:
                     from hermes_forex.decision_cortex import summary as cortex_summary
+
                     cs = cortex_summary()
                     if cs.get("entries_total", 0) == 0:
                         # Use policy engine's probe interval (accelerated if needed)
                         try:
                             from hermes_forex.policy_engine import get_policy
+
                             probe_int = get_policy().get("probe_interval", 50)
                         except Exception:
                             probe_int = 50
@@ -4110,7 +4665,8 @@ async def run_loop(run_once=False):
                                 if pair in _open_trades or pair in _stop_loss_blocklist:
                                     continue
                                 hist_p = _price_histories.get(pair, [])
-                                if len(hist_p) < 100: continue
+                                if len(hist_p) < 100:
+                                    continue
                                 sig, n, det = check_discovered_signals(pair, hist_p)
                                 if det.get("consensus") in ("bullish", "strong_bullish") and n >= 2:
                                     best_pair = pair
@@ -4120,7 +4676,10 @@ async def run_loop(run_once=False):
                                 best_rsi = compute_rsi(hist_p)
                                 best_adx = compute_adx(hist_p)
                                 best_entry_quality = 7
-                                print(f"[GP-PROBE] {pair}: probe entry at 25% size to collect cortex data", flush=True)
+                                print(
+                                    f"[GP-PROBE] {pair}: probe entry at 25% size to collect cortex data",
+                                    flush=True,
+                                )
                                 break
                 except Exception:
                     pass
@@ -4133,7 +4692,11 @@ async def run_loop(run_once=False):
 
                 # ── Gap 3: Portfolio-level correlation —
                 try:
-                    from hermes_forex.backtest import check_discovered_signals, init_discovered_storage
+                    from hermes_forex.backtest import (
+                        check_discovered_signals,
+                        init_discovered_storage,
+                    )
+
                     init_discovered_storage()
                     _portfolio_bullish = 0
                     for p in pairs:
@@ -4146,8 +4709,11 @@ async def run_loop(run_once=False):
                                 _portfolio_bullish += 1
                     if _portfolio_bullish >= 2:
                         adj_size = round(base_size * (1.0 - _portfolio_bullish * 0.15), 4)
-                        size_label = f"{base_size}→{adj_size} (portfolio correlation -{_portfolio_bullish*15}%)"
-                        print(f"[PORTFOLIO] {best_pair}: {_portfolio_bullish} other pairs bullish, reducing size {base_size}→{adj_size}", flush=True)
+                        size_label = f"{base_size}→{adj_size} (portfolio correlation -{_portfolio_bullish * 15}%)"
+                        print(
+                            f"[PORTFOLIO] {best_pair}: {_portfolio_bullish} other pairs bullish, reducing size {base_size}→{adj_size}",
+                            flush=True,
+                        )
                 except Exception:
                     pass
 
@@ -4155,31 +4721,41 @@ async def run_loop(run_once=False):
                 # GP ensemble entries bypass this — they use discovered indicators, not RSI
                 oversold_count, total_pairs = 0, 0  # defaults (used in entry logging below)
                 if stype == "rsi_momentum":
-                    oversold_count, total_pairs, confluence = check_correlation(pairs, pair_rsi_snapshot, pair_thresholds)
+                    oversold_count, total_pairs, confluence = check_correlation(
+                        pairs, pair_rsi_snapshot, pair_thresholds
+                    )
                     if not confluence:
-                        print(f"[CORR] SKIP: only {oversold_count}/{total_pairs} pairs oversold — waiting for confluence", flush=True)
+                        print(
+                            f"[CORR] SKIP: only {oversold_count}/{total_pairs} pairs oversold — waiting for confluence",
+                            flush=True,
+                        )
                         continue
 
                 if stype == "gp_ensemble":
                     # GP entries: use MR-style sizing (reduced until proven)
                     all_pair_trades = load_trades()
-                    pair_closed_count = len([t for t in all_pair_trades if t.get("asset") == best_pair])
+                    pair_closed_count = len(
+                        [t for t in all_pair_trades if t.get("asset") == best_pair]
+                    )
                     # Probe entries (first GP entry when cortex has no data) at 25%
                     if pair_closed_count == 0:
                         try:
                             from hermes_forex.decision_cortex import summary as cs
+
                             if cs().get("entries_total", 0) == 0:
                                 adj_size = round(base_size * 0.25, 4)
                                 size_label = f"{base_size}→{adj_size} (GP probe 25%)"
                         except Exception:
                             pass
-                    if 'adj_size' not in locals():
+                    if "adj_size" not in locals():
                         if pair_closed_count < 10:
                             adj_size = round(base_size * 0.5, 4)
                             size_label = f"{base_size}→{adj_size} (GP ensemble 50% until 10 trades, currently {pair_closed_count})"
                         else:
                             adj_size = base_size
-                            size_label = f"{base_size} (GP ensemble full, {pair_closed_count} trades)"
+                            size_label = (
+                                f"{base_size} (GP ensemble full, {pair_closed_count} trades)"
+                            )
                     if best_regime == "NEUTRAL":
                         adj_size = round(adj_size * 0.6, 4)
                         size_label += f" | NEUTRAL -40%"
@@ -4188,7 +4764,9 @@ async def run_loop(run_once=False):
                     # ── Position size for standard entries (RSI momentum and MR) ──
                     if stype == "mean_reversion":
                         all_pair_trades = load_trades()
-                        pair_closed_count = len([t for t in all_pair_trades if t.get("asset") == best_pair])
+                        pair_closed_count = len(
+                            [t for t in all_pair_trades if t.get("asset") == best_pair]
+                        )
                         if pair_closed_count < 25:
                             adj_size = round(base_size * 0.5, 4)
                             size_label = f"{base_size}→{adj_size} (MR 50% until 25 trades, currently {pair_closed_count})"
@@ -4211,14 +4789,24 @@ async def run_loop(run_once=False):
                     if vol_max is not None and atr_pct > vol_max:
                         adj_size = round(adj_size * 0.5, 4)
                         size_label += f" | HV({atr_pct:.3f}%>{vol_max}%) -50%"
-                        print(f"[VOLATILITY] {best_pair}: ATR%={atr_pct:.3f}% > max={vol_max}% — halving size", flush=True)
+                        print(
+                            f"[VOLATILITY] {best_pair}: ATR%={atr_pct:.3f}% > max={vol_max}% — halving size",
+                            flush=True,
+                        )
                     elif vol_min is not None and atr_pct < vol_min:
                         size_label += f" | LV({atr_pct:.3f}%<{vol_min}%) tight"
-                        print(f"[VOLATILITY] {best_pair}: ATR%={atr_pct:.3f}% < min={vol_min}% — low vol, tightening quality", flush=True)
+                        print(
+                            f"[VOLATILITY] {best_pair}: ATR%={atr_pct:.3f}% < min={vol_min}% — low vol, tightening quality",
+                            flush=True,
+                        )
 
                 # ── Stop loss: ATR-based with optional floor ──
                 # Reuse atr_val from volatility calculation above to avoid double compute
-                entry_atr = atr_val if atr_val is not None else compute_atr(_price_histories.get(best_pair, []))
+                entry_atr = (
+                    atr_val
+                    if atr_val is not None
+                    else compute_atr(_price_histories.get(best_pair, []))
+                )
                 atr_mult = entry_strategy.get("atr_multiplier", 1.5)
                 fixed_stop = best_price * (1 - entry_strategy["stop_loss_pct"] / 100)
                 use_atr_floor = entry_strategy.get("use_atr_floor", False)
@@ -4230,27 +4818,47 @@ async def run_loop(run_once=False):
                         atr_stop = min(atr_stop, best_price * (1 - atr_stop_min_pct / 100))
                         # max() = tighter stop (higher price for a long) — YAML stop_loss_pct is the CEILING
                         entry_stop = max(atr_stop, fixed_stop)
-                        atr_label = f"ATR_floor({entry_atr:.5f})×{atr_mult} floor={atr_stop_min_pct}%"
+                        atr_label = (
+                            f"ATR_floor({entry_atr:.5f})×{atr_mult} floor={atr_stop_min_pct}%"
+                        )
                     else:
                         entry_stop = max(atr_stop, fixed_stop)
-                        atr_label = f"ATR({entry_atr:.5f})×{atr_mult}" if atr_stop >= fixed_stop else f"ATR too tight, using fixed {entry_strategy['stop_loss_pct']}%"
+                        atr_label = (
+                            f"ATR({entry_atr:.5f})×{atr_mult}"
+                            if atr_stop >= fixed_stop
+                            else f"ATR too tight, using fixed {entry_strategy['stop_loss_pct']}%"
+                        )
                 else:
                     entry_stop = fixed_stop
                     atr_label = f"fixed {entry_strategy['stop_loss_pct']}%"
-                print(f"[{best_pair}] Stop: ATR_floor={use_atr_floor} final={entry_stop:.5f} ({((best_price-entry_stop)/best_price*100):.3f}%)", flush=True)
+                print(
+                    f"[{best_pair}] Stop: ATR_floor={use_atr_floor} final={entry_stop:.5f} ({((best_price - entry_stop) / best_price * 100):.3f}%)",
+                    flush=True,
+                )
 
-                chart_summary = f" | Chart: {best_chart_context.splitlines()[0]}" if best_chart_context else ""
+                chart_summary = (
+                    f" | Chart: {best_chart_context.splitlines()[0]}" if best_chart_context else ""
+                )
                 adx_summary = " | ADX BYPASS" if best_adx_bypass else ""
                 stype_summary = f" | Type: {stype}"
 
                 if stype == "mean_reversion":
                     # MR entry log
-                    bb_result = compute_bollinger(_price_histories.get(best_pair, []), period=20, num_std=entry_strategy.get("bb_std_dev", 1.5))
+                    bb_result = compute_bollinger(
+                        _price_histories.get(best_pair, []),
+                        period=20,
+                        num_std=entry_strategy.get("bb_std_dev", 1.5),
+                    )
                     bb_info = ""
                     if bb_result:
                         bb_middle, bb_upper, bb_lower, bb_bw = bb_result
-                        bb_info = f" | BB: lower={bb_lower:.5f} mid={bb_middle:.5f} upper={bb_upper:.5f}"
-                    print(f"[ENTRY] {best_pair} — MR BUY @ {best_price:.5f} | RSI {best_rsi:.1f} | Stop: {entry_stop:.5f} ({atr_label}) | Size: {size_label}{bb_info}{chart_summary}{stype_summary}", flush=True)
+                        bb_info = (
+                            f" | BB: lower={bb_lower:.5f} mid={bb_middle:.5f} upper={bb_upper:.5f}"
+                        )
+                    print(
+                        f"[ENTRY] {best_pair} — MR BUY @ {best_price:.5f} | RSI {best_rsi:.1f} | Stop: {entry_stop:.5f} ({atr_label}) | Size: {size_label}{bb_info}{chart_summary}{stype_summary}",
+                        flush=True,
+                    )
                     await send_discord_alert(
                         f"🟢 **NEW ENTRY: {best_pair} (Mean Reversion)**\n"
                         f"Price: {best_price:.5f} | RSI: {best_rsi:.1f}\n"
@@ -4258,7 +4866,10 @@ async def run_loop(run_once=False):
                         f"Stop: {entry_stop:.5f} ({atr_label})"
                     )
                 elif stype == "gp_ensemble":
-                    print(f"[ENTRY] {best_pair} — GP ENSEMBLE BUY @ {best_price:.5f} | Stop: {entry_stop:.5f} ({atr_label}) | Size: {size_label}{chart_summary}", flush=True)
+                    print(
+                        f"[ENTRY] {best_pair} — GP ENSEMBLE BUY @ {best_price:.5f} | Stop: {entry_stop:.5f} ({atr_label}) | Size: {size_label}{chart_summary}",
+                        flush=True,
+                    )
                     await send_discord_alert(
                         f"🧬 **GP ENSEMBLE ENTRY: {best_pair}**\n"
                         f"Price: {best_price:.5f} | Regime: {best_regime}\n"
@@ -4269,7 +4880,10 @@ async def run_loop(run_once=False):
                 else:
                     quality_summary = f" | Quality: {best_entry_quality}/10"
                     corr_info = f" | Corr: {oversold_count}/{total_pairs}" if oversold_count else ""
-                    print(f"[ENTRY] {best_pair} — RSI {best_rsi:.1f} < {entry_strategy['entry']['threshold']} — BUYING @ {best_price:.5f} | Stop: {entry_stop:.5f} ({atr_label}) | Regime: {best_regime} | Size: {size_label}{adx_summary}{chart_summary}{quality_summary}{corr_info}{stype_summary}", flush=True)
+                    print(
+                        f"[ENTRY] {best_pair} — RSI {best_rsi:.1f} < {entry_strategy['entry']['threshold']} — BUYING @ {best_price:.5f} | Stop: {entry_stop:.5f} ({atr_label}) | Regime: {best_regime} | Size: {size_label}{adx_summary}{chart_summary}{quality_summary}{corr_info}{stype_summary}",
+                        flush=True,
+                    )
                     await send_discord_alert(
                         f"🟢 **NEW ENTRY: {best_pair} (RSI Momentum)**\n"
                         f"Price: {best_price:.5f} | RSI: {best_rsi:.1f} | Regime: {best_regime}\n"
@@ -4279,14 +4893,12 @@ async def run_loop(run_once=False):
 
                 # ── LEVEL 6: Spread guard before entry ──
                 spread_skip, spread_reason = _check_spread(
-                    best_pair, best_price,
-                    entry_strategy.get("stop_loss_pct", 0.5)
+                    best_pair, best_price, entry_strategy.get("stop_loss_pct", 0.5)
                 )
                 if spread_skip:
                     print(f"[SAFETY] {best_pair}: SPREAD GUARD — {spread_reason}", flush=True)
                     await send_discord_alert(
-                        f"📏 **SPREAD GUARD: {best_pair}**\n"
-                        f"{spread_reason} — skipping entry"
+                        f"📏 **SPREAD GUARD: {best_pair}**\n{spread_reason} — skipping entry"
                     )
                     log_skip(best_pair, "spread_guard", best_rsi, best_price, best_regime)
                     # Reset best_pair so the rest of entry logic is skipped
@@ -4295,19 +4907,31 @@ async def run_loop(run_once=False):
 
                 # ── LEVEL 6: Check discovered indicators before entry ──
                 try:
-                    from hermes_forex.backtest import check_discovered_signals, init_discovered_storage
+                    from hermes_forex.backtest import (
+                        check_discovered_signals,
+                        init_discovered_storage,
+                    )
+
                     init_discovered_storage()
                     hist = _price_histories.get(best_pair, [])
                     if len(hist) >= 100:
-                        signal_strength, num_active, details = check_discovered_signals(best_pair, hist)
+                        signal_strength, num_active, details = check_discovered_signals(
+                            best_pair, hist
+                        )
                         # Log detailed ensemble info
                         if num_active > 0:
-                            print(f"[DISCOVER] {best_pair}: signal={signal_strength:+.2f}({details['consensus']}) "
-                                  f"active={num_active} degraded={details['degraded']} shared={details['shared']} "
-                                  f"regime={details['current_regime']} vol={details['current_volatility']}", flush=True)
+                            print(
+                                f"[DISCOVER] {best_pair}: signal={signal_strength:+.2f}({details['consensus']}) "
+                                f"active={num_active} degraded={details['degraded']} shared={details['shared']} "
+                                f"regime={details['current_regime']} vol={details['current_volatility']}",
+                                flush=True,
+                            )
                         # Block entry if ensemble is bearish or strongly conflicted
                         if num_active > 0 and signal_strength < -0.3:
-                            print(f"[DISCOVER] {best_pair}: bearish ensemble ({details['consensus']}) — skipping entry", flush=True)
+                            print(
+                                f"[DISCOVER] {best_pair}: bearish ensemble ({details['consensus']}) — skipping entry",
+                                flush=True,
+                            )
                             await send_discord_alert(
                                 f"⛔ **DISCOVERED INDICATOR BLOCKED: {best_pair}**\\n"
                                 f"Signal: {signal_strength:+.2f} ({details['consensus']}) | Active: {num_active}\\n"
@@ -4316,7 +4940,10 @@ async def run_loop(run_once=False):
                             )
                             continue
                         elif num_active > 0:
-                            print(f"[DISCOVER] {best_pair}: signal {signal_strength:+.2f} ({details['consensus']}) — allowing entry", flush=True)
+                            print(
+                                f"[DISCOVER] {best_pair}: signal {signal_strength:+.2f} ({details['consensus']}) — allowing entry",
+                                flush=True,
+                            )
                 except Exception:
                     pass  # Discovered check is advisory — never block on errors
 
@@ -4336,19 +4963,28 @@ async def run_loop(run_once=False):
                     "_partial_taken": False,
                     "_regime": best_regime,
                     "entry_rsi": round(best_rsi, 2),
-                    "entry_adx": round(best_adx, 1) if 'best_adx' in locals() else "N/A",
+                    "entry_adx": round(best_adx, 1) if "best_adx" in locals() else "N/A",
                     "entry_regime": best_regime,
                     "chart_context": best_chart_context if best_chart_context else "unavailable",
-                    "entry_quality_score": best_entry_quality if 'best_entry_quality' in locals() else "N/A",
+                    "entry_quality_score": best_entry_quality
+                    if "best_entry_quality" in locals()
+                    else "N/A",
                     "strategy_type": stype,
-                    "fast_regime": best_fast_regime if 'best_fast_regime' in locals() else "N/A",
+                    "fast_regime": best_fast_regime if "best_fast_regime" in locals() else "N/A",
                 }
                 # ── Decision Cortex: record trade entry ──
                 try:
                     from hermes_forex.decision_cortex import record_entry
-                    record_entry(best_pair, stype, entry_strategy.get("version", "?"),
-                                 regime=best_regime, session=_get_session(datetime.now(timezone.utc).hour),
-                                 rsi=best_rsi, adx=best_adx)
+
+                    record_entry(
+                        best_pair,
+                        stype,
+                        entry_strategy.get("version", "?"),
+                        regime=best_regime,
+                        session=_get_session(datetime.now(timezone.utc).hour),
+                        rsi=best_rsi,
+                        adx=best_adx,
+                    )
                 except Exception:
                     pass
             elif not _open_trades:
@@ -4366,11 +5002,18 @@ async def run_loop(run_once=False):
                 # Count ALL closed trades for this pair (any version) for trigger
                 pair_total_closed = len([t for t in trades if t.get("asset") == pair])
                 # Count trades on current version for the reflection engine
-                pair_trades = [t for t in trades if t.get("strategy_version") == pair_version and t.get("asset") == pair]
+                pair_trades = [
+                    t
+                    for t in trades
+                    if t.get("strategy_version") == pair_version and t.get("asset") == pair
+                ]
                 pair_closed_count = len(pair_trades)
                 # Per-pair fast-early reflection: first 30 closed trades for THIS pair → every 3, then every 5
                 reflection_every = 3 if pair_total_closed < 30 else global_reflection_every
-                print(f"[REFLECT] {pair}: {pair_total_closed} total closed ({pair_closed_count} on v{pair_version}) | reflection_every={reflection_every}", flush=True)
+                print(
+                    f"[REFLECT] {pair}: {pair_total_closed} total closed ({pair_closed_count} on v{pair_version}) | reflection_every={reflection_every}",
+                    flush=True,
+                )
 
                 # Fire based on TOTAL closed trades (not version-filtered), so reflection
                 # keeps firing after version bumps. Latch uses (pair, total_count) to prevent repeats.
@@ -4381,7 +5024,11 @@ async def run_loop(run_once=False):
                         chart_ctx_short = chart_ctx[:300] if chart_ctx else ""
                         # Load skipped signals for this pair
                         all_skipped = load_skipped()
-                        pair_skipped = [s for s in all_skipped if s.get("pair") == pair and s.get("missed_pnl") is not None]
+                        pair_skipped = [
+                            s
+                            for s in all_skipped
+                            if s.get("pair") == pair and s.get("missed_pnl") is not None
+                        ]
                         skipped_json = json.dumps(pair_skipped[-20:]) if pair_skipped else "[]"
                         # Extract crisis features for reflection context
                         crisis_json = "[]"
@@ -4394,13 +5041,34 @@ async def run_loop(run_once=False):
                                     crisis_json = json.dumps(cf)
                             except Exception:
                                 pass
-                        print(f"[REFLECT] {pair}: {pair_total_closed} total ({pair_closed_count} on v{pair_version}) — running reflection...", flush=True)
+                        print(
+                            f"[REFLECT] {pair}: {pair_total_closed} total ({pair_closed_count} on v{pair_version}) — running reflection...",
+                            flush=True,
+                        )
                         try:
                             result = subprocess.run(
-                                ["python", "-m", "hermes_forex.reflect", "--fallback", "--pair", pair, "--chart-context", chart_ctx_short, "--skipped", skipped_json, "--crisis-data", crisis_json],
-                                capture_output=True, text=True, timeout=120
+                                [
+                                    "python",
+                                    "-m",
+                                    "hermes_forex.reflect",
+                                    "--fallback",
+                                    "--pair",
+                                    pair,
+                                    "--chart-context",
+                                    chart_ctx_short,
+                                    "--skipped",
+                                    skipped_json,
+                                    "--crisis-data",
+                                    crisis_json,
+                                ],
+                                capture_output=True,
+                                text=True,
+                                timeout=120,
                             )
-                            print(f"[REFLECT OUTPUT] {result.stdout[-500:]}{result.stderr[-500:]}", flush=True)
+                            print(
+                                f"[REFLECT OUTPUT] {result.stdout[-500:]}{result.stderr[-500:]}",
+                                flush=True,
+                            )
                             _mark_reflection_done(pair, pair_total_closed)
                             # Send reflection summary to #reflections channel
                             refl_msg = (
@@ -4413,7 +5081,10 @@ async def run_loop(run_once=False):
                         except Exception as e:
                             print(f"[REFLECT ERROR] {e}", flush=True)
                     else:
-                        print(f"[REFLECT] {pair}: Already done for v{pair_version} at total={pair_total_closed}. Skipping.", flush=True)
+                        print(
+                            f"[REFLECT] {pair}: Already done for v{pair_version} at total={pair_total_closed}. Skipping.",
+                            flush=True,
+                        )
 
             consecutive_failures = 0
             active = ", ".join(_open_trades.keys()) if _open_trades else "watching"
@@ -4423,14 +5094,30 @@ async def run_loop(run_once=False):
                 ts = _last_candle_ts.get(pair)
                 if ts:
                     try:
-                        age_h = (now_utc - datetime.fromisoformat(ts.replace("Z", "+00:00"))).total_seconds() / 3600
+                        age_h = (
+                            now_utc - datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                        ).total_seconds() / 3600
                         if age_h < 24:
                             _market_closed = False
                             break
                     except Exception:
                         pass
             regime_info = {pair: compute_regime(_price_histories.get(pair, [])) for pair in pairs}
-            heartbeat_data = {"ts": datetime.now(timezone.utc).isoformat(), "status": active, "cycle": cycle, "consecutive_failures": consecutive_failures, "last_price": best_price, "health": "ok" if consecutive_failures < MAX_CONSECUTIVE_FAILURES else "circuit_open", "regimes": regime_info, "chart_contexts": {pair: _chart_state["contexts"].get(pair, "")[:200] for pair in pairs}, "market_closed": _market_closed}
+            heartbeat_data = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "status": active,
+                "cycle": cycle,
+                "consecutive_failures": consecutive_failures,
+                "last_price": best_price,
+                "health": "ok"
+                if consecutive_failures < MAX_CONSECUTIVE_FAILURES
+                else "circuit_open",
+                "regimes": regime_info,
+                "chart_contexts": {
+                    pair: _chart_state["contexts"].get(pair, "")[:200] for pair in pairs
+                },
+                "market_closed": _market_closed,
+            }
             with open(HEARTBEAT_FILE, "w") as f:
                 json.dump(heartbeat_data, f, indent=2)
 
@@ -4443,6 +5130,7 @@ async def run_loop(run_once=False):
             # ── Autonomous Policy Engine (Level 9) — runs every 10 cycles ──
             try:
                 from hermes_forex.policy_engine import evaluate as pe_evaluate
+
                 pe_evaluate(cycle, pairs, strategies, cycle_age=cycle)
             except Exception:
                 pass
@@ -4480,6 +5168,7 @@ Hypothesis tracking:
   - Every reflection writes to hypotheses.jsonl
   - After NEXT 5 trades, hypothesis is scored: did the change help?
 """
+
 import argparse
 import json
 import os
@@ -4492,6 +5181,7 @@ import yaml
 
 try:
     import httpx
+
     HAS_HTTPX = True
 except ImportError:
     HAS_HTTPX = False
@@ -4506,7 +5196,9 @@ HISTORY_DIR = STATE_DIR / "history"
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-2.5-pro"
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+GEMINI_URL = (
+    f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+)
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL = "deepseek-r1-distill-llama-70b"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -4518,66 +5210,75 @@ LLM_RATE_LIMIT_SEC = 5
 skip_hypothesis_count = {}
 CIRCUIT_MAX_DD = -5.0  # -5% total PnL triggers circuit breaker
 CIRCUIT_MAX_CONSEC = 5  # 5 consecutive losses triggers circuit breaker
-MAX_PAUSE_HOURS = 48    # auto-unpause a paused pair after this many hours (half-size re-entry)
+MAX_PAUSE_HOURS = 48  # auto-unpause a paused pair after this many hours (half-size re-entry)
 COOLDOWN_SKIPS = 5  # Skip this many reflection cycles after no-change
 COOLDOWN_DECAY_CYCLES = 50  # Reset cooldown after N cycles without a skip
 LLM_OVERALL_TIMEOUT = 60  # Max seconds for all LLM calls combined
 EVOLVE_DEPLOY_SCORE = 60  # Deploy evolved strategy if current score below this
 DEAD_ZONE_CONSEC = 5  # Trigger GP discovery after N consecutive no-issue returns
 
+
 def estimate_cycle():
     try:
-        hb = STATE_DIR / 'heartbeat.json'
+        hb = STATE_DIR / "heartbeat.json"
         if hb.exists():
-            return int(json.loads(hb.read_text()).get('cycle', 0))
-    except: return 0
+            return int(json.loads(hb.read_text()).get("cycle", 0))
+    except:
+        return 0
 
 
 def run_safety_checks(symbol, trades, goal):
     """Run all safety checks before reflection. Returns dict with actions."""
     result = {}
-    
+
     # 1. Data quality
     if len(trades) < 3:
-        result['data_bad'] = True
+        result["data_bad"] = True
         return result
-    
+
     recent = trades[-20:] if len(trades) >= 20 else trades
-    
+
     # 2. Drawdown circuit breaker
-    total_pnl = sum(t.get('pnl_pct', 0) for t in trades)
+    total_pnl = sum(t.get("pnl_pct", 0) for t in trades)
     if total_pnl < CIRCUIT_MAX_DD:
-        result['circuit_break'] = True
-        result['reason'] = f'Total PnL {total_pnl:.2f}% below {CIRCUIT_MAX_DD}% threshold'
+        result["circuit_break"] = True
+        result["reason"] = f"Total PnL {total_pnl:.2f}% below {CIRCUIT_MAX_DD}% threshold"
         return result
-    
+
     # 3. Consecutive loss circuit breaker
-    recent_pnls = [t.get('pnl_pct', 0) for t in recent]
+    recent_pnls = [t.get("pnl_pct", 0) for t in recent]
     consec = 0
     for p in reversed(recent_pnls):
-        if p <= 0: consec += 1
-        else: break
+        if p <= 0:
+            consec += 1
+        else:
+            break
     if consec >= CIRCUIT_MAX_CONSEC:
-        result['circuit_break'] = True
-        result['reason'] = f'{consec} consecutive losses (max {CIRCUIT_MAX_CONSEC})'
+        result["circuit_break"] = True
+        result["reason"] = f"{consec} consecutive losses (max {CIRCUIT_MAX_CONSEC})"
         return result
-    
+
     # 4. Strategy decay / rolling trend
     if len(trades) >= 15:
         old = trades[:-10] if len(trades) >= 10 else trades
         new = trades[-10:]
-        old_avg = sum(t.get('pnl_pct', 0) for t in old) / max(len(old), 1)
-        new_avg = sum(t.get('pnl_pct', 0) for t in new) / max(len(new), 1)
+        old_avg = sum(t.get("pnl_pct", 0) for t in old) / max(len(old), 1)
+        new_avg = sum(t.get("pnl_pct", 0) for t in new) / max(len(new), 1)
         if new_avg < old_avg - 0.2 and len(new) >= 5:
-            result['decaying'] = True
-            result['old_avg'] = old_avg
-            result['new_avg'] = new_avg
-    
+            result["decaying"] = True
+            result["old_avg"] = old_avg
+            result["new_avg"] = new_avg
 
     # 6. Regime shift detection — flag for early reflection if market changed
     if len(trades) >= 10:
-        recent_regimes = [t.get('entry_regime', '?') for t in trades[-10:] if t.get('entry_regime', '?') != '?']
-        older_regimes = [t.get('entry_regime', '?') for t in trades[:-10] if t.get('entry_regime', '?') != '?'] if len(trades) >= 20 else []
+        recent_regimes = [
+            t.get("entry_regime", "?") for t in trades[-10:] if t.get("entry_regime", "?") != "?"
+        ]
+        older_regimes = (
+            [t.get("entry_regime", "?") for t in trades[:-10] if t.get("entry_regime", "?") != "?"]
+            if len(trades) >= 20
+            else []
+        )
         if older_regimes and recent_regimes:
             recent_counts = {r: recent_regimes.count(r) for r in set(recent_regimes)}
             older_counts = {r: older_regimes.count(r) for r in set(older_regimes)}
@@ -4585,52 +5286,63 @@ def run_safety_checks(symbol, trades, goal):
             recent_majority = max(recent_counts, key=recent_counts.get)
             older_majority = max(older_counts, key=older_counts.get)
             if recent_majority != older_majority and recent_counts.get(recent_majority, 0) >= 5:
-                result['regime_shift'] = True
-                result['reason'] = f'Regime shift: {older_majority} -> {recent_majority}'
+                result["regime_shift"] = True
+                result["reason"] = f"Regime shift: {older_majority} -> {recent_majority}"
     # 5. Reflection fatigue / cooldown (with decay + trade reset)
     try:
-        cf = STATE_DIR / '.cooldown.json'
+        cf = STATE_DIR / ".cooldown.json"
         if cf.exists():
             data = json.loads(cf.read_text())
             pair_data = data.get(symbol, {})
-            skips = pair_data.get('skips', 0)
+            skips = pair_data.get("skips", 0)
             if skips >= COOLDOWN_SKIPS:
                 # Check for new trades since cooldown — reset if new data arrived
-                recent = [t for t in trades if t.get('asset') == symbol and t.get('entry_ts','') > pair_data.get('last_ts','')]
+                recent = [
+                    t
+                    for t in trades
+                    if t.get("asset") == symbol
+                    and t.get("entry_ts", "") > pair_data.get("last_ts", "")
+                ]
                 if len(recent) >= 2:
                     del data[symbol]
                     cf.write_text(json.dumps(data))
-                    print(f"[COOLDOWN] {symbol}: Reset — {len(recent)} new trades since cooldown", flush=True)
+                    print(
+                        f"[COOLDOWN] {symbol}: Reset — {len(recent)} new trades since cooldown",
+                        flush=True,
+                    )
                 else:
-                    result['cooling'] = True
-                    result['reason'] = f'Skipped {skips} times without change'
+                    result["cooling"] = True
+                    result["reason"] = f"Skipped {skips} times without change"
                     return result
     except:
         pass
-    
+
     return result
 
 
 def restore_strategy_backup(symbol):
     """Restore strategy from backup if YAML is corrupted."""
-    yaml_path = STATE_DIR / 'strategies' / f'{symbol}.yaml'
-    bak_path = yaml_path.with_suffix('.yaml.bak')
+    yaml_path = STATE_DIR / "strategies" / f"{symbol}.yaml"
+    bak_path = yaml_path.with_suffix(".yaml.bak")
     if bak_path.exists():
         import shutil
+
         shutil.copy(str(bak_path), str(yaml_path))
-        print(f'[SAFETY] Restored {symbol} from backup', flush=True)
+        print(f"[SAFETY] Restored {symbol} from backup", flush=True)
     else:
-        print(f'[SAFETY] No backup found for {symbol}', flush=True)
+        print(f"[SAFETY] No backup found for {symbol}", flush=True)
 
 
 def load_yaml(path):
     with open(path) as f:
         return yaml.safe_load(f)
 
+
 def save_yaml(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         yaml.dump(data, f, default_flow_style=False)
+
 
 def load_trades():
     if not TRADES_FILE.exists():
@@ -4646,8 +5358,10 @@ def load_trades():
                     print(f"[TRADES] Corrupted line skipped", flush=True)
     return trades
 
+
 def strategy_filename(symbol):
     return symbol.replace("/", "_").replace("-", "_") + ".yaml"
+
 
 STRATEGY_PARAM_RANGES = {
     "stop_loss_pct": (0.5, 10.0),
@@ -4657,6 +5371,7 @@ STRATEGY_PARAM_RANGES = {
     "time_exit_cycles": (60, 2880),
     "entry.threshold": (5, 95),
 }
+
 
 def validate_strategy_params(strategy, raise_on_fail=True):
     """Hard gate: validate ALL strategy params are within safe ranges.
@@ -4698,6 +5413,7 @@ def load_strategy(symbol):
         return data
     raise FileNotFoundError(f"No strategy for {symbol}")
 
+
 def save_strategy(symbol, strategy):
     per_pair = STRATEGY_DIR / strategy_filename(symbol)
     # Validate before saving — refuse to write bad values
@@ -4709,15 +5425,19 @@ def save_strategy(symbol, strategy):
             old_ver = old_data.get("version", "00")
             # Backup to .bak
             import shutil
-            shutil.copy(str(per_pair), str(per_pair.with_suffix('.yaml.bak')))
+
+            shutil.copy(str(per_pair), str(per_pair.with_suffix(".yaml.bak")))
             # Archive version history
             history_dir = STATE_DIR / "history"
             history_dir.mkdir(exist_ok=True)
-            history_file = history_dir / f"{strategy_filename(symbol).replace('.yaml', '')}_v{old_ver}.yaml"
+            history_file = (
+                history_dir / f"{strategy_filename(symbol).replace('.yaml', '')}_v{old_ver}.yaml"
+            )
             save_yaml(history_file, old_data)
         except Exception:
             pass
     save_yaml(per_pair, strategy)
+
 
 def load_hypotheses():
     if not HYPOTHESES_FILE.exists():
@@ -4736,7 +5456,8 @@ def score_trades(trades, goal):
     if not trades:
         return None
     pnls = [float(t.get("pnl_pct", 0)) for t in trades if t.get("pnl_pct") is not None]
-    if not pnls: return None
+    if not pnls:
+        return None
     total_return = sum(pnls)
     avg_pnl = statistics.mean(pnls) if pnls else 0
     worst_dd = min(pnls) if pnls else 0
@@ -4768,13 +5489,20 @@ def score_trades(trades, goal):
     # A reasonable stop (1.5-2.5%) is a safety feature, not a bug.
     score = max(0, min(100, score))
     return {
-        "total_return": round(total_return, 4), "avg_pnl": round(avg_pnl, 4),
-        "worst_dd": round(worst_dd, 4), "best_pnl": round(best_pnl, 4),
-        "win_rate": round(win_rate, 4), "sharpe": round(sharpe, 4),
-        "trade_count": len(trades), "exit_reasons": exit_reasons,
-        "time_exit_pct": round(te_pct, 4), "stop_loss_pct": round(sl_pct, 4),
-        "target_pct": round(pt_pct, 4), "score": round(score, 2),
-        "target_return": target_return, "max_dd_limit": max_dd_limit,
+        "total_return": round(total_return, 4),
+        "avg_pnl": round(avg_pnl, 4),
+        "worst_dd": round(worst_dd, 4),
+        "best_pnl": round(best_pnl, 4),
+        "win_rate": round(win_rate, 4),
+        "sharpe": round(sharpe, 4),
+        "trade_count": len(trades),
+        "exit_reasons": exit_reasons,
+        "time_exit_pct": round(te_pct, 4),
+        "stop_loss_pct": round(sl_pct, 4),
+        "target_pct": round(pt_pct, 4),
+        "score": round(score, 2),
+        "target_return": target_return,
+        "max_dd_limit": max_dd_limit,
         "min_sharpe": min_sharpe,
     }
 
@@ -4796,17 +5524,26 @@ def layer1_rule_based(symbol, trades, goal, strategy, all_trades=None):
     # ── Fix #21: Per-entry-type stop and time-exit rates ──
     mr_trades = [t for t in recent if t.get("strategy_type") == "mean_reversion"]
     gp_trades = [t for t in recent if t.get("strategy_type") == "gp_ensemble"]
-    mr_sl = len([t for t in mr_trades if t.get("exit_reason") == "stop_loss"]) / max(len(mr_trades), 1)
-    gp_sl = len([t for t in gp_trades if t.get("exit_reason") == "stop_loss"]) / max(len(gp_trades), 1)
+    mr_sl = len([t for t in mr_trades if t.get("exit_reason") == "stop_loss"]) / max(
+        len(mr_trades), 1
+    )
+    gp_sl = len([t for t in gp_trades if t.get("exit_reason") == "stop_loss"]) / max(
+        len(gp_trades), 1
+    )
 
     # Score guard: skip changes on high-performing versions (v-specific)
     s = score_trades(recent, goal)
-    if s and s['score'] >= 55:  # Fix #34: Lowered from 65 for version-specific data
+    if s and s["score"] >= 55:  # Fix #34: Lowered from 65 for version-specific data
         return None, None, None, f"Score {s['score']}/100 >= 55 — no changes.", "high"
 
     # ── Fix #6: Cortex check with middle-ground ──
     try:
-        from hermes_forex.decision_cortex import entry_type_wr, entry_type_pnl, get_exiled_indicators
+        from hermes_forex.decision_cortex import (
+            entry_type_wr,
+            entry_type_pnl,
+            get_exiled_indicators,
+        )
+
         mr_wr = entry_type_wr(symbol, "mean_reversion", min_trades=3)
         gp_wr = entry_type_wr(symbol, "gp_ensemble", min_trades=3)
         mr_pnl = entry_type_pnl(symbol, "mean_reversion") if mr_wr else 0
@@ -4814,79 +5551,132 @@ def layer1_rule_based(symbol, trades, goal, strategy, all_trades=None):
         exiles = get_exiled_indicators()
         # Case A: MR is clearly better than GP → block changes
         if mr_wr is not None and gp_wr is not None and mr_wr >= 0.5 and gp_wr < 0.3:
-            return None, None, None, (
-                f"CORTEX: MR {mr_wr:.0%}WR ({mr_pnl:+.2f}%) vs GP {gp_wr:.0%}WR ({gp_pnl:+.2f}%). "
-                f"GP entries are problem — not strategy params."
-            ), "high"
+            return (
+                None,
+                None,
+                None,
+                (
+                    f"CORTEX: MR {mr_wr:.0%}WR ({mr_pnl:+.2f}%) vs GP {gp_wr:.0%}WR ({gp_pnl:+.2f}%). "
+                    f"GP entries are problem — not strategy params."
+                ),
+                "high",
+            )
         # Case B: Both bad → suggest tightening
         if mr_wr is not None and gp_wr is not None and mr_wr < 0.35 and gp_wr < 0.35:
-            return None, None, None, (
-                f"CORTEX: Both MR ({mr_wr:.0%}WR) and GP ({gp_wr:.0%}WR) underperforming. "
-                f"Strategy review needed — not a param tweak."
-            ), "high"
+            return (
+                None,
+                None,
+                None,
+                (
+                    f"CORTEX: Both MR ({mr_wr:.0%}WR) and GP ({gp_wr:.0%}WR) underperforming. "
+                    f"Strategy review needed — not a param tweak."
+                ),
+                "high",
+            )
         # Case C: MR fine but GP slightly bad → proceed with caution
         if mr_wr is not None and mr_wr >= 0.5 and gp_wr is not None and gp_wr < 0.5:
             # Don't block, but add a warning to the reason
             pass  # Proceed to rules
         if exiles and gp_wr is not None and gp_wr < 0.3:
-            return None, None, None, (
-                f"CORTEX: {len(exiles)} indicators exiled. Exile handling this — no param changes."
-            ), "high"
+            return (
+                None,
+                None,
+                None,
+                (
+                    f"CORTEX: {len(exiles)} indicators exiled. Exile handling this — no param changes."
+                ),
+                "high",
+            )
     except Exception:
         pass
 
     # Range guards
     def _safe_stop_pct(val):
-        try: v = float(val)
-        except: return 2.0
+        try:
+            v = float(val)
+        except:
+            return 2.0
         return v if 0.5 <= v <= 10.0 else 2.0
 
     def _safe_target_pct(val):
-        try: v = float(val)
-        except: return 3.0
+        try:
+            v = float(val)
+        except:
+            return 3.0
         return v if 0.5 <= v <= 20.0 else 3.0
 
     if te_ratio > 0.4:
         old = _safe_target_pct(strategy.get("profit_target_pct", 3.0))
         new = round(old + 0.3, 2)
-        return "profit_target_pct", old, new, (
-            f"{len(time_exits)}/{len(recent)} time-exited ({te_ratio:.0%}). Raising target {old} -> {new}."
-        ), "high"
+        return (
+            "profit_target_pct",
+            old,
+            new,
+            (
+                f"{len(time_exits)}/{len(recent)} time-exited ({te_ratio:.0%}). Raising target {old} -> {new}."
+            ),
+            "high",
+        )
     if sl_ratio > 0.5:
         old = _safe_stop_pct(strategy.get("stop_loss_pct", 2.0))
         new = round(old + 0.3, 2)
-        return "stop_loss_pct", old, new, (
-            f"{len(stop_losses)}/{len(recent)} stopped ({sl_ratio:.0%}). Widening {old} -> {new}."
-        ), "high"
+        return (
+            "stop_loss_pct",
+            old,
+            new,
+            (
+                f"{len(stop_losses)}/{len(recent)} stopped ({sl_ratio:.0%}). Widening {old} -> {new}."
+            ),
+            "high",
+        )
 
     # ── Fix #21: Per-type checks ──
     if gp_sl > 0.7 and len(gp_trades) >= 5:
-        return None, None, None, (
-            f"GP entries: {gp_sl:.0%} stop-loss rate ({len(gp_trades)}t). "
-            f"GP is the issue — suppressing via policy."
-        ), "high"
+        return (
+            None,
+            None,
+            None,
+            (
+                f"GP entries: {gp_sl:.0%} stop-loss rate ({len(gp_trades)}t). "
+                f"GP is the issue — suppressing via policy."
+            ),
+            "high",
+        )
 
     if total_return < target:
         old = strategy["entry"]["threshold"]
         new = max(25, old - 3)
-        return "entry.threshold", old, new, (
-            f"Return {total_return:.2f}% < target {target:.2f}%. Loosening RSI {old} -> {new}."
-        ), "medium"
+        return (
+            "entry.threshold",
+            old,
+            new,
+            (f"Return {total_return:.2f}% < target {target:.2f}%. Loosening RSI {old} -> {new}."),
+            "medium",
+        )
     if abs(drawdown) > max_dd:
         old = _safe_stop_pct(strategy["stop_loss_pct"])
         new = max(0.5, round(old - 0.3, 2))
-        return "stop_loss_pct", old, new, (
-            f"DD {abs(drawdown):.2f}% > limit {max_dd:.2f}%. Tightening {old} -> {new}."
-        ), "medium"
+        return (
+            "stop_loss_pct",
+            old,
+            new,
+            (f"DD {abs(drawdown):.2f}% > limit {max_dd:.2f}%. Tightening {old} -> {new}."),
+            "medium",
+        )
 
     # ── Fix #7: Dead zone catch-all ──
-    wr = s['win_rate'] if s else 0
+    wr = s["win_rate"] if s else 0
     if (wr < 0.3 or (total_return < -0.5 and len(recent) >= 8)) and len(recent) >= 10:
-        return "entry.threshold", strategy.get("entry", {}).get("threshold", 40), max(25,
-            strategy.get("entry", {}).get("threshold", 40) - 5), (
-            f"WR {wr:.0%} over {len(recent)} trades — below 30% threshold. "
-            f"Loosening entry criteria."
-        ), "medium"
+        return (
+            "entry.threshold",
+            strategy.get("entry", {}).get("threshold", 40),
+            max(25, strategy.get("entry", {}).get("threshold", 40) - 5),
+            (
+                f"WR {wr:.0%} over {len(recent)} trades — below 30% threshold. "
+                f"Loosening entry criteria."
+            ),
+            "medium",
+        )
 
     return None, None, None, "No clear issue detected by rules.", "low"
 
@@ -4942,7 +5732,10 @@ def call_deepseek(prompt):
             "temperature": 0.3,
             "max_tokens": 500,
         }
-        headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
+        headers = {
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            "Content-Type": "application/json",
+        }
         resp = httpx.post(DEEPSEEK_URL, json=payload, headers=headers, timeout=30)
         resp.raise_for_status()
         data = resp.json()
@@ -4954,7 +5747,7 @@ def call_deepseek(prompt):
 def call_llm_consensus(prompt):
     """
     Call all 3 LLMs in sequence, collect responses, and use consensus.
-    
+
     Returns: (param, old_val, new_val, reasoning, confidence, consensus_info)
     where consensus_info describes which models agreed.
     """
@@ -4963,38 +5756,48 @@ def call_llm_consensus(prompt):
         "Gemini": call_gemini(prompt),
         "Groq": call_groq(prompt),
     }
-    
+
     suggestions = []  # [(model_name, param, old_val, new_val, reasoning)]
     errors = []
-    
+
     for name, response in models.items():
         if response is None or response.startswith(f"{name} error"):
             errors.append(f"{name}: {'unavailable' if response is None else response}")
             continue
-        
+
         param, old_val, new_val, reasoning = parse_gemini_response(response)
         if param is not None:
             suggestions.append((name, param, old_val, new_val, reasoning))
         else:
             errors.append(f"{name}: no change ({reasoning})")
-    
-    print(f"[CONSENSUS] {len(suggestions)}/{sum(1 for m in models if m[1] is not None)} models suggested changes", flush=True)
-    
+
+    print(
+        f"[CONSENSUS] {len(suggestions)}/{sum(1 for m in models if m[1] is not None)} models suggested changes",
+        flush=True,
+    )
+
     if not suggestions:
         # No model saw a need for change
-        return None, None, None, f"All models agreed: no change needed. {'; '.join(errors[:2])}", "high", {"agreement": "none", "models": 0}
-    
+        return (
+            None,
+            None,
+            None,
+            f"All models agreed: no change needed. {'; '.join(errors[:2])}",
+            "high",
+            {"agreement": "none", "models": 0},
+        )
+
     # Count votes per param
     param_votes = {}
     for name, param, old_val, new_val, reasoning in suggestions:
         param_votes.setdefault(param, []).append((name, old_val, new_val, reasoning))
-    
+
     # Find the param with the most votes
     best_param = max(param_votes, key=lambda p: len(param_votes[p]))
     votes = param_votes[best_param]
     agreement = len(votes)
     total_responding = len(suggestions) + len(errors)
-    
+
     if agreement >= 2:
         # 2+ models agree on the same param — strong consensus
         vals = [(v[1], v[2]) for v in votes if v[1] is not None]
@@ -5004,18 +5807,34 @@ def call_llm_consensus(prompt):
             new_vals = [float(v[1]) for v in vals if v[1] is not None]
             old_val = statistics.mean(old_vals) if old_vals else vals[0][0]
             new_val = statistics.mean(new_vals) if new_vals else vals[0][1]
-            
+
             models_str = ", ".join(v[0] for v in votes)
             reasoning = f"[{agreement}-model consensus] " + votes[0][3][:100]
             print(f"[CONSENSUS] AGREED: {best_param} from {models_str}", flush=True)
-            
+
             # High confidence if all responding models agree, medium otherwise
             conf = "high" if agreement == total_responding else "medium"
-            return best_param, old_val, new_val, reasoning, conf, {"agreement": "param", "models": agreement, "sources": models_str}
-    
+            return (
+                best_param,
+                old_val,
+                new_val,
+                reasoning,
+                conf,
+                {"agreement": "param", "models": agreement, "sources": models_str},
+            )
+
     # No param-level consensus — use backtest to decide
-    print(f"[CONSENSUS] NO AGREEMENT — {agreement} on {best_param}, testing suggestions", flush=True)
-    return None, None, None, f"No model consensus. Testing {best_param} from {votes[0][0]} via backtest.", "medium", {"agreement": "none", "models": agreement}
+    print(
+        f"[CONSENSUS] NO AGREEMENT — {agreement} on {best_param}, testing suggestions", flush=True
+    )
+    return (
+        None,
+        None,
+        None,
+        f"No model consensus. Testing {best_param} from {votes[0][0]} via backtest.",
+        "medium",
+        {"agreement": "none", "models": agreement},
+    )
 
 
 def parse_gemini_response(text):
@@ -5026,9 +5845,16 @@ def parse_gemini_response(text):
     result = {}
     for line in lines:
         line = line.strip()
-        for prefix in ["PARAM:", "OLD_VALUE:", "NEW_VALUE:", "REASONING:", "CONFIDENCE:", "CONSENSUS_CHECK:"]:
+        for prefix in [
+            "PARAM:",
+            "OLD_VALUE:",
+            "NEW_VALUE:",
+            "REASONING:",
+            "CONFIDENCE:",
+            "CONSENSUS_CHECK:",
+        ]:
             if line.startswith(prefix):
-                result[prefix.rstrip(":")] = line[len(prefix):].strip()
+                result[prefix.rstrip(":")] = line[len(prefix) :].strip()
     param = result.get("PARAM", result.get("param", "none"))
     if param.lower() == "none":
         return None, None, None, result.get("reasoning", "No changes recommended.")
@@ -5043,7 +5869,17 @@ def parse_gemini_response(text):
     return param, old_val, new_val, reasoning
 
 
-def layer2_gemini(symbol, trades, goal, strategy, score, chart_context="", skipped_json="[]", crisis_data="[]", force_strategy_review=False):
+def layer2_gemini(
+    symbol,
+    trades,
+    goal,
+    strategy,
+    score,
+    chart_context="",
+    skipped_json="[]",
+    crisis_data="[]",
+    force_strategy_review=False,
+):
     """Layer 2: Gemini-powered analysis. Returns (var, old, new, reason, confidence).
     If force_strategy_review=True, the prompt is modified to emphasize strategy type evaluation
     and the response is forced toward strategy_type changes."""
@@ -5068,6 +5904,7 @@ def layer2_gemini(symbol, trades, goal, strategy, score, chart_context="", skipp
             if isinstance(cf, list) and len(cf) > 1:
                 try:
                     from hermes_forex.crisis_learning import get_crisis_recommendation
+
                     rec = get_crisis_recommendation(cf)
                     if rec:
                         crisis_context = (
@@ -5084,7 +5921,12 @@ def layer2_gemini(symbol, trades, goal, strategy, score, chart_context="", skipp
     # ── Cortex context: entry-type breakdown for this pair ──
     cortex_context = ""
     try:
-        from hermes_forex.decision_cortex import entry_type_wr, entry_type_pnl, get_exiled_indicators
+        from hermes_forex.decision_cortex import (
+            entry_type_wr,
+            entry_type_pnl,
+            get_exiled_indicators,
+        )
+
         for et in ["mean_reversion", "rsi_momentum", "gp_ensemble"]:
             wr = entry_type_wr(symbol, et, min_trades=3)
             pnl = entry_type_pnl(symbol, et)
@@ -5092,7 +5934,9 @@ def layer2_gemini(symbol, trades, goal, strategy, score, chart_context="", skipp
                 cortex_context += f"  {et}: {wr:.0%} WR ({pnl:+.2f}% PnL)\n"
         exiles = get_exiled_indicators()
         if exiles:
-            cortex_context += f"  Exiled indicators: {len(exiles)} permanently banned from GP entry voting\n"
+            cortex_context += (
+                f"  Exiled indicators: {len(exiles)} permanently banned from GP entry voting\n"
+            )
     except Exception:
         pass
     if cortex_context:
@@ -5112,7 +5956,9 @@ def layer2_gemini(symbol, trades, goal, strategy, score, chart_context="", skipp
         avg = statistics.mean(vs["pnls"]) if vs["pnls"] else 0
         wr = sum(1 for p in vs["pnls"] if p > 0) / len(vs["pnls"]) if vs["pnls"] else 0
         total = sum(vs["pnls"])
-        version_lines.append(f"  v{v:>4}: {len(vs['trades']):>3} trades | WR={wr:.0%} | avg={avg:+.4f}% | total={total:+.4f}%")
+        version_lines.append(
+            f"  v{v:>4}: {len(vs['trades']):>3} trades | WR={wr:.0%} | avg={avg:+.4f}% | total={total:+.4f}%"
+        )
     versions_text = "\n".join(version_lines)
 
     # ── Session analysis (uses stored entry_session field when available) ──
@@ -5126,10 +5972,14 @@ def layer2_gemini(symbol, trades, goal, strategy, score, chart_context="", skipp
                 h = int(ts[11:13]) if len(ts) >= 13 and "T" in ts else 0
             except (ValueError, IndexError):
                 h = 0
-            if 8 <= h < 17: session = "LDN"
-            elif 13 <= h < 21: session = "NY"
-            elif 0 <= h < 8: session = "ASIA"
-            else: session = "OTHER"
+            if 8 <= h < 17:
+                session = "LDN"
+            elif 13 <= h < 21:
+                session = "NY"
+            elif 0 <= h < 8:
+                session = "ASIA"
+            else:
+                session = "OTHER"
         if session not in session_stats:
             session_stats[session] = {"trades": 0, "pnls": []}
         session_stats[session]["trades"] += 1
@@ -5140,19 +5990,23 @@ def layer2_gemini(symbol, trades, goal, strategy, score, chart_context="", skipp
         if ss and ss["trades"] > 0:
             avg = statistics.mean(ss["pnls"]) if ss["pnls"] else 0
             wr = sum(1 for p in ss["pnls"] if p > 0) / len(ss["pnls"]) if ss["pnls"] else 0
-            session_lines.append(f"  {s:>5}: {ss['trades']:>3} trades | WR={wr:.0%} | avg={avg:+.4f}%")
+            session_lines.append(
+                f"  {s:>5}: {ss['trades']:>3} trades | WR={wr:.0%} | avg={avg:+.4f}%"
+            )
     session_analysis = "\n".join(session_lines) if session_lines else "  Insufficient data."
 
     # ── Day-of-week breakdown ──
     day_stats = {}
     for t in trades:
         day = t.get("entry_day", "")
-        if not day: continue
-        if day not in day_stats: day_stats[day] = {"trades": 0, "pnls": []}
+        if not day:
+            continue
+        if day not in day_stats:
+            day_stats[day] = {"trades": 0, "pnls": []}
         day_stats[day]["trades"] += 1
         day_stats[day]["pnls"].append(t.get("pnl_pct", 0))
     day_lines = []
-    for d in ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]:
+    for d in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]:
         ds = day_stats.get(d)
         if ds and ds["trades"] > 0:
             avg = statistics.mean(ds["pnls"]) if ds["pnls"] else 0
@@ -5163,7 +6017,11 @@ def layer2_gemini(symbol, trades, goal, strategy, score, chart_context="", skipp
     # ── Regime-change analysis ──
     flips = [t for t in trades if t.get("regime_changes", 0) > 0]
     flip_count = len(flips)
-    flip_text = f"  {flip_count}/{len(trades)} trades experienced regime changes during hold" if trades else ""
+    flip_text = (
+        f"  {flip_count}/{len(trades)} trades experienced regime changes during hold"
+        if trades
+        else ""
+    )
 
     # ── Luck-vs-skill (alpha) analysis ──
     alphas = [t.get("alpha_pct", 0) for t in trades if t.get("alpha_pct") is not None]
@@ -5189,11 +6047,13 @@ def layer2_gemini(symbol, trades, goal, strategy, score, chart_context="", skipp
         if rs and rs["trades"] > 0:
             avg = statistics.mean(rs["pnls"]) if rs["pnls"] else 0
             wr = sum(1 for p in rs["pnls"] if p > 0) / len(rs["pnls"]) if rs["pnls"] else 0
-            regime_lines.append(f"  {r:>8}: {len(rs['trades']):>3} trades | WR={wr:.0%} | avg={avg:+.4f}%")
+            regime_lines.append(
+                f"  {r:>8}: {len(rs['trades']):>3} trades | WR={wr:.0%} | avg={avg:+.4f}%"
+            )
     regime_text = "\n".join(regime_lines) if regime_lines else "  Insufficient data."
 
     # ── Forced strategy review text (pre-computed to avoid nested f-strings) ──
-    if force_strategy_review and score and score.get('trade_count', 0) >= 5:
+    if force_strategy_review and score and score.get("trade_count", 0) >= 5:
         force_strategy_text = (
             f"\n[FORCED STRATEGY REVIEW] This pair has {score['trade_count']} trades"
             f" with negative PnL ({score['total_return']}%)"
@@ -5210,32 +6070,32 @@ def layer2_gemini(symbol, trades, goal, strategy, score, chart_context="", skipp
 
     prompt = f"""You are a senior quantitative strategist at a proprietary trading firm. Your job is to preserve capital first, generate profit second.
 
-ASSET: {symbol} | VERSION: {strategy.get('version', '?')}
-PORTFOLIO CONTEXT: This pair has a score of {score['score']}/100 (guard threshold: 55). {"This pair is STRONG — approach with extreme caution." if score['score'] >= 55 else "This pair needs improvement — but one wrong change destroys weeks of progress."}
+ASSET: {symbol} | VERSION: {strategy.get("version", "?")}
+PORTFOLIO CONTEXT: This pair has a score of {score["score"]}/100 (guard threshold: 55). {"This pair is STRONG — approach with extreme caution." if score["score"] >= 55 else "This pair needs improvement — but one wrong change destroys weeks of progress."}
 
 === CURRENT STRATEGY (params you can adjust) ===
-  stop_loss_pct:       {strategy.get('stop_loss_pct','?')}
-  profit_target_pct:   {strategy.get('profit_target_pct','?')}
-  entry.threshold:     {strategy.get('entry',{}).get('threshold','?')}
-  trailing_stop_pct:   {strategy.get('trailing_stop_pct','?')}
-  time_exit_cycles:    {strategy.get('time_exit_cycles','?')}
-  position_size_r:     {strategy.get('position_size_r','?')}
+  stop_loss_pct:       {strategy.get("stop_loss_pct", "?")}
+  profit_target_pct:   {strategy.get("profit_target_pct", "?")}
+  entry.threshold:     {strategy.get("entry", {}).get("threshold", "?")}
+  trailing_stop_pct:   {strategy.get("trailing_stop_pct", "?")}
+  time_exit_cycles:    {strategy.get("time_exit_cycles", "?")}
+  position_size_r:     {strategy.get("position_size_r", "?")}
 
 === PERFORMANCE OVERVIEW ===
-  Total PnL:   {score['total_return']}% (target: {score['target_return']}%) | Avg PnL: {score['avg_pnl']}%
-  Win rate:    {score['win_rate']:.0%} | Sharpe: {score['sharpe']} | Worst DD: {score['worst_dd']}%
-  Exit breakdown: stop_loss={score['exit_reasons'].get('stop_loss', 0)} | profit_target={score['exit_reasons'].get('profit_target', 0)} | time_exit={score['exit_reasons'].get('time_exit', 0)} | trailing_stop={score['exit_reasons'].get('trailing_stop', 0)}
+  Total PnL:   {score["total_return"]}% (target: {score["target_return"]}%) | Avg PnL: {score["avg_pnl"]}%
+  Win rate:    {score["win_rate"]:.0%} | Sharpe: {score["sharpe"]} | Worst DD: {score["worst_dd"]}%
+  Exit breakdown: stop_loss={score["exit_reasons"].get("stop_loss", 0)} | profit_target={score["exit_reasons"].get("profit_target", 0)} | time_exit={score["exit_reasons"].get("time_exit", 0)} | trailing_stop={score["exit_reasons"].get("trailing_stop", 0)}
 
 === STRATEGY TYPE ===
-  Current: {strategy.get('strategy_type', 'mean_reversion')}
+  Current: {strategy.get("strategy_type", "mean_reversion")}
   Valid types: mean_reversion, rsi_momentum
 {force_strategy_text}
 LAST {len(trade_lines)} TRADES:
 {trades_text}
 
 === PATTERN ANALYSIS ===
-Exit breakdown: {score['exit_reasons'].get('stop_loss', 0)} stops, {score['exit_reasons'].get('profit_target', 0)} targets, {score['exit_reasons'].get('time_exit', 0)} timeouts
-Time-exit rate: {score['time_exit_pct']:.0%} (above 30% means target is too ambitious)
+Exit breakdown: {score["exit_reasons"].get("stop_loss", 0)} stops, {score["exit_reasons"].get("profit_target", 0)} targets, {score["exit_reasons"].get("time_exit", 0)} timeouts
+Time-exit rate: {score["time_exit_pct"]:.0%} (above 30% means target is too ambitious)
 Session breakdown: {session_analysis}
 Day-of-week: {day_text}
 Entry regime: {regime_text}
@@ -5286,8 +6146,15 @@ CONSENSUS_CHECK: <what would the other models miss about this pair?>
     param, old_val, new_val, reasoning, confidence, consensus_info = response
     if param is None:
         return None, None, None, reasoning, "high"
-    valid = {"entry.threshold", "strategy_type", "stop_loss_pct", "profit_target_pct",
-             "trailing_stop_pct", "time_exit_cycles", "position_size_r"}
+    valid = {
+        "entry.threshold",
+        "strategy_type",
+        "stop_loss_pct",
+        "profit_target_pct",
+        "trailing_stop_pct",
+        "time_exit_cycles",
+        "position_size_r",
+    }
     if param not in valid:
         return None, None, None, f"Invalid param '{param}': {reasoning}", "low"
     if old_val is None:
@@ -5310,7 +6177,7 @@ CONSENSUS_CHECK: <what would the other models miss about this pair?>
 def check_historical_hypotheses(symbol, param, old_val, new_val):
     """
     Check if this exact param change was tried before on this pair.
-    
+
     Returns: {
         'blocked': bool,
         'reason': str,
@@ -5348,13 +6215,13 @@ def check_historical_hypotheses(symbol, param, old_val, new_val):
             if outcome.get("helped"):
                 return {
                     "blocked": False,
-                    "reason": f"Same change helped before (avg PnL {outcome.get('avg_pnl_after',0):+.4f}%, WR {outcome.get('win_rate_after',0)*100:.0f}% after {outcome.get('subsequent_trades',0)} trades)",
+                    "reason": f"Same change helped before (avg PnL {outcome.get('avg_pnl_after', 0):+.4f}%, WR {outcome.get('win_rate_after', 0) * 100:.0f}% after {outcome.get('subsequent_trades', 0)} trades)",
                     "previous_outcome": outcome,
                 }
             else:
                 return {
                     "blocked": True,
-                    "reason": f"Same change was tried before and HURT (avg PnL {outcome.get('avg_pnl_after',0):+.4f}%, WR {outcome.get('win_rate_after',0)*100:.0f}% after {outcome.get('subsequent_trades',0)} trades)",
+                    "reason": f"Same change was tried before and HURT (avg PnL {outcome.get('avg_pnl_after', 0):+.4f}%, WR {outcome.get('win_rate_after', 0) * 100:.0f}% after {outcome.get('subsequent_trades', 0)} trades)",
                     "previous_outcome": outcome,
                 }
     return {"blocked": False, "reason": "", "previous_outcome": None}
@@ -5366,23 +6233,33 @@ def strategy_to_blocks(strategy):
     if strategy.get("strategy_type") not in ("mean_reversion", "rsi_momentum"):
         return None
     entry_type = strategy.get("strategy_type", "mean_reversion")
-    threshold = strategy.get("entry", {}).get("threshold") or strategy.get("entry", {}).get("mr_entry_rsi", 40)
+    threshold = strategy.get("entry", {}).get("threshold") or strategy.get("entry", {}).get(
+        "mr_entry_rsi", 40
+    )
     bb_std = strategy.get("entry", {}).get("bb_std_dev", 2.0)
     sl = strategy.get("stop_loss_pct", 1.5)
     tg = strategy.get("profit_target_pct", 3.0)
     tr = strategy.get("trailing_stop_pct", 0.5)
     te = strategy.get("time_exit_cycles", 360)
-    
+
     if entry_type == "mean_reversion":
         blocks = ["bb_lower_touch", "rsi_below"]
         return {
-            "entry": {"blocks": blocks, "logic": "and", "params": {"rsi_threshold": threshold, "bb_std": bb_std}},
+            "entry": {
+                "blocks": blocks,
+                "logic": "and",
+                "params": {"rsi_threshold": threshold, "bb_std": bb_std},
+            },
             "exit": {"stop_pct": sl, "target_pct": tg, "trail_pct": tr, "time_exit": te},
             "filters": {},
         }
     elif entry_type == "rsi_momentum":
         return {
-            "entry": {"blocks": ["rsi_below"], "logic": "and", "params": {"rsi_threshold": threshold}},
+            "entry": {
+                "blocks": ["rsi_below"],
+                "logic": "and",
+                "params": {"rsi_threshold": threshold},
+            },
             "exit": {"stop_pct": sl, "target_pct": tg, "trail_pct": tr, "time_exit": te},
             "filters": {},
         }
@@ -5393,6 +6270,7 @@ def fetch_backtest_prices(symbol):
     """Fetch price data for backtesting the evolution engine."""
     import yfinance as yf
     from hermes_forex.backtest import TIMEFRAME_MAP, _SYMBOLS
+
     # Use correct yfinance ticker: EURUSD=X, not EUR=USD
     yf_symbol = _SYMBOLS.get(symbol, None)
     if not yf_symbol:
@@ -5406,7 +6284,8 @@ def fetch_backtest_prices(symbol):
     period = "12mo" if mult > 1 else "6mo"
     try:
         df = yf.download(yf_symbol, period=period, interval=interval, progress=False)
-        if df.empty: return None
+        if df.empty:
+            return None
         prices = [float(x) for x in df["Close"].values.flatten() if str(x) != "nan"]
         return prices if len(prices) >= 30 else None
     except:
@@ -5417,12 +6296,14 @@ STRATEGY_KB_FILE = STATE_DIR / "strategy_knowledge.jsonl"
 
 
 def load_strategy_knowledge():
-    if not STRATEGY_KB_FILE.exists(): return []
+    if not STRATEGY_KB_FILE.exists():
+        return []
     entries = []
     with open(STRATEGY_KB_FILE) as f:
         for line in f:
             line = line.strip()
-            if line: entries.append(json.loads(line))
+            if line:
+                entries.append(json.loads(line))
     return entries
 
 
@@ -5435,12 +6316,21 @@ def check_strategy_knowledge(pair, strategy_type, entry_signature):
     """Check if a strategy type or entry combination has been tried on this pair before."""
     entries = load_strategy_knowledge()
     for e in entries:
-        if e.get("pair") != pair: continue
+        if e.get("pair") != pair:
+            continue
         if e.get("strategy_type") == strategy_type:
             if e.get("outcome", {}).get("helped"):
-                return {"blocked": False, "recommend": True, "message": f"Strategy type '{strategy_type}' WORKED on {pair} before (avg PnL {e['outcome'].get('avg_pnl_after',0):+.2f}%)"}
+                return {
+                    "blocked": False,
+                    "recommend": True,
+                    "message": f"Strategy type '{strategy_type}' WORKED on {pair} before (avg PnL {e['outcome'].get('avg_pnl_after', 0):+.2f}%)",
+                }
             else:
-                return {"blocked": True, "recommend": False, "message": f"Strategy type '{strategy_type}' FAILED on {pair} before (avg PnL {e['outcome'].get('avg_pnl_after',0):+.2f}%)"}
+                return {
+                    "blocked": True,
+                    "recommend": False,
+                    "message": f"Strategy type '{strategy_type}' FAILED on {pair} before (avg PnL {e['outcome'].get('avg_pnl_after', 0):+.2f}%)",
+                }
     return {"blocked": False, "recommend": None, "message": ""}
 
 
@@ -5457,8 +6347,13 @@ def log_backtest_result(pair, param, old_val, new_val, verdict, detail=""):
         "ts": datetime.now(timezone.utc).isoformat(),
         "source": "backtest",
         "detail": detail[:200],
-        "outcome": {"helped": verdict, "avg_pnl_after": 0, "win_rate_after": 0, "subsequent_trades": 0,
-                     "note": "backtest verdict recorded at validation time"},
+        "outcome": {
+            "helped": verdict,
+            "avg_pnl_after": 0,
+            "win_rate_after": 0,
+            "subsequent_trades": 0,
+            "note": "backtest verdict recorded at validation time",
+        },
     }
     try:
         save_strategy_knowledge(entry)
@@ -5491,11 +6386,17 @@ def check_knowledge_base_for_change(pair, param, old_val, new_val):
             outcome = e.get("outcome", {})
             note = e.get("detail", "")
             if e.get("verdict") == "rejected":
-                return {"blocked": True, "reason": f"KB blocked: same change was rejected before ({note})",
-                        "helped": False}
+                return {
+                    "blocked": True,
+                    "reason": f"KB blocked: same change was rejected before ({note})",
+                    "helped": False,
+                }
             elif outcome.get("helped"):
-                return {"blocked": False, "reason": f"Knowledge base: same change was beneficial before ({note})",
-                        "helped": True}
+                return {
+                    "blocked": False,
+                    "reason": f"Knowledge base: same change was beneficial before ({note})",
+                    "helped": True,
+                }
     return {"blocked": False, "reason": "", "helped": None}
 
 
@@ -5559,12 +6460,16 @@ def validate_proposal(param, old_val, new_val, trades, prices=None):
                 new_thresh = int(new_val)
                 # Reject if loosening too aggressively (>10 points at once)
                 if new_thresh < old_thresh - 10:
-                    print(f"[BACKTEST] Entry.threshold change too aggressive ({old_thresh}→{new_thresh}), requiring validation", flush=True)
+                    print(
+                        f"[BACKTEST] Entry.threshold change too aggressive ({old_thresh}→{new_thresh}), requiring validation",
+                        flush=True,
+                    )
                     # Continue to validation below instead of returning True
                     pass
                 else:
                     return True
-            except: return True
+            except:
+                return True
         # ── Fix #18: Max position size gate ──
         if param == "position_size_r":
             try:
@@ -5573,7 +6478,8 @@ def validate_proposal(param, old_val, new_val, trades, prices=None):
                     print(f"[BACKTEST] Position size {new_size} > 0.5 max, rejecting", flush=True)
                     return False
                 return True
-            except: return True
+            except:
+                return True
         return True
 
     recent = [t for t in trades if t.get("exit_reason")][-10:]
@@ -5589,31 +6495,66 @@ def validate_proposal(param, old_val, new_val, trades, prices=None):
     if pair:
         hist_check = check_historical_hypotheses(pair, param, str(old_val), str(new_val))
         if hist_check["blocked"]:
-            print(f"[BACKTEST] Historical hypothesis BLOCKED for {pair}: {hist_check['reason']}", flush=True)
+            print(
+                f"[BACKTEST] Historical hypothesis BLOCKED for {pair}: {hist_check['reason']}",
+                flush=True,
+            )
             return False
         if hist_check["previous_outcome"] and not hist_check["blocked"]:
-            print(f"[BACKTEST] Historical hypothesis CONFIRMED for {pair}: {hist_check['reason']}", flush=True)
+            print(
+                f"[BACKTEST] Historical hypothesis CONFIRMED for {pair}: {hist_check['reason']}",
+                flush=True,
+            )
         # Also check strategy knowledge base (permanent memory)
         kb_check = check_knowledge_base_for_change(pair, param, str(old_val), str(new_val))
         if kb_check["blocked"]:
             print(f"[BACKTEST] Knowledge base BLOCKED for {pair}: {kb_check['reason']}", flush=True)
             return False
         if kb_check["helped"]:
-            print(f"[BACKTEST] Knowledge base CONFIRMED for {pair}: {kb_check['reason']}", flush=True)
+            print(
+                f"[BACKTEST] Knowledge base CONFIRMED for {pair}: {kb_check['reason']}", flush=True
+            )
 
     # ── Phase 0: 6-month historical backtest using yfinance ──
-    if pair and param in ("stop_loss_pct", "profit_target_pct", "trailing_stop_pct", "time_exit_cycles"):
+    if pair and param in (
+        "stop_loss_pct",
+        "profit_target_pct",
+        "trailing_stop_pct",
+        "time_exit_cycles",
+    ):
         try:
             from hermes_forex.backtest import backtest_with_history
+
             strategy = load_strategy(pair)
-            hist_result = backtest_with_history(pair, param, old_val, new_val, strategy,
-                candles_dir=str(STATE_DIR / "candles") if (STATE_DIR / "candles").exists() else None)
+            hist_result = backtest_with_history(
+                pair,
+                param,
+                old_val,
+                new_val,
+                strategy,
+                candles_dir=str(STATE_DIR / "candles")
+                if (STATE_DIR / "candles").exists()
+                else None,
+            )
             if not hist_result.get("approved", True):
-                print(f"[BACKTEST] Historical validation REJECTED for {pair}: {hist_result['reason']}", flush=True)
-                log_backtest_result(pair, param, old_val, new_val, False, f"Phase 0 yfinance rejected: {hist_result['reason']}")
+                print(
+                    f"[BACKTEST] Historical validation REJECTED for {pair}: {hist_result['reason']}",
+                    flush=True,
+                )
+                log_backtest_result(
+                    pair,
+                    param,
+                    old_val,
+                    new_val,
+                    False,
+                    f"Phase 0 yfinance rejected: {hist_result['reason']}",
+                )
                 return False
             if hist_result.get("entries", 0) > 0:
-                print(f"[BACKTEST] Historical validation PASSED for {pair}: {hist_result['reason']}", flush=True)
+                print(
+                    f"[BACKTEST] Historical validation PASSED for {pair}: {hist_result['reason']}",
+                    flush=True,
+                )
         except Exception as e:
             print(f"[BACKTEST] Historical engine error (falling through): {e}", flush=True)
 
@@ -5623,7 +6564,9 @@ def validate_proposal(param, old_val, new_val, trades, prices=None):
         pair = t.get("pair") or t.get("asset", "")
         trade_id = t.get("id", "")
         if trade_id:
-            candle_file = HISTORY_DIR.parent / "candles" / f"{pair.replace('/', '_')}_{trade_id}.json"
+            candle_file = (
+                HISTORY_DIR.parent / "candles" / f"{pair.replace('/', '_')}_{trade_id}.json"
+            )
             if candle_file.exists():
                 bt_trades.append(t)
 
@@ -5634,10 +6577,18 @@ def validate_proposal(param, old_val, new_val, trades, prices=None):
             # Build old and new params
             strategy = load_strategy(pair)
             old_params = {
-                "stop_loss_pct": float(old_val) if param == "stop_loss_pct" else float(strategy.get("stop_loss_pct", 2.0)),
-                "profit_target_pct": float(old_val) if param == "profit_target_pct" else float(strategy.get("profit_target_pct", 5.0)),
-                "trailing_stop_pct": float(old_val) if param == "trailing_stop_pct" else float(strategy.get("trailing_stop_pct", 0.5)),
-                "time_exit_cycles": int(old_val) if param == "time_exit_cycles" else int(strategy.get("time_exit_cycles", 360)),
+                "stop_loss_pct": float(old_val)
+                if param == "stop_loss_pct"
+                else float(strategy.get("stop_loss_pct", 2.0)),
+                "profit_target_pct": float(old_val)
+                if param == "profit_target_pct"
+                else float(strategy.get("profit_target_pct", 5.0)),
+                "trailing_stop_pct": float(old_val)
+                if param == "trailing_stop_pct"
+                else float(strategy.get("trailing_stop_pct", 0.5)),
+                "time_exit_cycles": int(old_val)
+                if param == "time_exit_cycles"
+                else int(strategy.get("time_exit_cycles", 360)),
             }
             new_params = dict(old_params)
             if param == "stop_loss_pct":
@@ -5649,27 +6600,35 @@ def validate_proposal(param, old_val, new_val, trades, prices=None):
             elif param == "time_exit_cycles":
                 new_params["time_exit_cycles"] = int(new_val)
 
-            result = batch_backtest(bt_trades, HISTORY_DIR.parent / "candles", old_params, new_params)
+            result = batch_backtest(
+                bt_trades, HISTORY_DIR.parent / "candles", old_params, new_params
+            )
             if result["results"]:
                 s = result["stats"]
                 conf = result.get("confidence", 0.5)
-                print(f"[BACKTEST] {param}: {old_val} -> {new_val} "
-                      f"(trades={s['total']}, improved={s['improvements']}, worsened={s['worsenings']}, "
-                      f"avg_pnl_change={s['avg_pnl_change']:+.4f}%, confidence={conf:.2f})", flush=True)
+                print(
+                    f"[BACKTEST] {param}: {old_val} -> {new_val} "
+                    f"(trades={s['total']}, improved={s['improvements']}, worsened={s['worsenings']}, "
+                    f"avg_pnl_change={s['avg_pnl_change']:+.4f}%, confidence={conf:.2f})",
+                    flush=True,
+                )
                 # Log regime breakdown
                 regime_bd = result.get("regime_breakdown", {})
                 if regime_bd:
                     regime_str = ", ".join(
-                        f"{r}: {bd['trades']}t({bd.get('avg_pnl_change',0):+.2f}%)"
+                        f"{r}: {bd['trades']}t({bd.get('avg_pnl_change', 0):+.2f}%)"
                         for r, bd in sorted(regime_bd.items())
                     )
                     print(f"[BACKTEST] Regimes: {regime_str}", flush=True)
                 # Log alpha analysis
                 alpha = result.get("alpha_analysis", {})
                 if alpha:
-                    print(f"[BACKTEST] Alpha: skill={alpha.get('avg_skill',0):+.4f}% "
-                          f"luck={alpha.get('avg_luck',0):+.4f}% "
-                          f"skilled_ratio={alpha.get('skilled_ratio',0)*100:.0f}%", flush=True)
+                    print(
+                        f"[BACKTEST] Alpha: skill={alpha.get('avg_skill', 0):+.4f}% "
+                        f"luck={alpha.get('avg_luck', 0):+.4f}% "
+                        f"skilled_ratio={alpha.get('skilled_ratio', 0) * 100:.0f}%",
+                        flush=True,
+                    )
                 # Approve only if result is approved AND either confidence is good
                 # OR Phase 2 still has a chance to help (for low-confidence passes)
                 if result["approved"]:
@@ -5678,41 +6637,81 @@ def validate_proposal(param, old_val, new_val, trades, prices=None):
                         # ── Phase 1.5: Crisis stress check ──
                         try:
                             from hermes_forex.backtest import crisis_backtest, _SYMBOLS
+
                             if pair in _SYMBOLS:
                                 import yfinance as yf
+
                                 symbol = _SYMBOLS[pair]
                                 yf_interval = "1wk" if TIMEFRAME_MAP.get(pair, 1) > 1 else "1d"
                                 yf_period = "12mo" if TIMEFRAME_MAP.get(pair, 1) > 1 else "6mo"
-                                df = yf.download(symbol, period=yf_period, interval=yf_interval, progress=False)
+                                df = yf.download(
+                                    symbol, period=yf_period, interval=yf_interval, progress=False
+                                )
                                 if not df.empty:
-                                    crisis_prices = [float(x) for x in df["Close"].values.flatten() if str(x) != "nan"]
+                                    crisis_prices = [
+                                        float(x)
+                                        for x in df["Close"].values.flatten()
+                                        if str(x) != "nan"
+                                    ]
                                     if len(crisis_prices) >= 50:
                                         strategy = load_strategy(pair)
                                         s_type = strategy.get("strategy_type", "mean_reversion")
-                                        s_thresh = float(strategy.get("entry", {}).get("threshold") or
-                                                         strategy.get("entry", {}).get("mr_entry_rsi") or 40)
+                                        s_thresh = float(
+                                            strategy.get("entry", {}).get("threshold")
+                                            or strategy.get("entry", {}).get("mr_entry_rsi")
+                                            or 40
+                                        )
                                         crisis_result = crisis_backtest(
-                                            crisis_prices, old_params, new_params,
-                                            s_type, s_thresh, pair
+                                            crisis_prices,
+                                            old_params,
+                                            new_params,
+                                            s_type,
+                                            s_thresh,
+                                            pair,
                                         )
                                         if not crisis_result.get("approved", True):
-                                            print(f"[BACKTEST] Crisis stress FAILED: {crisis_result.get('reason', '')}", flush=True)
-                                            log_backtest_result(pair, param, old_val, new_val, False, f"Crisis failed: {crisis_result.get('reason','')}")
+                                            print(
+                                                f"[BACKTEST] Crisis stress FAILED: {crisis_result.get('reason', '')}",
+                                                flush=True,
+                                            )
+                                            log_backtest_result(
+                                                pair,
+                                                param,
+                                                old_val,
+                                                new_val,
+                                                False,
+                                                f"Crisis failed: {crisis_result.get('reason', '')}",
+                                            )
                                             return False
                                         crisis_summary = crisis_result.get("summary", {})
-                                        print(f"[BACKTEST] Crisis stress PASSED: "
-                                              f"{crisis_summary.get('worsened',0)}/{crisis_summary.get('total',0)} "
-                                              f"windows worsened", flush=True)
+                                        print(
+                                            f"[BACKTEST] Crisis stress PASSED: "
+                                            f"{crisis_summary.get('worsened', 0)}/{crisis_summary.get('total', 0)} "
+                                            f"windows worsened",
+                                            flush=True,
+                                        )
                         except Exception as crisis_e:
                             print(f"[BACKTEST] Crisis check skipped: {crisis_e}", flush=True)
-                        log_backtest_result(pair, param, old_val, new_val, True, f"Phase 1+approved (conf={conf:.2f})")
+                        log_backtest_result(
+                            pair,
+                            param,
+                            old_val,
+                            new_val,
+                            True,
+                            f"Phase 1+approved (conf={conf:.2f})",
+                        )
                         return True
                     else:
                         # Low confidence but approved — note it and let Phase 2 try
-                        print(f"[BACKTEST] Approved but low confidence ({conf:.2f}) — deferring to Phase 2", flush=True)
+                        print(
+                            f"[BACKTEST] Approved but low confidence ({conf:.2f}) — deferring to Phase 2",
+                            flush=True,
+                        )
                 else:
                     print(f"[BACKTEST] REJECTED (conf={conf:.2f})", flush=True)
-                    log_backtest_result(pair, param, old_val, new_val, False, f"Phase 1 rejected (conf={conf:.2f})")
+                    log_backtest_result(
+                        pair, param, old_val, new_val, False, f"Phase 1 rejected (conf={conf:.2f})"
+                    )
                     return False
         except Exception as e:
             print(f"[BACKTEST] Engine error (falling back): {e}", flush=True)
@@ -5795,13 +6794,16 @@ def validate_proposal(param, old_val, new_val, trades, prices=None):
         print(f"[BACKTEST] Validating strategy_type change: {old_val} -> {new_val}", flush=True)
         try:
             from hermes_forex.backtest import backtest_with_history
+
             strategy = load_strategy(pair)
             # Compare the current strategy type vs proposed using historical data
             old_type = str(old_val) if old_val else strategy.get("strategy_type", "mean_reversion")
             new_type = str(new_val) if new_val else old_type
             if new_type not in ("mean_reversion", "rsi_momentum"):
                 print(f"[BACKTEST] Invalid strategy_type: {new_type}", flush=True)
-                log_backtest_result(pair, param, old_val, new_val, False, f"Invalid type: {new_type}")
+                log_backtest_result(
+                    pair, param, old_val, new_val, False, f"Invalid type: {new_type}"
+                )
                 return False
             # Store the proposed type in strategy temporarily for backtest_with_history to use
             trial_strategy = dict(strategy)
@@ -5810,58 +6812,135 @@ def validate_proposal(param, old_val, new_val, trades, prices=None):
             test_param = "stop_loss_pct"
             test_old = strategy.get("stop_loss_pct", 1.5)
             test_new = strategy.get("stop_loss_pct", 1.5)
-            hist_result = backtest_with_history(pair, test_param, test_old, test_new,
+            hist_result = backtest_with_history(
+                pair,
+                test_param,
+                test_old,
+                test_new,
                 strategy=trial_strategy,
-                candles_dir=str(STATE_DIR / "candles") if (STATE_DIR / "candles").exists() else None)
+                candles_dir=str(STATE_DIR / "candles")
+                if (STATE_DIR / "candles").exists()
+                else None,
+            )
             # Check if the new strategy type would produce entries
             if hist_result.get("entries", 0) > 0:
-                print(f"[BACKTEST] Strategy type '{new_type}' validated: {hist_result['reason']}", flush=True)
-                log_backtest_result(pair, param, old_val, new_val, True, f"Strategy type validated: {hist_result.get('reason','')}")
+                print(
+                    f"[BACKTEST] Strategy type '{new_type}' validated: {hist_result['reason']}",
+                    flush=True,
+                )
+                log_backtest_result(
+                    pair,
+                    param,
+                    old_val,
+                    new_val,
+                    True,
+                    f"Strategy type validated: {hist_result.get('reason', '')}",
+                )
                 return True
             else:
-                print(f"[BACKTEST] Strategy type '{new_type}' produced no entries in history — rejecting", flush=True)
-                log_backtest_result(pair, param, old_val, new_val, False, f"Strategy type '{new_type}' had zero entries")
+                print(
+                    f"[BACKTEST] Strategy type '{new_type}' produced no entries in history — rejecting",
+                    flush=True,
+                )
+                log_backtest_result(
+                    pair,
+                    param,
+                    old_val,
+                    new_val,
+                    False,
+                    f"Strategy type '{new_type}' had zero entries",
+                )
                 return False
         except Exception as st_e:
             print(f"[BACKTEST] Strategy type validation error: {st_e} — accepting", flush=True)
-            log_backtest_result(pair, param, old_val, new_val, True, f"Strategy type accepted (fallback)")
+            log_backtest_result(
+                pair, param, old_val, new_val, True, f"Strategy type accepted (fallback)"
+            )
             return True
 
     score = benefit - harm
     verdict = score >= -1  # Allow small negative (close calls)
     if not verdict:
-        print(f"[REFLECT] VALIDATION REJECTED {param}: {old_val} -> {new_val} (score={score}, benefit={benefit}, harm={harm})", flush=True)
-        log_backtest_result(pair, param, old_val, new_val, False, f"Phase 2 heuristic rejected (score={score})")
+        print(
+            f"[REFLECT] VALIDATION REJECTED {param}: {old_val} -> {new_val} (score={score}, benefit={benefit}, harm={harm})",
+            flush=True,
+        )
+        log_backtest_result(
+            pair, param, old_val, new_val, False, f"Phase 2 heuristic rejected (score={score})"
+        )
     else:
-        print(f"[REFLECT] VALIDATION PASSED {param}: {old_val} -> {new_val} (score={score})", flush=True)
+        print(
+            f"[REFLECT] VALIDATION PASSED {param}: {old_val} -> {new_val} (score={score})",
+            flush=True,
+        )
         # Low-confidence consensus deferral: if Phase 2 score is close to boundary, call LLM
         if score < 0:
-            print(f"[REFLECT] CONSENSUS DEFER: Phase 2 marginal (score={score}), calling LLM...", flush=True)
+            print(
+                f"[REFLECT] CONSENSUS DEFER: Phase 2 marginal (score={score}), calling LLM...",
+                flush=True,
+            )
             llm_result = _llm_validate_backtest(
-                pair, param, old_val, new_val, trades=recent,
-                regime_bd=None, alpha_info=None, score=score
+                pair,
+                param,
+                old_val,
+                new_val,
+                trades=recent,
+                regime_bd=None,
+                alpha_info=None,
+                score=score,
             )
             if llm_result["approved"] is True:
-                print(f"[LLM-BACKTEST] Override: APPROVED ({llm_result['reasoning'][:100]})", flush=True)
-                log_backtest_result(pair, param, old_val, new_val, True,
-                                    f"LLM override approved: {llm_result['reasoning'][:100]}")
+                print(
+                    f"[LLM-BACKTEST] Override: APPROVED ({llm_result['reasoning'][:100]})",
+                    flush=True,
+                )
+                log_backtest_result(
+                    pair,
+                    param,
+                    old_val,
+                    new_val,
+                    True,
+                    f"LLM override approved: {llm_result['reasoning'][:100]}",
+                )
                 return True
             elif llm_result["approved"] is False:
-                print(f"[LLM-BACKTEST] Override: REJECTED ({llm_result['reasoning'][:100]})", flush=True)
-                log_backtest_result(pair, param, old_val, new_val, False,
-                                    f"LLM override rejected: {llm_result['reasoning'][:100]}")
+                print(
+                    f"[LLM-BACKTEST] Override: REJECTED ({llm_result['reasoning'][:100]})",
+                    flush=True,
+                )
+                log_backtest_result(
+                    pair,
+                    param,
+                    old_val,
+                    new_val,
+                    False,
+                    f"LLM override rejected: {llm_result['reasoning'][:100]}",
+                )
                 return False
             else:
                 # LLM unavailable — fall back to the original marginal pass
-                print(f"[LLM-BACKTEST] Unavailable ({llm_result['reasoning']}), using heuristic", flush=True)
-                log_backtest_result(pair, param, old_val, new_val, True,
-                                    f"Phase 2 marginal (score={score}) — LLM unavailable")
+                print(
+                    f"[LLM-BACKTEST] Unavailable ({llm_result['reasoning']}), using heuristic",
+                    flush=True,
+                )
+                log_backtest_result(
+                    pair,
+                    param,
+                    old_val,
+                    new_val,
+                    True,
+                    f"Phase 2 marginal (score={score}) — LLM unavailable",
+                )
         else:
-            log_backtest_result(pair, param, old_val, new_val, True, f"Phase 2 approved (score={score})")
+            log_backtest_result(
+                pair, param, old_val, new_val, True, f"Phase 2 approved (score={score})"
+            )
     return verdict
 
 
-def _llm_validate_backtest(pair, param, old_val, new_val, trades, regime_bd=None, alpha_info=None, score=None):
+def _llm_validate_backtest(
+    pair, param, old_val, new_val, trades, regime_bd=None, alpha_info=None, score=None
+):
     """Call LLM (DeepSeek → Gemini → Groq) to resolve a marginal backtest verdict.
     Builds a compact prompt with trade data, regime context, and alpha signals.
     Returns {'approved': bool, 'reasoning': str} or {'approved': None, 'reasoning': 'unavailable'}.
@@ -5885,18 +6964,20 @@ def _llm_validate_backtest(pair, param, old_val, new_val, trades, regime_bd=None
     if regime_bd:
         parts = []
         for r, bd in sorted(regime_bd.items()):
-            parts.append(f"{r}: {bd['trades']}t avg{bd.get('avg_pnl_change',0):+.3f}%")
+            parts.append(f"{r}: {bd['trades']}t avg{bd.get('avg_pnl_change', 0):+.3f}%")
         regime_text = "Regimes: " + ", ".join(parts)
 
     # Alpha info
     alpha_text = ""
     if alpha_info:
-        alpha_text = (f"Alpha: skill={alpha_info.get('avg_skill',0):+.3f}% "
-                      f"luck={alpha_info.get('avg_luck',0):+.3f}%")
+        alpha_text = (
+            f"Alpha: skill={alpha_info.get('avg_skill', 0):+.3f}% "
+            f"luck={alpha_info.get('avg_luck', 0):+.3f}%"
+        )
 
     prompt = f"""You are a senior quantitative strategist at a proprietary trading firm.
 
-A backtest engine has evaluated a proposed parameter change and the result is MARGINAL (score={score or '?'}). 
+A backtest engine has evaluated a proposed parameter change and the result is MARGINAL (score={score or "?"}). 
 The mechanical heuristic cannot decide clearly. You must make the final call.
 
 CHANGE: {pair} {param}: {old_val} -> {new_val}
@@ -5941,11 +7022,11 @@ REJECT: <2 sentence reasoning>"""
     text_upper = text.upper().strip()
 
     if text_upper.startswith("APPROVE"):
-        reasoning = text[len("APPROVE:"):].strip() if ":" in text else text
+        reasoning = text[len("APPROVE:") :].strip() if ":" in text else text
         print(f"[LLM-BACKTEST] {model_name} APPROVED: {reasoning[:150]}", flush=True)
         return {"approved": True, "reasoning": f"{model_name}: {reasoning[:200]}"}
     elif text_upper.startswith("REJECT"):
-        reasoning = text[len("REJECT:"):].strip() if ":" in text else text
+        reasoning = text[len("REJECT:") :].strip() if ":" in text else text
         print(f"[LLM-BACKTEST] {model_name} REJECTED: {reasoning[:150]}", flush=True)
         return {"approved": False, "reasoning": f"{model_name}: {reasoning[:200]}"}
     else:
@@ -5976,10 +7057,15 @@ def auto_revert(symbol, trades, strategy):
         latches = {}
 
     # Load previous version's archived strategy
-    archive_file = HISTORY_DIR / f"{strategy_filename(symbol).replace('.yaml', '')}_v{prev_ver}.yaml"
+    archive_file = (
+        HISTORY_DIR / f"{strategy_filename(symbol).replace('.yaml', '')}_v{prev_ver}.yaml"
+    )
     if not archive_file.exists():
-        print(f"[REVERT] {symbol}: v{prev_ver} archive {archive_file.name} not found — "
-              f"cannot check for revert. v{version} continues unreverted.", flush=True)
+        print(
+            f"[REVERT] {symbol}: v{prev_ver} archive {archive_file.name} not found — "
+            f"cannot check for revert. v{version} continues unreverted.",
+            flush=True,
+        )
         return strategy, "skip"
 
     try:
@@ -5988,8 +7074,12 @@ def auto_revert(symbol, trades, strategy):
         return strategy, "skip"
 
     # Count trades on current and previous version
-    current_trades = [t for t in trades if t.get("strategy_version") == version and t.get("exit_reason")]
-    prev_trades = [t for t in trades if t.get("strategy_version") == prev_ver and t.get("exit_reason")]
+    current_trades = [
+        t for t in trades if t.get("strategy_version") == version and t.get("exit_reason")
+    ]
+    prev_trades = [
+        t for t in trades if t.get("strategy_version") == prev_ver and t.get("exit_reason")
+    ]
 
     # Freshness: need at least 5 trades. 24h requirement removed for critical drops.
     if len(current_trades) < 5:
@@ -5999,11 +7089,19 @@ def auto_revert(symbol, trades, strategy):
     cur_wr_total = sum(1 for t in current_trades if t.get("pnl_pct", 0) > 0) / len(current_trades)
     is_critical = cur_pnl_total < -0.5 and cur_wr_total < 0.25
     try:
-        timestamps = [t.get("entry_ts", t.get("ts", "")) for t in current_trades if t.get("entry_ts", t.get("ts", ""))]
+        timestamps = [
+            t.get("entry_ts", t.get("ts", ""))
+            for t in current_trades
+            if t.get("entry_ts", t.get("ts", ""))
+        ]
         if timestamps:
             first = min(timestamps)
-            fmt = "%Y-%m-%dT%H:%M:%S"[:len(first)]
-            first_dt = datetime.strptime(first[:19], fmt) if len(first) >= 19 else datetime(2026,1,1,tzinfo=timezone.utc)
+            fmt = "%Y-%m-%dT%H:%M:%S"[: len(first)]
+            first_dt = (
+                datetime.strptime(first[:19], fmt)
+                if len(first) >= 19
+                else datetime(2026, 1, 1, tzinfo=timezone.utc)
+            )
             hours_since = (datetime.now(timezone.utc) - first_dt).total_seconds() / 3600
             if not is_critical and hours_since < 24:
                 return strategy, "skip"
@@ -6027,21 +7125,27 @@ def auto_revert(symbol, trades, strategy):
     cur_overall_pnl = cur_pnl_total
     prev_overall_pnl = sum(t.get("pnl_pct", 0) for t in prev_trades)
     cur_overall_wr = cur_wr_total
-    prev_overall_wr = sum(1 for t in prev_trades if t.get("pnl_pct", 0) > 0) / max(len(prev_trades), 1)
+    prev_overall_wr = sum(1 for t in prev_trades if t.get("pnl_pct", 0) > 0) / max(
+        len(prev_trades), 1
+    )
 
     # Revert if: first-N underperforms OR overall underperforms significantly
-    underperforms = (cur_pnl < prev_pnl - 0.15 and cur_wr < prev_wr) or \
-                    (cur_overall_pnl < prev_overall_pnl - 0.3 and cur_overall_wr < prev_overall_wr)
+    underperforms = (cur_pnl < prev_pnl - 0.15 and cur_wr < prev_wr) or (
+        cur_overall_pnl < prev_overall_pnl - 0.3 and cur_overall_wr < prev_overall_wr
+    )
     if underperforms:
-        print(f"[REVERT] {symbol}: v{version} underperforms v{prev_ver} "
-              f"(PnL: {cur_pnl:.4f}% vs {prev_pnl:.4f}%, WR: {cur_wr:.0%} vs {prev_wr:.0%}). Reverting...", flush=True)
+        print(
+            f"[REVERT] {symbol}: v{version} underperforms v{prev_ver} "
+            f"(PnL: {cur_pnl:.4f}% vs {prev_pnl:.4f}%, WR: {cur_wr:.0%} vs {prev_wr:.0%}). Reverting...",
+            flush=True,
+        )
         try:
             # Save current strategy as archive before reverting
             save_strategy(symbol, strategy)
             # Restore previous version
             archive_data = load_yaml(archive_file)
             save_strategy(symbol, archive_data)
-            
+
             # ── Multi-version cascading revert ──
             # If v-1 was also bad (already reverted from v-2), keep rolling back
             try:
@@ -6049,7 +7153,7 @@ def auto_revert(symbol, trades, strategy):
                 revert_latch_file.write_text(json.dumps(latches))
             except Exception as _re:
                 print(f"[REVERT] Latch file write error: {_re}", flush=True)
-            
+
             # Reload and check if v-1 itself was a revert (was it also underperforming?)
             restored = load_strategy(symbol)
             restored_ver = restored.get("version", "00")
@@ -6059,18 +7163,27 @@ def auto_revert(symbol, trades, strategy):
                     if latches.get(symbol) == restored_ver:
                         # v-1 was already reverted from v-2 — keep rolling back
                         prev_prev_ver = f"{int(restored_ver) - 1:02d}"
-                        prev_prev_file = HISTORY_DIR / f"{strategy_filename(symbol).replace('.yaml', '')}_v{prev_prev_ver}.yaml"
+                        prev_prev_file = (
+                            HISTORY_DIR
+                            / f"{strategy_filename(symbol).replace('.yaml', '')}_v{prev_prev_ver}.yaml"
+                        )
                         if prev_prev_file.exists():
                             prev_prev = load_yaml(prev_prev_file)
                             save_strategy(symbol, prev_prev)
-                            print(f"[REVERT] {symbol}: Cascading revert to v{prev_prev_ver} (v{restored_ver} was also bad)", flush=True)
+                            print(
+                                f"[REVERT] {symbol}: Cascading revert to v{prev_prev_ver} (v{restored_ver} was also bad)",
+                                flush=True,
+                            )
                             return load_strategy(symbol), "reverted"
                 except Exception as _re:
                     print(f"[REVERT] Cascading revert error: {_re}", flush=True)
-            
+
             latches[symbol] = version
             revert_latch_file.write_text(json.dumps(latches))
-            print(f"[REVERT] {symbol}: v{version} reverted to v{prev_ver} ({archive_file.name})", flush=True)
+            print(
+                f"[REVERT] {symbol}: v{version} reverted to v{prev_ver} ({archive_file.name})",
+                flush=True,
+            )
             # Reload the restored strategy
             return load_strategy(symbol), "reverted"
         except Exception as e:
@@ -6091,12 +7204,15 @@ def _log_regime_action(symbol, ver_from, ver_to, action_type, detail, reason):
     try:
         entry = {
             "ts": datetime.now(timezone.utc).isoformat(),
-            "symbol": symbol, "pair": symbol,
-            "version_from": ver_from, "version_to": ver_to,
+            "symbol": symbol,
+            "pair": symbol,
+            "version_from": ver_from,
+            "version_to": ver_to,
             "action": action_type,
             "reasoning": f"{detail} | {reason}",
             "layer": "safety",
-            "score_before": 0, "trades_reviewed": 0,
+            "score_before": 0,
+            "trades_reviewed": 0,
         }
         with open(JOURNAL_FILE, "a") as f:
             f.write(json.dumps(entry) + "\n")
@@ -6122,7 +7238,9 @@ def maybe_auto_unpause(symbol, strategy):
         pair_trades = [t for t in trades if t.get("symbol") == symbol or t.get("pair") == symbol]
         recent = pair_trades[-20:] if len(pair_trades) >= 20 else pair_trades
         recent_pnl = sum(t.get("pnl_pct", 0) for t in recent)
-        recent_wr = (sum(1 for t in recent if t.get("pnl_pct", 0) > 0) / len(recent)) if recent else 0.0
+        recent_wr = (
+            (sum(1 for t in recent if t.get("pnl_pct", 0) > 0) / len(recent)) if recent else 0.0
+        )
 
         paused_at = strategy.get("paused_at")
         aged_out = False
@@ -6133,7 +7251,9 @@ def maybe_auto_unpause(symbol, strategy):
         else:
             try:
                 pa = datetime.fromisoformat(paused_at.replace("Z", "+00:00"))
-                aged_out = (datetime.now(timezone.utc) - pa).total_seconds() > MAX_PAUSE_HOURS * 3600
+                aged_out = (
+                    datetime.now(timezone.utc) - pa
+                ).total_seconds() > MAX_PAUSE_HOURS * 3600
             except Exception:
                 aged_out = True
 
@@ -6144,7 +7264,11 @@ def maybe_auto_unpause(symbol, strategy):
             if aged_out:
                 strategy["paused_reatry_half_size"] = True
             save_strategy(symbol, strategy)
-            reason = "recent streak recovered" if not aged_out else f"max-pause {MAX_PAUSE_HOURS}h elapsed (half-size re-entry)"
+            reason = (
+                "recent streak recovered"
+                if not aged_out
+                else f"max-pause {MAX_PAUSE_HOURS}h elapsed (half-size re-entry)"
+            )
             print(f"[SAFETY] {symbol}: auto-unpaused — {reason}.", flush=True)
             return True
     except Exception as e:
@@ -6157,40 +7281,46 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
     # Safety check layer
     try:
         safe_result = run_safety_checks(symbol, trades, goal)
-        if safe_result.get('circuit_break'):
+        if safe_result.get("circuit_break"):
             print(f"[SAFETY] {symbol}: CIRCUIT BREAKER - {safe_result['reason']}", flush=True)
             strat = load_strategy(symbol)
-            strat['paused'] = True
-            strat['paused_at'] = datetime.now(timezone.utc).isoformat()
+            strat["paused"] = True
+            strat["paused_at"] = datetime.now(timezone.utc).isoformat()
             save_strategy(symbol, strat)
             return
         # ── Fix #27: Auto-unpause after circuit clears ──
         try:
             strat = load_strategy(symbol)
-            if strat.get('paused'):
-                total_pnl = sum(t.get('pnl_pct', 0) for t in trades)
+            if strat.get("paused"):
+                total_pnl = sum(t.get("pnl_pct", 0) for t in trades)
                 recent = trades[-5:]
-                recent_wr = sum(1 for t in recent if t.get('pnl_pct', 0) > 0) / max(len(recent), 1)
-                paused_at = strat.get('paused_at', '')
+                recent_wr = sum(1 for t in recent if t.get("pnl_pct", 0) > 0) / max(len(recent), 1)
+                paused_at = strat.get("paused_at", "")
                 if total_pnl > -2.0 and recent_wr > 0.4:
-                    strat['paused'] = False
-                    strat.pop('paused_at', None)
+                    strat["paused"] = False
+                    strat.pop("paused_at", None)
                     save_strategy(symbol, strat)
-                    print(f"[SAFETY] {symbol}: Circuit cleared — PnL {total_pnl:+.2f}%, WR {recent_wr:.0%}. Unpausing.", flush=True)
+                    print(
+                        f"[SAFETY] {symbol}: Circuit cleared — PnL {total_pnl:+.2f}%, WR {recent_wr:.0%}. Unpausing.",
+                        flush=True,
+                    )
         except Exception:
             pass
-        if safe_result.get('data_bad'):
+        if safe_result.get("data_bad"):
             print(f"[SAFETY] {symbol}: Poor data quality - skipping", flush=True)
             return
-        if safe_result.get('yaml_bad'):
+        if safe_result.get("yaml_bad"):
             print(f"[SAFETY] {symbol}: YAML corrupted, restoring backup", flush=True)
             restore_strategy_backup(symbol)
             return
-        if safe_result.get('cooling'):
+        if safe_result.get("cooling"):
             print(f"[SAFETY] {symbol}: Cooldown active ({safe_result['reason']})", flush=True)
             return
-        if safe_result.get('regime_shift'):
-            print(f"[SAFETY] {symbol}: {safe_result['reason']} — tightening stops for regime", flush=True)
+        if safe_result.get("regime_shift"):
+            print(
+                f"[SAFETY] {symbol}: {safe_result['reason']} — tightening stops for regime",
+                flush=True,
+            )
             strategy = load_strategy(symbol)
             old_ver = strategy.get("version", "00")
             orig_stop = strategy.get("_orig_stop_loss_pct", strategy.get("stop_loss_pct", 2.0))
@@ -6204,12 +7334,21 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
             new_version = f"{int(old_ver) + 1:02d}"
             strategy["version"] = new_version
             save_strategy(symbol, strategy)
-            _log_regime_action(symbol, old_ver, new_version, "regime_shift",
-                              f"stop {old_stop}→{new_stop}, size {old_size}→{new_size}", safe_result['reason'])
+            _log_regime_action(
+                symbol,
+                old_ver,
+                new_version,
+                "regime_shift",
+                f"stop {old_stop}→{new_stop}, size {old_size}→{new_size}",
+                safe_result["reason"],
+            )
             print(f"[SAFETY] v{new_version} stop→{new_stop} size→{new_size}", flush=True)
             return
-        if safe_result.get('decaying'):
-            print(f"[SAFETY] {symbol}: Decay {safe_result['old_avg']:+.2f}%→{safe_result['new_avg']:+.2f}%", flush=True)
+        if safe_result.get("decaying"):
+            print(
+                f"[SAFETY] {symbol}: Decay {safe_result['old_avg']:+.2f}%→{safe_result['new_avg']:+.2f}%",
+                flush=True,
+            )
             strategy = load_strategy(symbol)
             old_ver = strategy.get("version", "00")
             orig_stop = strategy.get("_orig_stop_loss_pct", strategy.get("stop_loss_pct", 2.0))
@@ -6220,13 +7359,19 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
             new_version = f"{int(old_ver) + 1:02d}"
             strategy["version"] = new_version
             save_strategy(symbol, strategy)
-            _log_regime_action(symbol, old_ver, new_version, "decay",
-                              f"stop {old_stop}→{new_stop}", f"avg {safe_result['old_avg']:+.2f}→{safe_result['new_avg']:+.2f}")
+            _log_regime_action(
+                symbol,
+                old_ver,
+                new_version,
+                "decay",
+                f"stop {old_stop}→{new_stop}",
+                f"avg {safe_result['old_avg']:+.2f}→{safe_result['new_avg']:+.2f}",
+            )
             print(f"[SAFETY] v{new_version} stop→{new_stop} (decay)", flush=True)
             return
     except Exception as e:
         print(f"[SAFETY] Error: {e}", flush=True)
-    
+
     strategy = load_strategy(symbol)
     old_version = strategy["version"]
 
@@ -6234,14 +7379,24 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
     strategy, revert_action = auto_revert(symbol, trades, strategy)
     if revert_action == "reverted":
         old_version = strategy["version"]
-        print(f"[REFLECT] {symbol}: Auto-reverted to v{old_version}. Skipping reflection this cycle.", flush=True)
+        print(
+            f"[REFLECT] {symbol}: Auto-reverted to v{old_version}. Skipping reflection this cycle.",
+            flush=True,
+        )
         hypothesis = {
-            "ts": datetime.now(timezone.utc).isoformat(), "mode": "auto_revert",
-            "symbol": symbol, "pair": symbol,
-            "version_from": old_version, "version_to": old_version,
-            "variable": "auto_revert", "old_value": None, "new_value": None,
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "mode": "auto_revert",
+            "symbol": symbol,
+            "pair": symbol,
+            "version_from": old_version,
+            "version_to": old_version,
+            "variable": "auto_revert",
+            "old_value": None,
+            "new_value": None,
             "reasoning": "Auto-reverted — previous version outperformed",
-            "layer": "auto_revert", "trades_reviewed": 0, "score_before": 0,
+            "layer": "auto_revert",
+            "trades_reviewed": 0,
+            "score_before": 0,
             "scored": True,
         }
         with open(HYPOTHESES_FILE, "a") as f:
@@ -6251,19 +7406,24 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
     # ── X3 Cross-engine: Check policy engine for active suppressions ──
     try:
         from hermes_forex.policy_engine import get_policy
+
         pol = get_policy()
         suppressed = pol.get("suppressions", {}).get(symbol, {})
         if suppressed.get("gp_ensemble"):
-            print(f"[REFLECT] {symbol}: Policy suppresses GP entries — skipping GP-related adjustments.", flush=True)
+            print(
+                f"[REFLECT] {symbol}: Policy suppresses GP entries — skipping GP-related adjustments.",
+                flush=True,
+            )
     except Exception:
         suppressed = {}
 
-    version_trades = [
-        t for t in trades
-        if t.get("asset") == symbol
-    ]
+    version_trades = [t for t in trades if t.get("asset") == symbol]
     # ── Fix #3/#17: Fallback when strategy_version is missing ──
-    version_filtered = [t for t in version_trades if t.get("strategy_version") == old_version and t.get("exit_reason")]
+    version_filtered = [
+        t
+        for t in version_trades
+        if t.get("strategy_version") == old_version and t.get("exit_reason")
+    ]
     # If no trades have strategy_version, use all trades that have exit_reason
     all_exited = [t for t in version_trades if t.get("exit_reason")]
     if not version_filtered:
@@ -6272,17 +7432,23 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
             return
         if not any(t.get("strategy_version") for t in all_exited):
             version_filtered = all_exited
-            print(f"[REFLECT] {symbol}: no strategy_version in trades — using all {len(version_filtered)} closed trades", flush=True)
-    
+            print(
+                f"[REFLECT] {symbol}: no strategy_version in trades — using all {len(version_filtered)} closed trades",
+                flush=True,
+            )
+
     version_trades = version_filtered
     if not version_trades:
         print(f"[REFLECT] No trades for {symbol} on v{old_version}. Skipping.", flush=True)
         return
 
     score = score_trades(version_trades, goal)
-    print(f"[REFLECT] {symbol} v{old_version}: score={score['score']}/100 "
-          f"ret={score['total_return']}% wr={score['win_rate']:.0%} "
-          f"sharpe={score['sharpe']} trades={score['trade_count']}", flush=True)
+    print(
+        f"[REFLECT] {symbol} v{old_version}: score={score['score']}/100 "
+        f"ret={score['total_return']}% wr={score['win_rate']:.0%} "
+        f"sharpe={score['sharpe']} trades={score['trade_count']}",
+        flush=True,
+    )
 
     update_hypothesis_scores(symbol)
 
@@ -6296,8 +7462,11 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
         total_wr = sum(1 for t in all_pair_trades if t.get("pnl_pct", 0) > 0) / len(all_pair_trades)
         if total_pnl < 0 and total_wr < 0.40:
             force_strategy_review = True
-            print(f"[REFLECT] {symbol}: SELF-DIAGNOSIS — {len(all_pair_trades)} trades, "
-                  f"PnL={total_pnl:.2f}%, WR={total_wr:.0%} — forcing strategy type review", flush=True)
+            print(
+                f"[REFLECT] {symbol}: SELF-DIAGNOSIS — {len(all_pair_trades)} trades, "
+                f"PnL={total_pnl:.2f}%, WR={total_wr:.0%} — forcing strategy type review",
+                flush=True,
+            )
 
     # Layer 1
     l1_var, l1_old, l1_new, l1_reason, l1_conf = layer1_rule_based(
@@ -6309,40 +7478,76 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
     # ── Fix #12: Defer all high-confidence Layer 1 changes to LLM for review ──
     if l1_var is not None and l1_conf == "high":
         if l1_var in ("stop_loss_pct", "profit_target_pct", "entry.threshold"):
-            print(f"[REFLECT] L1 says {l1_var}={l1_new} at high confidence. "
-                  f"Deferring to LLM for review.", flush=True)
+            print(
+                f"[REFLECT] L1 says {l1_var}={l1_new} at high confidence. "
+                f"Deferring to LLM for review.",
+                flush=True,
+            )
             l1_conf = "medium"
 
-    if force_strategy_review and (GEMINI_API_KEY or GROQ_API_KEY or DEEPSEEK_API_KEY) and len(version_trades) >= 5:
+    if (
+        force_strategy_review
+        and (GEMINI_API_KEY or GROQ_API_KEY or DEEPSEEK_API_KEY)
+        and len(version_trades) >= 5
+    ):
         # ── Fix #11: Lower LLM_MIN_TRADES to 5 for forced review ──
         print(f"[REFLECT] {symbol}: FORCED STRATEGY REVIEW — skipping L1, calling LLM", flush=True)
         time.sleep(LLM_RATE_LIMIT_SEC)
         l2_var, l2_old, l2_new, l2_reason, l2_conf = layer2_gemini(
-            symbol, version_trades, goal, strategy, score, chart_context, skipped_json, crisis_data,
-            force_strategy_review=True
+            symbol,
+            version_trades,
+            goal,
+            strategy,
+            score,
+            chart_context,
+            skipped_json,
+            crisis_data,
+            force_strategy_review=True,
         )
         print(f"[REFLECT] L2 (strategy review, {l2_conf}): {l2_reason}", flush=True)
         if l2_var is not None:
             chosen_var, chosen_old, chosen_new, chosen_reason, chosen_layer = (
-                l2_var, l2_old, l2_new, l2_reason, "layer2_strategy_review"
+                l2_var,
+                l2_old,
+                l2_new,
+                l2_reason,
+                "layer2_strategy_review",
             )
         else:
             chosen_var = None
             chosen_reason = f"Forced review: L2 returned no change ({l2_reason})"
             chosen_layer = "strategy_review"
 
-    elif l1_conf in ("medium",) and (GEMINI_API_KEY or GROQ_API_KEY or DEEPSEEK_API_KEY) and len(version_trades) >= 5:
+    elif (
+        l1_conf in ("medium",)
+        and (GEMINI_API_KEY or GROQ_API_KEY or DEEPSEEK_API_KEY)
+        and len(version_trades) >= 5
+    ):
         # ── Fix #10: Call LLM on low-confidence results (was: only medium) ──
-        print(f"[REFLECT] L1 uncertain ({l1_conf}), calling LLM ({len(version_trades)} trades)...", flush=True)
+        print(
+            f"[REFLECT] L1 uncertain ({l1_conf}), calling LLM ({len(version_trades)} trades)...",
+            flush=True,
+        )
         time.sleep(LLM_RATE_LIMIT_SEC)
         l2_var, l2_old, l2_new, l2_reason, l2_conf = layer2_gemini(
-            symbol, version_trades, goal, strategy, score, chart_context, skipped_json, crisis_data,
-            force_strategy_review=False
+            symbol,
+            version_trades,
+            goal,
+            strategy,
+            score,
+            chart_context,
+            skipped_json,
+            crisis_data,
+            force_strategy_review=False,
         )
         print(f"[REFLECT] L2 ({l2_conf}): {l2_reason}", flush=True)
         if l2_var is not None:
             chosen_var, chosen_old, chosen_new, chosen_reason, chosen_layer = (
-                l2_var, l2_old, l2_new, l2_reason, "layer2_llm"
+                l2_var,
+                l2_old,
+                l2_new,
+                l2_reason,
+                "layer2_llm",
             )
         else:
             chosen_var = None
@@ -6351,7 +7556,11 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
 
     elif l1_conf == "high" and not (GEMINI_API_KEY or GROQ_API_KEY or DEEPSEEK_API_KEY):
         chosen_var, chosen_old, chosen_new, chosen_reason, chosen_layer = (
-            l1_var, l1_old, l1_new, l1_reason, "layer1"
+            l1_var,
+            l1_old,
+            l1_new,
+            l1_reason,
+            "layer1",
         )
     else:
         chosen_var = None
@@ -6359,19 +7568,19 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
         chosen_layer = "layer1_only"
         # ── Update cooldown counter ──
         try:
-            cf = STATE_DIR / '.cooldown.json'
+            cf = STATE_DIR / ".cooldown.json"
             data = {}
             if cf.exists():
                 data = json.loads(cf.read_text())
             pair_data = data.get(symbol, {})
-            pair_data['skips'] = pair_data.get('skips', 0) + 1
-            pair_data['last_ts'] = datetime.now(timezone.utc).isoformat()
+            pair_data["skips"] = pair_data.get("skips", 0) + 1
+            pair_data["last_ts"] = datetime.now(timezone.utc).isoformat()
             data[symbol] = pair_data
             cf.write_text(json.dumps(data))
         except Exception:
             pass
         # ── Fix #14: Track dead zone for GP discovery trigger ──
-        if l1_reason.startswith("No clear issue") and score.get('win_rate', 0) < 0.3:
+        if l1_reason.startswith("No clear issue") and score.get("win_rate", 0) < 0.3:
             skip_hypothesis_count[symbol] = skip_hypothesis_count.get(symbol, 0) + 1
 
     if chosen_var is not None:
@@ -6394,7 +7603,10 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
             # RR guard: if stop was already wider, bring it in-line
             current_stop = strategy.get("stop_loss_pct", 1.0)
             if current_stop > chosen_new / 2:
-                print(f"[REFLECT] RR GUARD: stop {current_stop}% > target/2 ({chosen_new/2}%). Clamping stop.", flush=True)
+                print(
+                    f"[REFLECT] RR GUARD: stop {current_stop}% > target/2 ({chosen_new / 2}%). Clamping stop.",
+                    flush=True,
+                )
                 strategy["stop_loss_pct"] = round(chosen_new / 2, 2)
         elif chosen_var == "position_size_r" and chosen_new is not None:
             chosen_new = max(0.05, min(1.0, round(float(chosen_new), 4)))
@@ -6403,93 +7615,192 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
         elif chosen_var == "strategy_type" and chosen_new is not None:
             valid_types = {"mean_reversion", "rsi_momentum"}
             if str(chosen_new).strip() not in valid_types:
-                print(f"[REFLECT] Invalid strategy_type '{chosen_new}'. Valid: {valid_types}", flush=True)
+                print(
+                    f"[REFLECT] Invalid strategy_type '{chosen_new}'. Valid: {valid_types}",
+                    flush=True,
+                )
                 return False, strategy, skipped
 
         # ── MULTI-STEP VALIDATION: simulate change against recent trades ──
         if not validate_proposal(chosen_var, chosen_old, chosen_new, version_trades):
-            print(f"[REFLECT] VALIDATION: {chosen_var} {chosen_old} -> {chosen_new} REJECTED — skipping", flush=True)
+            print(
+                f"[REFLECT] VALIDATION: {chosen_var} {chosen_old} -> {chosen_new} REJECTED — skipping",
+                flush=True,
+            )
             chosen_reason = f"VALIDATION REJECTED: {chosen_reason}"
             chosen_var = None  # Prevent write, hypothesis will record as skipped
-            
+
             # ── Trigger strategy evolution when validation rejects ──
             if skip_hypothesis_count.get(symbol, 0) >= 2:
                 try:
                     from hermes_forex.backtest import evolve_strategy, simulate_custom_strategy
+
                     strategy_def = strategy_to_blocks(strategy)
                     prices = fetch_backtest_prices(symbol)
                     if strategy_def and prices and len(prices) >= 50:
                         evolved = evolve_strategy(strategy_def, prices, n_variants=15, top_k=1)
                         if evolved and evolved[0]["score"] > 0.5:
                             best = evolved[0]
-                            print(f"[EVOLVE] {symbol}: evolved strategy found (PnL {best['pnl']:+.2f}% WR {best['wr']}%)", flush=True)
-                            update_strategy_knowledge(symbol, "custom", best["strategy_def"], {
-                                "avg_pnl_after": best["pnl"], "win_rate_after": best["wr"] / 100,
-                                "subsequent_trades": best["entries"], "helped": best["pnl"] > 0,
-                            })
+                            print(
+                                f"[EVOLVE] {symbol}: evolved strategy found (PnL {best['pnl']:+.2f}% WR {best['wr']}%)",
+                                flush=True,
+                            )
+                            update_strategy_knowledge(
+                                symbol,
+                                "custom",
+                                best["strategy_def"],
+                                {
+                                    "avg_pnl_after": best["pnl"],
+                                    "win_rate_after": best["wr"] / 100,
+                                    "subsequent_trades": best["entries"],
+                                    "helped": best["pnl"] > 0,
+                                },
+                            )
                             # ── Fix #20: Relaxed evolution deploy gate (score < EVOLVE_DEPLOY_SCORE instead of 50) ──
-                            if best['score'] > 0.6 and best['pnl'] > 0:
-                                current_score = score.get('score', 0) if isinstance(score, dict) else 0
+                            if best["score"] > 0.6 and best["pnl"] > 0:
+                                current_score = (
+                                    score.get("score", 0) if isinstance(score, dict) else 0
+                                )
                                 if current_score < EVOLVE_DEPLOY_SCORE:
-                                    print(f"[EVOLVE] {symbol}: score {current_score} < {EVOLVE_DEPLOY_SCORE}, deploying evolved strategy", flush=True)
+                                    print(
+                                        f"[EVOLVE] {symbol}: score {current_score} < {EVOLVE_DEPLOY_SCORE}, deploying evolved strategy",
+                                        flush=True,
+                                    )
                                     # Run through validation pipeline first
-                                evo_sl = best['strategy_def'].get('exit',{}).get('stop_pct', strategy.get('stop_loss_pct', 1.5))
-                                evo_tg = best['strategy_def'].get('exit',{}).get('target_pct', strategy.get('profit_target_pct', 3.0))
-                                evo_th = best['strategy_def'].get('entry',{}).get('params',{}).get('rsi_threshold', strategy.get('entry',{}).get('threshold', 40))
+                                evo_sl = (
+                                    best["strategy_def"]
+                                    .get("exit", {})
+                                    .get("stop_pct", strategy.get("stop_loss_pct", 1.5))
+                                )
+                                evo_tg = (
+                                    best["strategy_def"]
+                                    .get("exit", {})
+                                    .get("target_pct", strategy.get("profit_target_pct", 3.0))
+                                )
+                                evo_th = (
+                                    best["strategy_def"]
+                                    .get("entry", {})
+                                    .get("params", {})
+                                    .get(
+                                        "rsi_threshold",
+                                        strategy.get("entry", {}).get("threshold", 40),
+                                    )
+                                )
                                 evo_th = round(max(5, min(95, float(evo_th))), 1)
                                 evo_sl = round(max(0.5, min(10.0, float(evo_sl))), 2)
                                 evo_tg = round(max(0.5, min(20.0, float(evo_tg))), 2)
                                 if evo_sl > evo_tg / 2:
-                                    print(f"[EVOLVE] {symbol}: RR guard prevent deploy (stop {evo_sl} > target/2 {evo_tg/2})", flush=True)
+                                    print(
+                                        f"[EVOLVE] {symbol}: RR guard prevent deploy (stop {evo_sl} > target/2 {evo_tg / 2})",
+                                        flush=True,
+                                    )
                                 else:
                                     # Validate against recent trades
-                                    if validate_proposal('entry.threshold', strategy.get('entry',{}).get('threshold', 40), evo_th, version_trades):
-                                        strategy['entry']['threshold'] = evo_th
-                                        strategy['stop_loss_pct'] = evo_sl
-                                        strategy['profit_target_pct'] = evo_tg
+                                    if validate_proposal(
+                                        "entry.threshold",
+                                        strategy.get("entry", {}).get("threshold", 40),
+                                        evo_th,
+                                        version_trades,
+                                    ):
+                                        strategy["entry"]["threshold"] = evo_th
+                                        strategy["stop_loss_pct"] = evo_sl
+                                        strategy["profit_target_pct"] = evo_tg
                                         new_version = f"{int(old_version) + 1:02d}"
-                                        strategy['version'] = new_version
+                                        strategy["version"] = new_version
                                         save_strategy(symbol, strategy)
-                                        print(f"[EVOLVE] {symbol}: Deployed evolved strategy as v{new_version} (validated)", flush=True)
+                                        print(
+                                            f"[EVOLVE] {symbol}: Deployed evolved strategy as v{new_version} (validated)",
+                                            flush=True,
+                                        )
                                     else:
-                                        print(f"[EVOLVE] {symbol}: Evolved strategy rejected by validation", flush=True)
+                                        print(
+                                            f"[EVOLVE] {symbol}: Evolved strategy rejected by validation",
+                                            flush=True,
+                                        )
                 except Exception as e:
                     print(f"[EVOLVE] Engine error: {e}", flush=True)
                 # ── Fix #14: Trigger GP discovery on consecutive dead-zone returns ──
                 if skip_hypothesis_count.get(symbol, 0) >= DEAD_ZONE_CONSEC:
                     try:
-                        from hermes_forex.backtest import discover_indicator, register_discovered_indicator, init_discovered_storage, _expr_to_str
+                        from hermes_forex.backtest import (
+                            discover_indicator,
+                            register_discovered_indicator,
+                            init_discovered_storage,
+                            _expr_to_str,
+                        )
+
                         init_discovered_storage()
                         prices = fetch_backtest_prices(symbol)
                         if prices and len(prices) >= 400:
-                            print(f"[DISCOVER] {symbol}: {DEAD_ZONE_CONSEC} consecutive no-issues, launching GP discovery...", flush=True)
-                            results = discover_indicator(price_series=prices, population=80, generations=12, top_k=2)
+                            print(
+                                f"[DISCOVER] {symbol}: {DEAD_ZONE_CONSEC} consecutive no-issues, launching GP discovery...",
+                                flush=True,
+                            )
+                            results = discover_indicator(
+                                price_series=prices, population=80, generations=12, top_k=2
+                            )
                             if results:
                                 for expr, fitness, tp, wr in results:
-                                    registered = register_discovered_indicator(expr, fitness, pair=symbol,
-                                        fitness_details={"total_pnl": tp, "win_rate": wr, "discovered_at": str(datetime.now(timezone.utc))})
+                                    registered = register_discovered_indicator(
+                                        expr,
+                                        fitness,
+                                        pair=symbol,
+                                        fitness_details={
+                                            "total_pnl": tp,
+                                            "win_rate": wr,
+                                            "discovered_at": str(datetime.now(timezone.utc)),
+                                        },
+                                    )
                                     if registered:
-                                        print(f"[DISCOVER] {symbol}: New indicator! {_expr_to_str(expr)} (WR={wr:.0%}, PnL={tp:+.2f}%)", flush=True)
+                                        print(
+                                            f"[DISCOVER] {symbol}: New indicator! {_expr_to_str(expr)} (WR={wr:.0%}, PnL={tp:+.2f}%)",
+                                            flush=True,
+                                        )
                             skip_hypothesis_count[symbol] = 0
                     except Exception as d_err:
                         print(f"[DISCOVER] Error: {d_err}", flush=True)
                 # ── LEVEL 6: Symbolic discovery trigger when evolution fails 3+ times ──
                 if skip_hypothesis_count.get(symbol, 0) >= 4:
                     try:
-                        from hermes_forex.backtest import discover_indicator, register_discovered_indicator, init_discovered_storage, _expr_to_str
+                        from hermes_forex.backtest import (
+                            discover_indicator,
+                            register_discovered_indicator,
+                            init_discovered_storage,
+                            _expr_to_str,
+                        )
+
                         init_discovered_storage()
                         prices = fetch_backtest_prices(symbol)
                         if prices and len(prices) >= 400:
-                            print(f"[DISCOVER] {symbol}: evolution stuck, launching symbolic discovery...", flush=True)
-                            results = discover_indicator(price_series=prices, population=80, generations=12, top_k=2)
+                            print(
+                                f"[DISCOVER] {symbol}: evolution stuck, launching symbolic discovery...",
+                                flush=True,
+                            )
+                            results = discover_indicator(
+                                price_series=prices, population=80, generations=12, top_k=2
+                            )
                             if results:
                                 for expr, fitness, tp, wr in results:
-                                    registered = register_discovered_indicator(expr, fitness, pair=symbol,
-                                        fitness_details={"total_pnl": tp, "win_rate": wr, "discovered_at": str(datetime.now(timezone.utc))})
+                                    registered = register_discovered_indicator(
+                                        expr,
+                                        fitness,
+                                        pair=symbol,
+                                        fitness_details={
+                                            "total_pnl": tp,
+                                            "win_rate": wr,
+                                            "discovered_at": str(datetime.now(timezone.utc)),
+                                        },
+                                    )
                                     if registered:
-                                        print(f"[DISCOVER] {symbol}: New indicator discovered! {_expr_to_str(expr)} (WR={wr:.0%}, PnL={tp:+.2f}%)", flush=True)
+                                        print(
+                                            f"[DISCOVER] {symbol}: New indicator discovered! {_expr_to_str(expr)} (WR={wr:.0%}, PnL={tp:+.2f}%)",
+                                            flush=True,
+                                        )
                             else:
-                                print(f"[DISCOVER] {symbol}: No viable indicators found this cycle", flush=True)
+                                print(
+                                    f"[DISCOVER] {symbol}: No viable indicators found this cycle",
+                                    flush=True,
+                                )
                             # Reset skip count so it doesn't re-trigger every cycle
                             skip_hypothesis_count[symbol] = 0
                     except Exception as d_err:
@@ -6504,8 +7815,11 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
             new_version = f"{int(old_version) + 1:02d}"
             strategy["version"] = new_version
             save_strategy(symbol, strategy)
-            print(f"[REFLECT] {symbol}: v{old_version} -> v{new_version} | "
-                  f"{chosen_var}: {chosen_old} -> {chosen_new} | Layer: {chosen_layer}", flush=True)
+            print(
+                f"[REFLECT] {symbol}: v{old_version} -> v{new_version} | "
+                f"{chosen_var}: {chosen_old} -> {chosen_new} | Layer: {chosen_layer}",
+                flush=True,
+            )
             print(f"[REFLECT] Reasoning: {chosen_reason}", flush=True)
             # ── Post-write verification: confirm value actually reached disk ──
             try:
@@ -6514,9 +7828,15 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
                     disk_val = reloaded.get("entry", {}).get("threshold")
                 else:
                     disk_val = reloaded.get(chosen_var)
-                print(f"[REFLECT] Verified {symbol} {chosen_var} = {disk_val} on disk after update", flush=True)
+                print(
+                    f"[REFLECT] Verified {symbol} {chosen_var} = {disk_val} on disk after update",
+                    flush=True,
+                )
                 if disk_val is not None and disk_val != chosen_new:
-                    print(f"[REFLECT] WARNING: disk value {disk_val} != expected {chosen_new} — possible write race", flush=True)
+                    print(
+                        f"[REFLECT] WARNING: disk value {disk_val} != expected {chosen_new} — possible write race",
+                        flush=True,
+                    )
             except Exception as ve:
                 print(f"[REFLECT] Verify error: {ve}", flush=True)
         # ── Record hypothesis with sanitized values ──
@@ -6526,31 +7846,54 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
         if chosen_var in ("stop_loss_pct", "profit_target_pct", "trailing_stop_pct"):
             try:
                 if float(hypo_old) < 0.1 or float(hypo_new) < 0.1:
-                    print(f"[REFLECT] WARNING: {chosen_var} value suspiciously small: old={hypo_old} new={hypo_new} — flagging", flush=True)
+                    print(
+                        f"[REFLECT] WARNING: {chosen_var} value suspiciously small: old={hypo_old} new={hypo_new} — flagging",
+                        flush=True,
+                    )
             except (TypeError, ValueError):
                 pass
         hypothesis = {
-            "ts": datetime.now(timezone.utc).isoformat(), "mode": "combined",
-            "symbol": symbol, "pair": symbol, "bot_id": "hermes-forex",
-            "version_from": old_version, "version_to": new_version,
-            "variable": chosen_var, "old_value": chosen_old, "new_value": chosen_new,
-            "reasoning": chosen_reason, "layer": chosen_layer,
-            "trades_reviewed": len(version_trades), "score_before": score["score"],
-            "total_return_pct": score["total_return"], "win_rate": score["win_rate"],
-            "sharpe": score["sharpe"], "worst_drawdown_pct": score["worst_dd"],
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "mode": "combined",
+            "symbol": symbol,
+            "pair": symbol,
+            "bot_id": "hermes-forex",
+            "version_from": old_version,
+            "version_to": new_version,
+            "variable": chosen_var,
+            "old_value": chosen_old,
+            "new_value": chosen_new,
+            "reasoning": chosen_reason,
+            "layer": chosen_layer,
+            "trades_reviewed": len(version_trades),
+            "score_before": score["score"],
+            "total_return_pct": score["total_return"],
+            "win_rate": score["win_rate"],
+            "sharpe": score["sharpe"],
+            "worst_drawdown_pct": score["worst_dd"],
             "scored": False,
         }
     else:
         print(f"[REFLECT] {symbol}: No changes. {chosen_reason}", flush=True)
         hypothesis = {
-            "ts": datetime.now(timezone.utc).isoformat(), "mode": "combined",
-            "symbol": symbol, "pair": symbol, "bot_id": "hermes-forex",
-            "version_from": old_version, "version_to": old_version,
-            "variable": None, "old_value": None, "new_value": None,
-            "reasoning": chosen_reason, "layer": chosen_layer,
-            "trades_reviewed": len(version_trades), "score_before": score["score"],
-            "total_return_pct": score["total_return"], "win_rate": score["win_rate"],
-            "sharpe": score["sharpe"], "worst_drawdown_pct": score["worst_dd"],
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "mode": "combined",
+            "symbol": symbol,
+            "pair": symbol,
+            "bot_id": "hermes-forex",
+            "version_from": old_version,
+            "version_to": old_version,
+            "variable": None,
+            "old_value": None,
+            "new_value": None,
+            "reasoning": chosen_reason,
+            "layer": chosen_layer,
+            "trades_reviewed": len(version_trades),
+            "score_before": score["score"],
+            "total_return_pct": score["total_return"],
+            "win_rate": score["win_rate"],
+            "sharpe": score["sharpe"],
+            "worst_drawdown_pct": score["worst_dd"],
             "scored": True,
         }
 
@@ -6559,12 +7902,16 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
 
     journal_entry = {
         "ts": datetime.now(timezone.utc).isoformat(),
-        "symbol": symbol, "pair": symbol, "bot_id": "hermes-forex",
+        "symbol": symbol,
+        "pair": symbol,
+        "bot_id": "hermes-forex",
         "version_from": old_version,
         "version_to": hypothesis["version_to"],
         "action": chosen_var or "none",
-        "reasoning": chosen_reason, "layer": chosen_layer,
-        "score_before": score["score"], "trades_reviewed": len(version_trades),
+        "reasoning": chosen_reason,
+        "layer": chosen_layer,
+        "score_before": score["score"],
+        "trades_reviewed": len(version_trades),
     }
     with open(JOURNAL_FILE, "a") as f:
         f.write(json.dumps(journal_entry) + "\n")
@@ -6593,7 +7940,9 @@ def main():
     for symbol in symbols:
         print(f"[REFLECT] Processing {symbol}...", flush=True)
         if args.fallback:
-            combined_reflect(symbol, trades, goal, args.chart_context, args.skipped, args.crisis_data)
+            combined_reflect(
+                symbol, trades, goal, args.chart_context, args.skipped, args.crisis_data
+            )
 
 
 if __name__ == "__main__":
@@ -6620,6 +7969,7 @@ approval thresholds. Designed to match the reflection engine's intelligence leve
   evolve_strategy_crossover(parents, prices) -> list
   correlation_risk(suggestions) -> dict
 """
+
 import json, math, statistics, copy
 from pathlib import Path
 from datetime import datetime, timezone
@@ -6630,22 +7980,27 @@ from typing import Optional, List, Dict
 # ══════════════════════════════════════════
 
 TIMEFRAME_MAP = {
-    "EUR/USD": 1, "GBP/USD": 1, "AUD/USD": 1,
-    "GBP/JPY": 3, "XAU/USD": 3, "XAG/USD": 3,
-    "XAU": 3, "XAG": 3,
+    "EUR/USD": 1,
+    "GBP/USD": 1,
+    "AUD/USD": 1,
+    "GBP/JPY": 3,
+    "XAU/USD": 3,
+    "XAG/USD": 3,
+    "XAU": 3,
+    "XAG": 3,
 }
 DEFAULT_MULTIPLIER = 1
 
 CRISIS_WINDOWS = [
-    ("COVID-19 Crash",     "2020-02-15", "2020-03-31"),
-    ("SNB Shock",          "2015-01-09", "2015-01-23"),
-    ("Rate Shock 2022",    "2022-09-01", "2022-10-15"),
-    ("Brexit Vote",        "2016-06-15", "2016-07-10"),
+    ("COVID-19 Crash", "2020-02-15", "2020-03-31"),
+    ("SNB Shock", "2015-01-09", "2015-01-23"),
+    ("Rate Shock 2022", "2022-09-01", "2022-10-15"),
+    ("Brexit Vote", "2016-06-15", "2016-07-10"),
     ("SVB/Banking Crisis", "2023-03-06", "2023-03-20"),
-    ("Flash Crash 2019",   "2019-01-01", "2019-01-15"),
-    ("Russia Invasion",    "2022-02-14", "2022-03-10"),
-    ("Tariff Shock 2025",  "2025-04-01", "2025-04-15"),
-    ("Yen Carry Unwind",   "2024-08-01", "2024-08-15"),
+    ("Flash Crash 2019", "2019-01-01", "2019-01-15"),
+    ("Russia Invasion", "2022-02-14", "2022-03-10"),
+    ("Tariff Shock 2025", "2025-04-01", "2025-04-15"),
+    ("Yen Carry Unwind", "2024-08-01", "2024-08-15"),
 ]
 
 CONFIDENCE_FLOOR = 0.40
@@ -6661,9 +8016,14 @@ CORRELATION_GROUPS = [
 EVOLUTION_SEED = 42
 
 _SYMBOLS = {
-    "EUR/USD": "EURUSD=X", "GBP/USD": "GBPUSD=X", "AUD/USD": "AUDUSD=X",
-    "GBP/JPY": "GBPJPY=X", "XAU/USD": "GC=F", "XAG/USD": "SI=F",
-    "BTC/USD": "BTC-USD", "ETH/USD": "ETH-USD",
+    "EUR/USD": "EURUSD=X",
+    "GBP/USD": "GBPUSD=X",
+    "AUD/USD": "AUDUSD=X",
+    "GBP/JPY": "GBPJPY=X",
+    "XAU/USD": "GC=F",
+    "XAG/USD": "SI=F",
+    "BTC/USD": "BTC-USD",
+    "ETH/USD": "ETH-USD",
 }
 
 # Macro data symbols for multi-dimensional GP discovery
@@ -6672,23 +8032,36 @@ try:
     from hermes_data import _MACRO_SYMBOLS, _FEATURE_KEYS, TERMINAL_WEIGHTS
 except ImportError:
     _MACRO_SYMBOLS = {
-        "dxy": "DX-Y.NYB",   # US Dollar Index
-        "vix": "^VIX",        # CBOE Volatility Index
-        "tnx": "^TNX",        # 10-Year Treasury Yield
-        "spx": "^GSPC",       # S&P 500 (risk appetite)
-        "oil": "CL=F",        # Crude Oil (inflation, commodities)
-        "gold": "GC=F",       # Gold futures (commodity correlation, XAG ratio)
-        "btc": "BTC-USD",     # Bitcoin (crypto risk, macro liquidity)
-        "fvx": "^FVX",        # 5-Year Treasury Yield (yield curve slope)
-        "eem": "EEM",         # Emerging Markets ETF (EM risk for forex pairs)
+        "dxy": "DX-Y.NYB",  # US Dollar Index
+        "vix": "^VIX",  # CBOE Volatility Index
+        "tnx": "^TNX",  # 10-Year Treasury Yield
+        "spx": "^GSPC",  # S&P 500 (risk appetite)
+        "oil": "CL=F",  # Crude Oil (inflation, commodities)
+        "gold": "GC=F",  # Gold futures (commodity correlation, XAG ratio)
+        "btc": "BTC-USD",  # Bitcoin (crypto risk, macro liquidity)
+        "fvx": "^FVX",  # 5-Year Treasury Yield (yield curve slope)
+        "eem": "EEM",  # Emerging Markets ETF (EM risk for forex pairs)
     }
-    _FEATURE_KEYS = ["close", "volume", "dxy", "vix", "tnx", "spx", "oil", "gold", "btc", "fvx", "eem"]
+    _FEATURE_KEYS = [
+        "close",
+        "volume",
+        "dxy",
+        "vix",
+        "tnx",
+        "spx",
+        "oil",
+        "gold",
+        "btc",
+        "fvx",
+        "eem",
+    ]
     TERMINAL_WEIGHTS = {}
 
 
 # ══════════════════════════════════════════
 # HELPERS
 # ══════════════════════════════════════════
+
 
 def _aggregate_prices(prices: List[float], multiplier: int) -> List[float]:
     if multiplier <= 1 or len(prices) < multiplier + 2:
@@ -6715,13 +8088,16 @@ class SimResult:
         self.alpha_pct = 0.0
 
     def __repr__(self):
-        return (f"<SimResult {self.exit_reason} PnL={self.pnl_pct:.3f}% "
-                f"DD={self.max_drawdown:.2f}% a={self.alpha_pct:.3f}% cycles={self.hold_cycles}>")
+        return (
+            f"<SimResult {self.exit_reason} PnL={self.pnl_pct:.3f}% "
+            f"DD={self.max_drawdown:.2f}% a={self.alpha_pct:.3f}% cycles={self.hold_cycles}>"
+        )
 
 
 # ══════════════════════════════════════════
 # CORE: Bar-by-bar simulation
 # ══════════════════════════════════════════
+
 
 def backtest_trade(entry_price, prices, params, pair=""):
     """Bar-by-bar trade simulation with alpha decomposition."""
@@ -6794,12 +8170,16 @@ def compare_param_changes(entry_price, prices, old_params, new_params, pair=""):
     old = backtest_trade(entry_price, prices, old_params, pair)
     new = backtest_trade(entry_price, prices, new_params, pair)
     return {
-        "old_exit": old.exit_reason, "old_pnl": round(old.pnl_pct, 4),
-        "old_dd": round(old.max_drawdown, 2), "old_cycles": old.hold_cycles,
+        "old_exit": old.exit_reason,
+        "old_pnl": round(old.pnl_pct, 4),
+        "old_dd": round(old.max_drawdown, 2),
+        "old_cycles": old.hold_cycles,
         "old_alpha": round(old.alpha_pct, 4),
         "old_market_move": round(old.market_move_pct, 4),
-        "new_exit": new.exit_reason, "new_pnl": round(new.pnl_pct, 4),
-        "new_dd": round(new.max_drawdown, 2), "new_cycles": new.hold_cycles,
+        "new_exit": new.exit_reason,
+        "new_pnl": round(new.pnl_pct, 4),
+        "new_dd": round(new.max_drawdown, 2),
+        "new_cycles": new.hold_cycles,
         "new_alpha": round(new.alpha_pct, 4),
         "new_market_move": round(new.market_move_pct, 4),
         "pnl_change": round(new.pnl_pct - old.pnl_pct, 4),
@@ -6818,6 +8198,7 @@ def compare_param_changes(entry_price, prices, old_params, new_params, pair=""):
 # ══════════════════════════════════════════
 # CORE: Batch backtest (enhanced)
 # ══════════════════════════════════════════
+
 
 def batch_backtest(trades, candles_dir, old_params, new_params):
     """Enhanced batch backtest with confidence scoring, regime breakdown, alpha."""
@@ -6850,13 +8231,34 @@ def batch_backtest(trades, candles_dir, old_params, new_params):
         weight = max(1.0, min(14.0, math.sqrt(candle_count)))
         trade_weights.append(weight)
     if not results:
-        return {"approved": False, "results": [], "confidence": 0.0,
-                "reason": "No backtest data available — no trades with candle files found",
-                "regime_breakdown": {}, "net_score": 0, "dd_penalty": 0,
-                "alpha_analysis": {"avg_luck": 0, "avg_skill": 0, "skilled_count": 0, "skilled_ratio": 0},
-                "stats": {"total": 0, "improvements": 0, "worsenings": 0, "unchanged": 0,
-                          "avg_pnl_change": 0, "avg_dd_change": 0, "avg_alpha_change": 0,
-                          "stops_saved": 0, "stops_killed": 0, "targets_reached": 0, "targets_missed": 0}}
+        return {
+            "approved": False,
+            "results": [],
+            "confidence": 0.0,
+            "reason": "No backtest data available — no trades with candle files found",
+            "regime_breakdown": {},
+            "net_score": 0,
+            "dd_penalty": 0,
+            "alpha_analysis": {
+                "avg_luck": 0,
+                "avg_skill": 0,
+                "skilled_count": 0,
+                "skilled_ratio": 0,
+            },
+            "stats": {
+                "total": 0,
+                "improvements": 0,
+                "worsenings": 0,
+                "unchanged": 0,
+                "avg_pnl_change": 0,
+                "avg_dd_change": 0,
+                "avg_alpha_change": 0,
+                "stops_saved": 0,
+                "stops_killed": 0,
+                "targets_reached": 0,
+                "targets_missed": 0,
+            },
+        }
     total_weight = sum(trade_weights) or 1.0
     weighted_improvements = sum(w * r["improved"] for w, r in zip(trade_weights, results))
     weighted_worsenings = sum(w * r["worsened"] for w, r in zip(trade_weights, results))
@@ -6874,26 +8276,33 @@ def batch_backtest(trades, candles_dir, old_params, new_params):
     count_factor = min(1.0, total / 10.0)
     score_factor = max(0, min(1.0, (net_score + 5) / 10))
     dd_factor = 1.0 - (dd_penalty * 0.25)
-    confidence = max(0.0, min(1.0, (
-        0.20 * count_factor + 0.40 * score_factor + 0.20 * pnl_stability + 0.20 * dd_factor
-    )))
+    confidence = max(
+        0.0,
+        min(
+            1.0,
+            (0.20 * count_factor + 0.40 * score_factor + 0.20 * pnl_stability + 0.20 * dd_factor),
+        ),
+    )
     hard_reject = False
     if total >= 5:
         raw_worsenings = sum(1 for r in results if r["worsened"])
         if raw_worsenings > total * 0.66:
             hard_reject = True
-    approved = (confidence >= CONFIDENCE_FLOOR and not hard_reject)
+    approved = confidence >= CONFIDENCE_FLOOR and not hard_reject
     regime_data = _classify_regime_across_trades(results, candles_dir)
     alpha_skill_count = sum(1 for r in results if r.get("new_alpha", 0) > 0)
     avg_luck = statistics.mean([r.get("old_market_move", 0) for r in results]) if results else 0
     avg_skill = statistics.mean([r.get("new_alpha", 0) for r in results]) if results else 0
     return {
-        "approved": approved, "results": results,
-        "confidence": round(confidence, 4), "net_score": round(net_score, 4),
+        "approved": approved,
+        "results": results,
+        "confidence": round(confidence, 4),
+        "net_score": round(net_score, 4),
         "dd_penalty": dd_penalty,
         "regime_breakdown": regime_data,
         "alpha_analysis": {
-            "avg_luck": round(avg_luck, 4), "avg_skill": round(avg_skill, 4),
+            "avg_luck": round(avg_luck, 4),
+            "avg_skill": round(avg_skill, 4),
             "skilled_count": alpha_skill_count,
             "skilled_ratio": round(alpha_skill_count / total, 4) if total else 0,
         },
@@ -6916,6 +8325,7 @@ def batch_backtest(trades, candles_dir, old_params, new_params):
 # ══════════════════════════════════════════
 # TIER 1: Regime classification
 # ══════════════════════════════════════════
+
 
 def _classify_regime(prices):
     if len(prices) < 50:
@@ -6943,7 +8353,13 @@ def _classify_regime_across_trades(results, candles_dir):
         except Exception:
             regime = "UNKNOWN"
         if regime not in breakdown:
-            breakdown[regime] = {"trades": 0, "improved": 0, "worsened": 0, "avg_pnl_change": 0.0, "total_pnl_change": 0.0}
+            breakdown[regime] = {
+                "trades": 0,
+                "improved": 0,
+                "worsened": 0,
+                "avg_pnl_change": 0.0,
+                "total_pnl_change": 0.0,
+            }
         bd = breakdown[regime]
         bd["trades"] += 1
         bd["total_pnl_change"] += r.get("pnl_change", 0)
@@ -6962,6 +8378,7 @@ def _classify_regime_across_trades(results, candles_dir):
 # TIER 2: Crisis stress test
 # ══════════════════════════════════════════
 
+
 def _sim_continuous(prices, params, strategy_type, threshold):
     trades = []
     open_trade = None
@@ -6978,7 +8395,7 @@ def _sim_continuous(prices, params, strategy_type, threshold):
             ei, ep = open_trade
             sl = ep * (1 - stop / 100)
             tg = ep * (1 + target / 100)
-            pk = max(prices[ei:i + 1])
+            pk = max(prices[ei : i + 1])
             ex = None
             if trailing > 0:
                 tr = pk * (1 - trailing / 100)
@@ -7005,18 +8422,34 @@ def _sim_continuous(prices, params, strategy_type, threshold):
     return {"total_pnl": sum(pnls_list), "wr": wins / len(trades) * 100, "entries": len(trades)}
 
 
-def crisis_backtest(prices, old_params, new_params, strategy_type="mean_reversion", threshold=40, pair=""):
+def crisis_backtest(
+    prices, old_params, new_params, strategy_type="mean_reversion", threshold=40, pair=""
+):
     """Run old vs new params across all crisis windows. Returns per-crisis comparison + verdict."""
     if not prices or len(prices) < 50:
-        return {"approved": True, "reason": "Insufficient data for crisis test", "crisis_results": [], "summary": {"total": 0}}
+        return {
+            "approved": True,
+            "reason": "Insufficient data for crisis test",
+            "crisis_results": [],
+            "summary": {"total": 0},
+        }
     symbol = _SYMBOLS.get(pair)
     if not symbol:
-        print(f"[BACKTEST] WARNING: No yfinance symbol mapped for {pair} — skipping crisis test", flush=True)
-        return {"approved": True, "reason": f"No symbol for {pair}", "crisis_results": [], "summary": {"total": 0}}
+        print(
+            f"[BACKTEST] WARNING: No yfinance symbol mapped for {pair} — skipping crisis test",
+            flush=True,
+        )
+        return {
+            "approved": True,
+            "reason": f"No symbol for {pair}",
+            "crisis_results": [],
+            "summary": {"total": 0},
+        }
     crisis_results = []
     for crisis_name, start_str, end_str in CRISIS_WINDOWS:
         try:
             import yfinance as yf
+
             df = yf.download(symbol, start=start_str, end=end_str, interval="1d", progress=False)
             if df.empty:
                 continue
@@ -7030,15 +8463,28 @@ def crisis_backtest(prices, old_params, new_params, strategy_type="mean_reversio
         old_pnl = old_result["total_pnl"]
         new_pnl = new_result["total_pnl"]
         delta = new_pnl - old_pnl
-        crisis_results.append({
-            "crisis": crisis_name, "start": start_str, "end": end_str,
-            "old_pnl": round(old_pnl, 4), "new_pnl": round(new_pnl, 4),
-            "delta": round(delta, 4), "old_wr": round(old_result["wr"], 1),
-            "new_wr": round(new_result["wr"], 1), "entries": old_result["entries"],
-            "worsened": delta < -0.1, "improved": delta > 0.1,
-        })
+        crisis_results.append(
+            {
+                "crisis": crisis_name,
+                "start": start_str,
+                "end": end_str,
+                "old_pnl": round(old_pnl, 4),
+                "new_pnl": round(new_pnl, 4),
+                "delta": round(delta, 4),
+                "old_wr": round(old_result["wr"], 1),
+                "new_wr": round(new_result["wr"], 1),
+                "entries": old_result["entries"],
+                "worsened": delta < -0.1,
+                "improved": delta > 0.1,
+            }
+        )
     if not crisis_results:
-        return {"approved": True, "reason": "No crisis data available", "crisis_results": [], "summary": {"total": 0}}
+        return {
+            "approved": True,
+            "reason": "No crisis data available",
+            "crisis_results": [],
+            "summary": {"total": 0},
+        }
     worsened_count = sum(1 for c in crisis_results if c["worsened"])
     improved_count = sum(1 for c in crisis_results if c["improved"])
     total_crisis = len(crisis_results)
@@ -7047,15 +8493,22 @@ def crisis_backtest(prices, old_params, new_params, strategy_type="mean_reversio
     return {
         "approved": approved,
         "crisis_results": crisis_results,
-        "summary": {"total": total_crisis, "improved": improved_count, "worsened": worsened_count,
-                     "pct_worsened": round(worsened_count / total_crisis * 100, 1) if total_crisis else 0},
-        "reason": (f"Crisis stress test: {worsened_count}/{total_crisis} windows worsened. {'PASS' if approved else 'FAIL'}"),
+        "summary": {
+            "total": total_crisis,
+            "improved": improved_count,
+            "worsened": worsened_count,
+            "pct_worsened": round(worsened_count / total_crisis * 100, 1) if total_crisis else 0,
+        },
+        "reason": (
+            f"Crisis stress test: {worsened_count}/{total_crisis} windows worsened. {'PASS' if approved else 'FAIL'}"
+        ),
     }
 
 
 # ══════════════════════════════════════════
 # TIER 1+2: History backtest with OOS + crisis + alpha
 # ══════════════════════════════════════════
+
 
 def _compute_rsi(prices, period=14):
     if len(prices) < period + 1:
@@ -7092,6 +8545,7 @@ def backtest_with_history(pair, param, old_val, new_val, strategy=None, candles_
     """Enhanced historical backtest with OOS validation, crisis stress, regime classification, alpha."""
     import yfinance as yf
     from pathlib import Path
+
     symbol = _SYMBOLS.get(pair)
     if not symbol:
         return {"approved": True, "reason": f"No symbol for {pair}"}
@@ -7105,7 +8559,9 @@ def backtest_with_history(pair, param, old_val, new_val, strategy=None, candles_
                 for cf in candle_files[-30:]:
                     try:
                         data = json.loads(cf.read_text())
-                        prices_from_file = [float(p[1]) for p in data if len(p) >= 2 and str(p[1]) != "nan"]
+                        prices_from_file = [
+                            float(p[1]) for p in data if len(p) >= 2 and str(p[1]) != "nan"
+                        ]
                         all_prices.extend(prices_from_file)
                     except Exception:
                         continue
@@ -7126,13 +8582,23 @@ def backtest_with_history(pair, param, old_val, new_val, strategy=None, candles_
     use_prices = local_prices if local_prices else prices
     source = "local 5m candles" if local_prices else "yfinance daily"
     s = strategy or {}
+
     def _get(key, default):
         return s.get(key, default)
+
     old_params = {
-        "stop_loss_pct": float(old_val) if param == "stop_loss_pct" else float(_get("stop_loss_pct", 1.5)),
-        "profit_target_pct": float(old_val) if param == "profit_target_pct" else float(_get("profit_target_pct", 3.0)),
-        "trailing_stop_pct": float(old_val) if param == "trailing_stop_pct" else float(_get("trailing_stop_pct", 0.5)),
-        "time_exit_cycles": int(old_val) if param == "time_exit_cycles" else int(_get("time_exit_cycles", 360)),
+        "stop_loss_pct": float(old_val)
+        if param == "stop_loss_pct"
+        else float(_get("stop_loss_pct", 1.5)),
+        "profit_target_pct": float(old_val)
+        if param == "profit_target_pct"
+        else float(_get("profit_target_pct", 3.0)),
+        "trailing_stop_pct": float(old_val)
+        if param == "trailing_stop_pct"
+        else float(_get("trailing_stop_pct", 0.5)),
+        "time_exit_cycles": int(old_val)
+        if param == "time_exit_cycles"
+        else int(_get("time_exit_cycles", 360)),
     }
     new_params = dict(old_params)
     if param == "stop_loss_pct":
@@ -7151,6 +8617,7 @@ def backtest_with_history(pair, param, old_val, new_val, strategy=None, candles_
     if param in ("stop_loss_pct", "profit_target_pct"):
         try:
             from hermes_forex.crisis_learning import _load_crises
+
             all_crises = _load_crises()
             if all_crises:
                 rec_stops = []
@@ -7177,7 +8644,9 @@ def backtest_with_history(pair, param, old_val, new_val, strategy=None, candles_
         except Exception:
             pass
 
-    threshold = float(s.get("entry", {}).get("threshold") or s.get("entry", {}).get("mr_entry_rsi") or 40)
+    threshold = float(
+        s.get("entry", {}).get("threshold") or s.get("entry", {}).get("mr_entry_rsi") or 40
+    )
     strat_type = s.get("strategy_type", "mean_reversion")
 
     def sim(params):
@@ -7194,7 +8663,7 @@ def backtest_with_history(pair, param, old_val, new_val, strategy=None, candles_
                 ei, ep = open_trade
                 sl = ep * (1 - stop_p / 100)
                 tg = ep * (1 + target_p / 100)
-                pk = max(use_prices[ei:idx + 1])
+                pk = max(use_prices[ei : idx + 1])
                 ex = None
                 if trailing_p > 0:
                     tr = pk * (1 - trailing_p / 100)
@@ -7218,7 +8687,11 @@ def backtest_with_history(pair, param, old_val, new_val, strategy=None, candles_
             return {"total_pnl": 0, "wr": 0, "entries": 0}
         pnls_s = [t[0] for t in trades_data]
         wins = sum(1 for p in pnls_s if p > 0)
-        return {"total_pnl": sum(pnls_s), "wr": wins / len(trades_data) * 100, "entries": len(trades_data)}
+        return {
+            "total_pnl": sum(pnls_s),
+            "wr": wins / len(trades_data) * 100,
+            "entries": len(trades_data),
+        }
 
     old_result = sim(old_params)
     new_result = sim(new_params)
@@ -7264,11 +8737,15 @@ def backtest_with_history(pair, param, old_val, new_val, strategy=None, candles_
     if abs(alpha_est) > 0.1:
         reasons.append(f"alpha={alpha_est:+.2f}%")
     return {
-        "approved": approved, "old_pnl": round(old_pnl, 4), "new_pnl": round(new_pnl, 4),
-        "old_wr": round(old_result["wr"], 1), "new_wr": round(new_result["wr"], 1),
+        "approved": approved,
+        "old_pnl": round(old_pnl, 4),
+        "new_pnl": round(new_pnl, 4),
+        "old_wr": round(old_result["wr"], 1),
+        "new_wr": round(new_result["wr"], 1),
         "entries": old_result["entries"],
         "reason": " | ".join(reasons),
-        "regime": regime, "alpha_estimate": round(alpha_est, 4),
+        "regime": regime,
+        "alpha_estimate": round(alpha_est, 4),
         "oos_validated": oos_approved,
         "crisis_check": crisis_result,
         "crisis_db_warning": crisis_warning.strip(),
@@ -7280,10 +8757,13 @@ def backtest_with_history(pair, param, old_val, new_val, strategy=None, candles_
 # TIER 2: Alpha decomposition + correlation risk
 # ══════════════════════════════════════════
 
+
 def alpha_decomposition(trade, candles):
     """Decompose a trade's PnL into luck (market move) vs skill (alpha)."""
     entry = trade.get("entry_price", 0)
-    exit_price = trade.get("exit_price") or (candles[-1][1] if candles and isinstance(candles[-1], (list, tuple)) else 0)
+    exit_price = trade.get("exit_price") or (
+        candles[-1][1] if candles and isinstance(candles[-1], (list, tuple)) else 0
+    )
     if entry <= 0 or exit_price <= 0:
         return {"market_move_pct": 0, "alpha_pct": 0, "skill_rating": "neutral"}
     trade_pnl = (exit_price - entry) / entry * 100
@@ -7297,7 +8777,11 @@ def alpha_decomposition(trade, candles):
         rating = "neutral"
     else:
         rating = "negative_alpha"
-    return {"market_move_pct": round(market_move, 4), "alpha_pct": round(alpha, 4), "skill_rating": rating}
+    return {
+        "market_move_pct": round(market_move, 4),
+        "alpha_pct": round(alpha, 4),
+        "skill_rating": rating,
+    }
 
 
 def correlation_risk(suggestions):
@@ -7312,7 +8796,8 @@ def correlation_risk(suggestions):
             groups_at_risk.append("+".join(sorted(overlap)))
     if groups_at_risk:
         return {
-            "risk_flag": True, "groups_at_risk": groups_at_risk,
+            "risk_flag": True,
+            "groups_at_risk": groups_at_risk,
             "detail": f"Correlation risk: simultaneous changes to {', '.join(groups_at_risk)}.",
         }
     return {"risk_flag": False, "groups_at_risk": [], "detail": "No correlation risk"}
@@ -7321,6 +8806,7 @@ def correlation_risk(suggestions):
 # ══════════════════════════════════════════
 # TIER 3: Candle storage with timestamps
 # ══════════════════════════════════════════
+
 
 def save_candle_series(pair, trade_id, prices, candles_dir, timestamps=None):
     """Save price series with real timestamps when available."""
@@ -7332,7 +8818,9 @@ def save_candle_series(pair, trade_id, prices, candles_dir, timestamps=None):
         if timestamps and i < len(timestamps):
             ts_iso = timestamps[i]
         else:
-            ts = datetime.fromtimestamp(now_ts - (len(prices) - i) * 300, tz=timezone.utc).isoformat()
+            ts = datetime.fromtimestamp(
+                now_ts - (len(prices) - i) * 300, tz=timezone.utc
+            ).isoformat()
             ts_iso = ts
         candle_data.append([ts_iso, p])
     fname.write_text(json.dumps(candle_data))
@@ -7343,11 +8831,14 @@ def save_candle_series(pair, trade_id, prices, candles_dir, timestamps=None):
 # REPORTING
 # ══════════════════════════════════════════
 
+
 def generate_report(backtest_result):
     """Enhanced report with confidence, regime, alpha, crisis info."""
     s = backtest_result["stats"]
     lines = [
-        "=" * 60, "BACKTEST REPORT (Level 5)", "=" * 60,
+        "=" * 60,
+        "BACKTEST REPORT (Level 5)",
+        "=" * 60,
         f"Trades analyzed: {s['total']}",
         f"Improved: {s['improvements']} | Worsened: {s['worsenings']} | Unchanged: {s['unchanged']}",
         f"Avg PnL change: {s['avg_pnl_change']:+.4f}%",
@@ -7363,22 +8854,30 @@ def generate_report(backtest_result):
         lines.append("-" * 60)
         lines.append("REGIME BREAKDOWN:")
         for regime, bd in sorted(regime_bd.items()):
-            lines.append(f"  {regime}: {bd['trades']}t, avg {bd.get('avg_pnl_change',0):+.4f}%, {bd.get('improved',0)}I/{bd.get('worsened',0)}W")
+            lines.append(
+                f"  {regime}: {bd['trades']}t, avg {bd.get('avg_pnl_change', 0):+.4f}%, {bd.get('improved', 0)}I/{bd.get('worsened', 0)}W"
+            )
     alpha = backtest_result.get("alpha_analysis", {})
     if alpha:
         lines.append("-" * 60)
-        lines.append(f"ALPHA: luck={alpha.get('avg_luck',0):+.4f}% skill={alpha.get('avg_skill',0):+.4f}% skilled={alpha.get('skilled_ratio',0)*100:.0f}%")
+        lines.append(
+            f"ALPHA: luck={alpha.get('avg_luck', 0):+.4f}% skill={alpha.get('avg_skill', 0):+.4f}% skilled={alpha.get('skilled_ratio', 0) * 100:.0f}%"
+        )
     crisis = backtest_result.get("crisis_check", {})
     if crisis and crisis.get("crisis_results"):
         lines.append("-" * 60)
-        lines.append(f"CRISIS: {crisis.get('summary',{}).get('total',0)} windows")
+        lines.append(f"CRISIS: {crisis.get('summary', {}).get('total', 0)} windows")
         for cr in crisis.get("crisis_results", []):
             icon = "X" if cr.get("worsened") else "OK" if cr.get("improved") else "="
-            lines.append(f"  {icon} {cr['crisis']}: {cr.get('old_pnl',0):+.2f}% -> {cr.get('new_pnl',0):+.2f}%")
+            lines.append(
+                f"  {icon} {cr['crisis']}: {cr.get('old_pnl', 0):+.2f}% -> {cr.get('new_pnl', 0):+.2f}%"
+            )
     lines.append("-" * 60)
     for r in backtest_result["results"][:10]:
         icon = "+" if r["improved"] else "-" if r["worsened"] else "="
-        lines.append(f"  {icon} {r.get('pair','?')} {r.get('trade_id','?')[:12]}... PnL: {r['old_pnl']:+.3f}% -> {r['new_pnl']:+.3f}% DD {r.get('old_dd',0):.1f}->{r.get('new_dd',0):.1f}% a {r.get('old_alpha',0):+.1f}->{r.get('new_alpha',0):+.1f}%")
+        lines.append(
+            f"  {icon} {r.get('pair', '?')} {r.get('trade_id', '?')[:12]}... PnL: {r['old_pnl']:+.3f}% -> {r['new_pnl']:+.3f}% DD {r.get('old_dd', 0):.1f}->{r.get('new_dd', 0):.1f}% a {r.get('old_alpha', 0):+.1f}->{r.get('new_alpha', 0):+.1f}%"
+        )
     return "\n".join(lines)
 
 
@@ -7391,8 +8890,14 @@ ENTRY_BLOCKS = {
     "bb_upper_touch": {"desc": "Price touches/crosses above upper BB", "params": {"bb_std": 2.0}},
     "rsi_below": {"desc": "RSI below threshold", "params": {"rsi_threshold": 40}},
     "rsi_above": {"desc": "RSI above threshold", "params": {"rsi_threshold": 60}},
-    "sma_crossover": {"desc": "Short SMA crosses above long SMA", "params": {"short_period": 20, "long_period": 50}},
-    "sma_crossunder": {"desc": "Short SMA crosses below long SMA", "params": {"short_period": 20, "long_period": 50}},
+    "sma_crossover": {
+        "desc": "Short SMA crosses above long SMA",
+        "params": {"short_period": 20, "long_period": 50},
+    },
+    "sma_crossunder": {
+        "desc": "Short SMA crosses below long SMA",
+        "params": {"short_period": 20, "long_period": 50},
+    },
     "price_above_sma": {"desc": "Price above SMA", "params": {"sma_period": 50}},
     "price_below_sma": {"desc": "Price below SMA", "params": {"sma_period": 50}},
 }
@@ -7402,14 +8907,26 @@ EXIT_BLOCKS = {
     "trailing_stop": {"desc": "Trailing stop from peak", "params": {"trail_pct": 0.5}},
     "profit_target": {"desc": "Fixed percentage profit target", "params": {"pct": 3.0}},
     "time_exit": {"desc": "Exit after N cycles", "params": {"cycles": 360}},
-    "breakeven_stop": {"desc": "Move stop to breakeven after profit threshold", "params": {"trigger_pct": 0.5}},
+    "breakeven_stop": {
+        "desc": "Move stop to breakeven after profit threshold",
+        "params": {"trigger_pct": 0.5},
+    },
 }
 FILTER_BLOCKS = {
-    "session_filter": {"desc": "Only trade during specified session", "params": {"session": "london_only"}},
+    "session_filter": {
+        "desc": "Only trade during specified session",
+        "params": {"session": "london_only"},
+    },
     "regime_filter": {"desc": "Only trade in specified regime", "params": {"regime": "bull_only"}},
     "adx_filter": {"desc": "Only trade when ADX above threshold", "params": {"adx_threshold": 15}},
-    "vol_filter": {"desc": "Only trade when ATR within range", "params": {"vol_min": 0.02, "vol_max": 0.15}},
-    "consec_loss_cooldown": {"desc": "Skip N entries after consecutive losses", "params": {"max_consecutive": 2, "cooldown": 3}},
+    "vol_filter": {
+        "desc": "Only trade when ATR within range",
+        "params": {"vol_min": 0.02, "vol_max": 0.15},
+    },
+    "consec_loss_cooldown": {
+        "desc": "Skip N entries after consecutive losses",
+        "params": {"max_consecutive": 2, "cooldown": 3},
+    },
 }
 
 _ENTRY_NAMES = list(ENTRY_BLOCKS.keys())
@@ -7441,6 +8958,7 @@ def _check_session(session_filter_val, utc_hour):
 # TIER 3: Custom strategy simulation (FIXED bugs)
 # ══════════════════════════════════════════
 
+
 def simulate_custom_strategy(prices, strategy_def):
     """Custom strategy simulation. All previously identified bugs fixed."""
     trades = []
@@ -7466,7 +8984,7 @@ def simulate_custom_strategy(prices, strategy_def):
             ei, ep = open_trade
             sl = ep * (1 - stop_pct / 100)
             tg = ep * (1 + target_pct / 100)
-            pk = max(prices[ei:i + 1])
+            pk = max(prices[ei : i + 1])
             tr = pk * (1 - trail_pct / 100)
             use_sl = sl
             if be_trigger > 0:
@@ -7512,19 +9030,27 @@ def simulate_custom_strategy(prices, strategy_def):
                 if len(prices) >= long_p + 1:
                     sma_short_now = compute_sma(hist, short_p)
                     sma_long_now = compute_sma(hist, long_p)
-                    sma_short_prev = compute_sma(prices[:i - 1], short_p)
-                    sma_long_prev = compute_sma(prices[:i - 1], long_p)
-                    signals[block] = sma_short_prev <= sma_long_prev and sma_short_now > sma_long_now
+                    sma_short_prev = compute_sma(prices[: i - 1], short_p)
+                    sma_long_prev = compute_sma(prices[: i - 1], long_p)
+                    signals[block] = (
+                        sma_short_prev <= sma_long_prev and sma_short_now > sma_long_now
+                    )
             elif block == "sma_crossunder":
                 short_p = int(entry_params.get("short_period", 20))
                 long_p = int(entry_params.get("long_period", 50))
                 if len(prices) >= long_p + 1:
                     sma_short_now = compute_sma(hist, short_p)
                     sma_long_now = compute_sma(hist, long_p)
-                    sma_short_prev = compute_sma(prices[:i - 1], short_p)
-                    sma_long_prev = compute_sma(prices[:i - 1], long_p)
-                    signals[block] = sma_short_prev >= sma_long_prev and sma_short_now < sma_long_now
-        should_enter = (all(signals.values()) if entry_logic == "and" else any(signals.values())) if signals else False
+                    sma_short_prev = compute_sma(prices[: i - 1], short_p)
+                    sma_long_prev = compute_sma(prices[: i - 1], long_p)
+                    signals[block] = (
+                        sma_short_prev >= sma_long_prev and sma_short_now < sma_long_now
+                    )
+        should_enter = (
+            (all(signals.values()) if entry_logic == "and" else any(signals.values()))
+            if signals
+            else False
+        )
         filters = strategy_def.get("filters", {})
         if should_enter and filters.get("session"):
             utc_hour = datetime.now(timezone.utc).hour
@@ -7532,15 +9058,27 @@ def simulate_custom_strategy(prices, strategy_def):
         if should_enter:
             open_trade = (i, price)
     if not trades:
-        return {"total_pnl": 0, "wr": 0, "entries": 0, "max_dd": 0, "exit_reasons": {}, "trades": []}
+        return {
+            "total_pnl": 0,
+            "wr": 0,
+            "entries": 0,
+            "max_dd": 0,
+            "exit_reasons": {},
+            "trades": [],
+        }
     pnl_list = [t["pnl"] for t in trades]
     wins = sum(1 for p in pnl_list if p > 0)
     reasons = {}
     for t in trades:
         reasons[t["exit_reason"]] = reasons.get(t["exit_reason"], 0) + 1
-    return {"total_pnl": sum(pnl_list), "wr": wins / len(trades) * 100 if trades else 0,
-            "entries": len(trades), "max_dd": min(0, min(pnl_list)) if pnl_list else 0,
-            "exit_reasons": reasons, "trades": trades}
+    return {
+        "total_pnl": sum(pnl_list),
+        "wr": wins / len(trades) * 100 if trades else 0,
+        "entries": len(trades),
+        "max_dd": min(0, min(pnl_list)) if pnl_list else 0,
+        "exit_reasons": reasons,
+        "trades": trades,
+    }
 
 
 BACKTEST_LIMIT = 100
@@ -7551,6 +9089,7 @@ BACKTEST_LIMIT = 100
 # ══════════════════════════════════════════
 
 import random as _random_lib
+
 _rng_inst = _random_lib.Random(EVOLUTION_SEED)
 _MUTATION_STATS = {}
 
@@ -7588,7 +9127,9 @@ def mutate_strategy(strategy_def):
         ec = s.get("exit", {})
         p = _rng_inst.choice(["stop_pct", "target_pct", "trail_pct", "time_exit"])
         cur = float(ec.get(p, 2.0))
-        new_val = max(0.3, min(20.0, cur + cur * _rng_inst.uniform(0.1, 0.4) * _rng_inst.choice([-1, 1])))
+        new_val = max(
+            0.3, min(20.0, cur + cur * _rng_inst.uniform(0.1, 0.4) * _rng_inst.choice([-1, 1]))
+        )
         if p == "time_exit":
             new_val = max(60, min(2880, round(new_val)))
         ec[p] = round(new_val, 2) if p != "time_exit" else int(new_val)
@@ -7598,7 +9139,12 @@ def mutate_strategy(strategy_def):
         if ep:
             p = _rng_inst.choice(list(ep.keys()))
             cur = float(ep[p])
-            ep[p] = round(max(5, min(95, cur + cur * _rng_inst.uniform(0.1, 0.3) * _rng_inst.choice([-1, 1]))), 1)
+            ep[p] = round(
+                max(
+                    5, min(95, cur + cur * _rng_inst.uniform(0.1, 0.3) * _rng_inst.choice([-1, 1]))
+                ),
+                1,
+            )
     elif mutation == "logic":
         s["entry"]["logic"] = "or" if s["entry"].get("logic", "and") == "and" else "and"
     elif mutation == "filter":
@@ -7651,9 +9197,16 @@ def evolve_strategy_crossover(parents, prices):
     if r["entries"] >= 3:
         pnl, wr = r["total_pnl"], r["wr"] / 100.0
         score = pnl * wr * (r["entries"] ** 0.3) if pnl > 0 else pnl * 0.1
-        candidates.append({"strategy_def": child, "score": round(score, 4),
-                           "pnl": round(pnl, 4), "wr": round(r["wr"], 1),
-                           "entries": r["entries"], "max_dd": round(r.get("max_dd", 0), 4)})
+        candidates.append(
+            {
+                "strategy_def": child,
+                "score": round(score, 4),
+                "pnl": round(pnl, 4),
+                "wr": round(r["wr"], 1),
+                "entries": r["entries"],
+                "max_dd": round(r.get("max_dd", 0), 4),
+            }
+        )
     candidates.sort(key=lambda x: x["score"], reverse=True)
     return candidates[:3]
 
@@ -7662,8 +9215,11 @@ def evolve_strategy(base_strategy, prices, n_variants=20, top_k=3):
     """Generate N mutated variants, backtest each, return top K. Enhanced with crossover + bias."""
     candidates = []
     baseline = simulate_custom_strategy(prices, base_strategy)
-    baseline_score = (baseline["total_pnl"] * (baseline["wr"] / 100.0) * (baseline["entries"] ** 0.3)
-                      if baseline["total_pnl"] > 0 else baseline["total_pnl"] * 0.1)
+    baseline_score = (
+        baseline["total_pnl"] * (baseline["wr"] / 100.0) * (baseline["entries"] ** 0.3)
+        if baseline["total_pnl"] > 0
+        else baseline["total_pnl"] * 0.1
+    )
     for _ in range(n_variants):
         variant = mutate_strategy(base_strategy)
         r = simulate_custom_strategy(prices, variant)
@@ -7671,19 +9227,35 @@ def evolve_strategy(base_strategy, prices, n_variants=20, top_k=3):
             continue
         pnl, wr = r["total_pnl"], r["wr"] / 100.0
         score = pnl * wr * (r["entries"] ** 0.3) if pnl > 0 else pnl * 0.1
-        candidates.append({"strategy_def": variant, "score": round(score, 4),
-                           "pnl": round(pnl, 4), "wr": round(r["wr"], 1),
-                           "entries": r["entries"], "max_dd": round(r.get("max_dd", 0), 4)})
+        candidates.append(
+            {
+                "strategy_def": variant,
+                "score": round(score, 4),
+                "pnl": round(pnl, 4),
+                "wr": round(r["wr"], 1),
+                "entries": r["entries"],
+                "max_dd": round(r.get("max_dd", 0), 4),
+            }
+        )
     candidates.sort(key=lambda x: x["score"], reverse=True)
     if len(candidates) >= 2:
-        child_union = _crossover_strategies(candidates[0]["strategy_def"], candidates[1]["strategy_def"])
+        child_union = _crossover_strategies(
+            candidates[0]["strategy_def"], candidates[1]["strategy_def"]
+        )
         r = simulate_custom_strategy(prices, child_union)
         if r["entries"] >= 3:
             pnl, wr = r["total_pnl"], r["wr"] / 100.0
             score = pnl * wr * (r["entries"] ** 0.3) if pnl > 0 else pnl * 0.1
-            candidates.append({"strategy_def": child_union, "score": round(score, 4),
-                               "pnl": round(pnl, 4), "wr": round(r["wr"], 1),
-                               "entries": r["entries"], "max_dd": round(r.get("max_dd", 0), 4)})
+            candidates.append(
+                {
+                    "strategy_def": child_union,
+                    "score": round(score, 4),
+                    "pnl": round(pnl, 4),
+                    "wr": round(r["wr"], 1),
+                    "entries": r["entries"],
+                    "max_dd": round(r.get("max_dd", 0), 4),
+                }
+            )
     candidates.sort(key=lambda x: x["score"], reverse=True)
     return candidates[:top_k]
 
@@ -7711,6 +9283,7 @@ def register_new_block(block_name, block_type, description, params):
 if __name__ == "__main__":
     import argparse, sys, json
     from pathlib import Path
+
     parser = argparse.ArgumentParser(description="Hermes backtesting engine (Level 5)")
     parser.add_argument("--pair", required=True, help="Pair to analyze")
     parser.add_argument("--trades-file", help="Path to trades.jsonl (default: state/trades.jsonl)")
@@ -7722,7 +9295,12 @@ if __name__ == "__main__":
     parser.add_argument("--verbose", "-v", action="store_true", help="Show per-trade details")
     parser.add_argument("--crisis", action="store_true", help="Run crisis stress test")
     args = parser.parse_args()
-    if not (args.proposed_stop or args.proposed_target or args.proposed_trailing or args.proposed_time_exit):
+    if not (
+        args.proposed_stop
+        or args.proposed_target
+        or args.proposed_trailing
+        or args.proposed_time_exit
+    ):
         print("ERROR: Specify at least one --proposed-* parameter")
         sys.exit(1)
     pair = args.pair
@@ -7743,8 +9321,12 @@ if __name__ == "__main__":
     latest = pair_trades[-1]
     current_stop = latest.get("_old_stop", latest.get("stop_loss_pct") or 2.0)
     current_target = latest.get("_old_target", latest.get("profit_target_pct") or 5.0)
-    old = {"stop_loss_pct": float(current_stop), "profit_target_pct": float(current_target),
-           "trailing_stop_pct": 0.5, "time_exit_cycles": 360}
+    old = {
+        "stop_loss_pct": float(current_stop),
+        "profit_target_pct": float(current_target),
+        "trailing_stop_pct": 0.5,
+        "time_exit_cycles": 360,
+    }
     new = dict(old)
     if args.proposed_stop:
         new["stop_loss_pct"] = args.proposed_stop
@@ -7768,16 +9350,23 @@ if __name__ == "__main__":
         if crisis_result.get("crisis_results"):
             for cr in crisis_result["crisis_results"]:
                 icon = "X" if cr.get("worsened") else "OK" if cr.get("improved") else "="
-                print(f"  {icon} {cr['crisis']}: {cr.get('old_pnl',0):+.2f}% -> {cr.get('new_pnl',0):+.2f}% (WR {cr.get('old_wr',0):.0f}% -> {cr.get('new_wr',0):.0f}%)")
-        print(f"  Verdict: {'PASS' if crisis_result.get('approved', True) else 'FAIL'} ({crisis_result.get('summary',{}).get('worsened',0)}/{crisis_result.get('summary',{}).get('total',0)} windows worsened)")
+                print(
+                    f"  {icon} {cr['crisis']}: {cr.get('old_pnl', 0):+.2f}% -> {cr.get('new_pnl', 0):+.2f}% (WR {cr.get('old_wr', 0):.0f}% -> {cr.get('new_wr', 0):.0f}%)"
+                )
+        print(
+            f"  Verdict: {'PASS' if crisis_result.get('approved', True) else 'FAIL'} ({crisis_result.get('summary', {}).get('worsened', 0)}/{crisis_result.get('summary', {}).get('total', 0)} windows worsened)"
+        )
     if args.verbose and result["results"]:
         print("\nPer-trade details:")
         for r in result["results"]:
-            print(f"  {r['trade_id'][:16]} {r['old_exit']:>12} {r['old_pnl']:+.3f}% -> {r['new_exit']:>12} {r['new_pnl']:+.3f}% (D{r['pnl_change']:+.3f}%) a={r.get('new_alpha',0):+.3f}%")
+            print(
+                f"  {r['trade_id'][:16]} {r['old_exit']:>12} {r['old_pnl']:+.3f}% -> {r['new_exit']:>12} {r['new_pnl']:+.3f}% (D{r['pnl_change']:+.3f}%) a={r.get('new_alpha', 0):+.3f}%"
+            )
 
 
 # ── Symbolic Discovery Engine: evolutionary search for novel indicators ──
 import math, random as _rand
+
 _rand.seed(42)
 
 _PRIMITIVES = {
@@ -7792,6 +9381,7 @@ _PRIMITIVES = {
     "square": lambda a, _: a * a,
 }
 
+
 def _random_expr(depth=0, max_depth=4):
     _TERMINALS = list(_FEATURE_KEYS)  # All macro keys from shared data
     if depth >= max_depth or (depth > 0 and _rand.random() < 0.4):
@@ -7805,13 +9395,20 @@ def _random_expr(depth=0, max_depth=4):
                     return name
         # Fallback: uniform
         return _rand.choice(_TERMINALS)
-    op = _rand.choice(list(_PRIMITIVES.keys()) + ["ema", "highest", "lowest", "lag", "stddev", "sma_diff"])
+    op = _rand.choice(
+        list(_PRIMITIVES.keys()) + ["ema", "highest", "lowest", "lag", "stddev", "sma_diff"]
+    )
     _WINDOW_OPS = {"ema", "highest", "lowest", "lag", "stddev", "sma_diff"}
     if op in _WINDOW_OPS:
         period = int(_rand.choice([5, 7, 10, 14, 20, 21, 30, 50]))
-        return [op, _random_expr(depth+1, max_depth), period]
+        return [op, _random_expr(depth + 1, max_depth), period]
     arity = 2 if op in ("+", "-", "*", "/") else 1
-    return [op, _random_expr(depth+1, max_depth), _random_expr(depth+1, max_depth)] if arity == 2 else [op, _random_expr(depth+1, max_depth), 0]
+    return (
+        [op, _random_expr(depth + 1, max_depth), _random_expr(depth + 1, max_depth)]
+        if arity == 2
+        else [op, _random_expr(depth + 1, max_depth), 0]
+    )
+
 
 def _eval_expr(expr, data):
     """Evaluate expression tree against data. data is a flat list (prices, backward compat)
@@ -7820,16 +9417,18 @@ def _eval_expr(expr, data):
     if isinstance(data, dict):
         length = len(data.get("close", []))
     else:
-        length = len(data) if hasattr(data, '__len__') else 0
+        length = len(data) if hasattr(data, "__len__") else 0
 
-    if isinstance(expr, (int, float)): return [float(expr)] * max(length, 1)
+    if isinstance(expr, (int, float)):
+        return [float(expr)] * max(length, 1)
     if isinstance(expr, str):
         if isinstance(data, dict) and expr in data:
             return list(data[expr])
         if expr == "close":
             return list(data) if not isinstance(data, dict) else [0.0] * max(length, 1)
         return [float(expr)] * max(length, 1)
-    if not isinstance(expr, list) or len(expr) < 2: return [0.0] * max(length, 1)
+    if not isinstance(expr, list) or len(expr) < 2:
+        return [0.0] * max(length, 1)
     op, a1 = expr[0], expr[1]
     a2 = expr[2] if len(expr) > 2 else 0
     v1 = _eval_expr(a1, data)
@@ -7837,8 +9436,13 @@ def _eval_expr(expr, data):
         data_for_v2 = data
     else:
         data_for_v2 = data
-    v2 = _eval_expr(a2, data_for_v2) if isinstance(a2, (list, str, int, float)) else [0.0]*max(length, 1)
-    if not isinstance(v2, list): v2 = [float(v2)] * len(v1)
+    v2 = (
+        _eval_expr(a2, data_for_v2)
+        if isinstance(a2, (list, str, int, float))
+        else [0.0] * max(length, 1)
+    )
+    if not isinstance(v2, list):
+        v2 = [float(v2)] * len(v1)
     # Ensure same length
     min_len = min(len(v1), len(v2))
     # returns: compute from the close prices, not from evaluated args
@@ -7847,110 +9451,153 @@ def _eval_expr(expr, data):
             closes = data.get("close", [])
         else:
             closes = data
-        return [((closes[i]/closes[i-1]) - 1) * 100 if i > 0 else 0 for i in range(len(closes))]
+        return [((closes[i] / closes[i - 1]) - 1) * 100 if i > 0 else 0 for i in range(len(closes))]
     # Window-based operators: a2 encodes the period/lag parameter
     if op == "ema":
         period = max(2, int(v2[-1] if isinstance(v2, list) else v2))
         result, mult = [], 2.0 / (period + 1)
         for i in range(len(v1)):
-            if i == 0: result.append(v1[0])
-            else: result.append(v1[i] * mult + result[-1] * (1 - mult))
+            if i == 0:
+                result.append(v1[0])
+            else:
+                result.append(v1[i] * mult + result[-1] * (1 - mult))
         return result
     if op == "highest":
         period = max(2, int(v2[-1] if isinstance(v2, list) else v2))
-        return [max(v1[max(0, i-period+1):i+1]) for i in range(len(v1))]
+        return [max(v1[max(0, i - period + 1) : i + 1]) for i in range(len(v1))]
     if op == "lowest":
         period = max(2, int(v2[-1] if isinstance(v2, list) else v2))
-        return [min(v1[max(0, i-period+1):i+1]) for i in range(len(v1))]
+        return [min(v1[max(0, i - period + 1) : i + 1]) for i in range(len(v1))]
     if op == "lag":
         n = max(1, int(v2[-1] if isinstance(v2, list) else v2))
-        return [v1[i-n] if i >= n else v1[0] for i in range(len(v1))]
+        return [v1[i - n] if i >= n else v1[0] for i in range(len(v1))]
     if op == "stddev":
         period = max(2, int(v2[-1] if isinstance(v2, list) else v2))
         result = []
         for i in range(len(v1)):
-            window = v1[max(0, i-period+1):i+1]
+            window = v1[max(0, i - period + 1) : i + 1]
             avg = sum(window) / len(window)
-            result.append(math.sqrt(sum((x-avg)**2 for x in window)/len(window)))
+            result.append(math.sqrt(sum((x - avg) ** 2 for x in window) / len(window)))
         return result
     if op == "sma_diff":
         fast = max(2, int(v2[-1] if isinstance(v2, list) else v2))
-        slow = max(fast+1, int(v2[-1] if isinstance(v2, list) else v2) + 5)
-        fma = [sum(v1[max(0,i-fast+1):i+1])/min(i+1,fast) for i in range(len(v1))]
-        sma = [sum(v1[max(0,i-slow+1):i+1])/min(i+1,slow) for i in range(len(v1))]
+        slow = max(fast + 1, int(v2[-1] if isinstance(v2, list) else v2) + 5)
+        fma = [sum(v1[max(0, i - fast + 1) : i + 1]) / min(i + 1, fast) for i in range(len(v1))]
+        sma = [sum(v1[max(0, i - slow + 1) : i + 1]) / min(i + 1, slow) for i in range(len(v1))]
         return [fma[i] - sma[i] for i in range(len(v1))]
-    if op in _PRIMITIVES: return [_PRIMITIVES[op](v1[i], v2[i] if isinstance(v2, list) and i < len(v2) else 0) for i in range(len(v1))]
+    if op in _PRIMITIVES:
+        return [
+            _PRIMITIVES[op](v1[i], v2[i] if isinstance(v2, list) and i < len(v2) else 0)
+            for i in range(len(v1))
+        ]
     return [0.0] * len(v1)
+
 
 def _signal_to_trades(signal, prices, thresh=0.5):
     mean = sum(signal) / len(signal)
     std = (max(signal) - min(signal)) / 2 if max(signal) != min(signal) else 1
     norm = [(x - mean) / max(std, 0.001) for x in signal]
-    u, l = thresh, -thresh; pnls, pos = [], None
+    u, l = thresh, -thresh
+    pnls, pos = [], None
     for i in range(1, len(norm)):
         if pos is None:
-            if norm[i] > u and norm[i-1] <= u: pos = prices[i]
-            elif norm[i] < l and norm[i-1] >= l: pos = prices[i]
+            if norm[i] > u and norm[i - 1] <= u:
+                pos = prices[i]
+            elif norm[i] < l and norm[i - 1] >= l:
+                pos = prices[i]
         else:
             ret = (prices[i] - pos) / pos * 100
-            if abs(norm[i]) < 0.3: pnls.append(ret); pos = None
-            elif i == len(norm)-1: pnls.append(ret)
+            if abs(norm[i]) < 0.3:
+                pnls.append(ret)
+                pos = None
+            elif i == len(norm) - 1:
+                pnls.append(ret)
     return pnls
 
+
 def _count_nodes(expr):
-    if not isinstance(expr, list): return 1
-    return 1 + sum(_count_nodes(a) for a in expr[1:] if isinstance(a, (list, str, int, float)) and not isinstance(a, str))
+    if not isinstance(expr, list):
+        return 1
+    return 1 + sum(
+        _count_nodes(a)
+        for a in expr[1:]
+        if isinstance(a, (list, str, int, float)) and not isinstance(a, str)
+    )
+
 
 def _get_nodes(expr, depth=0):
     nodes = [(expr, depth)]
     if isinstance(expr, list):
         for a in expr[1:]:
-            if isinstance(a, list): nodes.extend(_get_nodes(a, depth+1))
+            if isinstance(a, list):
+                nodes.extend(_get_nodes(a, depth + 1))
     return nodes
 
+
 def _replace_node(tree, tgt, repl):
-    if tree is tgt: return
+    if tree is tgt:
+        return
     if isinstance(tree, list):
         for i, a in enumerate(tree[1:]):
-            if a is tgt: tree[i+1] = repl; return
-            if isinstance(a, list): _replace_node(a, tgt, repl)
+            if a is tgt:
+                tree[i + 1] = repl
+                return
+            if isinstance(a, list):
+                _replace_node(a, tgt, repl)
+
 
 def _crossover(e1, e2):
     import copy
+
     e1 = copy.deepcopy(e1)
     n1, n2 = _get_nodes(e1), _get_nodes(e2)
-    if n1 and n2: _replace_node(e1, _rand.choice(n1), copy.deepcopy(_rand.choice(n2)))
+    if n1 and n2:
+        _replace_node(e1, _rand.choice(n1), copy.deepcopy(_rand.choice(n2)))
     return e1
+
 
 def _mutate(expr):
     nodes = _get_nodes(expr)
     if nodes:
         import copy
+
         e = copy.deepcopy(expr)
         _replace_node(e, _rand.choice(nodes), _random_expr(depth=_rand.randint(0, 3)))
         return e
     return _random_expr()
 
+
 def _expr_to_str(expr):
-    if not isinstance(expr, list): return str(expr)
-    if expr[0] == "returns": return "returns"
-    op = expr[0]; a1 = _expr_to_str(expr[1]); a2 = _expr_to_str(expr[2]) if len(expr) > 2 else ""
-    if op in ("+", "-", "*", "/"): return f"({a1} {op} {a2})"
+    if not isinstance(expr, list):
+        return str(expr)
+    if expr[0] == "returns":
+        return "returns"
+    op = expr[0]
+    a1 = _expr_to_str(expr[1])
+    a2 = _expr_to_str(expr[2]) if len(expr) > 2 else ""
+    if op in ("+", "-", "*", "/"):
+        return f"({a1} {op} {a2})"
     return f"{op}({a1})"
 
+
 def discover_indicator(price_series=None, population=100, generations=15, top_k=3, pair=None):
-    '''Evolve novel mathematical indicators via genetic programming.
+    """Evolve novel mathematical indicators via genetic programming.
     Multi-dimensional: uses close, volume, DXY, VIX, TNX for richer pattern discovery.
-    Tests multiple timeframes and returns the best across all.'''
-    
+    Tests multiple timeframes and returns the best across all."""
+
     def _fetch_multi(pair, interval, period, label):
         import yfinance as yf
+
         sym = _SYMBOLS.get(pair)
         if not sym:
-            print(f"[DISCOVER] WARNING: No yfinance symbol for {pair}, skipping {label} {interval}", flush=True)
+            print(
+                f"[DISCOVER] WARNING: No yfinance symbol for {pair}, skipping {label} {interval}",
+                flush=True,
+            )
             return None
         df = yf.download(sym, period=period, interval=interval, progress=False)
-        if df.empty: return None
+        if df.empty:
+            return None
         data = {}
         data["close"] = [float(x) for x in df["Close"].values.flatten() if str(x) != "nan"]
         if "Volume" in df.columns:
@@ -7963,7 +9610,9 @@ def discover_indicator(price_series=None, population=100, generations=15, top_k=
                 mdf = yf.download(msym, period=period, interval=interval, progress=False)
                 if not mdf.empty:
                     vals = [float(x) for x in mdf["Close"].values.flatten() if str(x) != "nan"]
-                    data[mkey] = (vals[:len(data["close"])] + [vals[-1]] * max(0, len(data["close"]) - len(vals)))
+                    data[mkey] = vals[: len(data["close"])] + [vals[-1]] * max(
+                        0, len(data["close"]) - len(vals)
+                    )
             except Exception:
                 pass
         # Fill missing keys
@@ -7975,16 +9624,20 @@ def discover_indicator(price_series=None, population=100, generations=15, top_k=
             idx = df.index
             base = idx[0]
             # hour: 0-23, normalized 0-1
-            data["hour"] = [(t.hour + t.minute/60)/24 for t in idx]
+            data["hour"] = [(t.hour + t.minute / 60) / 24 for t in idx]
             # day: 0=Monday..4=Friday, normalized 0-1
-            data["day"] = [t.dayofweek/4 for t in idx]
+            data["day"] = [t.dayofweek / 4 for t in idx]
         except Exception:
-            data["hour"] = [(i % 288)/288 for i in range(len(data["close"]))]
-            data["day"] = [((i // 288) % 5)/4 for i in range(len(data["close"]))]
-        if len(data["close"]) < 400: return None
-        print(f"[DISCOVER] {label} ({len(data['close'])} candles, {[k for k,v in data.items() if len(v)==len(data['close'])]}) for {pair}", flush=True)
+            data["hour"] = [(i % 288) / 288 for i in range(len(data["close"]))]
+            data["day"] = [((i // 288) % 5) / 4 for i in range(len(data["close"]))]
+        if len(data["close"]) < 400:
+            return None
+        print(
+            f"[DISCOVER] {label} ({len(data['close'])} candles, {[k for k, v in data.items() if len(v) == len(data['close'])]}) for {pair}",
+            flush=True,
+        )
         return data
-    
+
     def _evolve_multi(data, pop_sz, gens, k):
         prices = data["close"]
         split = int(len(prices) * 0.6)
@@ -7996,20 +9649,28 @@ def discover_indicator(price_series=None, population=100, generations=15, top_k=
             for expr in pop:
                 try:
                     sig = _eval_expr(expr, train)
-                    pnls = _signal_to_trades(sig, train["close"], thresh=0.3 + gen*0.02)
-                    if len(pnls) < 3: scores.append((-999, expr, [])); continue
-                    tp = sum(pnls); wr = sum(1 for p in pnls if p>0)/len(pnls)
-                    fit = tp * wr * (len(pnls)**0.3)
+                    pnls = _signal_to_trades(sig, train["close"], thresh=0.3 + gen * 0.02)
+                    if len(pnls) < 3:
+                        scores.append((-999, expr, []))
+                        continue
+                    tp = sum(pnls)
+                    wr = sum(1 for p in pnls if p > 0) / len(pnls)
+                    fit = tp * wr * (len(pnls) ** 0.3)
                     scores.append((fit, expr, pnls))
                 except Exception:
                     scores.append((-999, expr, []))
             scores.sort(key=lambda x: x[0], reverse=True)
-            if gen == gens-1: break
+            if gen == gens - 1:
+                break
             keep = max(15, pop_sz // 4)
             surv = [s[1] for s in scores[:keep]]
             new_pop = list(surv)
             while len(new_pop) < pop_sz:
-                child = _crossover(_rand.choice(surv), _rand.choice(surv)) if _rand.random() < 0.7 and len(surv) >= 2 else _mutate(_rand.choice(surv))
+                child = (
+                    _crossover(_rand.choice(surv), _rand.choice(surv))
+                    if _rand.random() < 0.7 and len(surv) >= 2
+                    else _mutate(_rand.choice(surv))
+                )
                 new_pop.append(child)
             pop = new_pop
         final = []
@@ -8017,48 +9678,70 @@ def discover_indicator(price_series=None, population=100, generations=15, top_k=
             try:
                 sig = _eval_expr(expr, test)
                 pnls = _signal_to_trades(sig, test["close"], thresh=0.25)
-                if len(pnls) < 3: continue
-                tp = sum(pnls); wr = sum(1 for p in pnls if p>0)/len(pnls)
-                fit = tp * wr * (len(pnls)**0.3)
-                if fit > 0.05: final.append((expr, fit, tp, wr))
+                if len(pnls) < 3:
+                    continue
+                tp = sum(pnls)
+                wr = sum(1 for p in pnls if p > 0) / len(pnls)
+                fit = tp * wr * (len(pnls) ** 0.3)
+                if fit > 0.05:
+                    final.append((expr, fit, tp, wr))
             except Exception:
                 pass
         final.sort(key=lambda x: x[1], reverse=True)
         return final[:k]
-    
+
     # Backward compat: flat price_series
     if price_series is not None and len(price_series) >= 400:
-        return _evolve_multi({"close": list(price_series), "volume": [1.0]*len(price_series), "dxy": [0.0]*len(price_series), "vix": [0.0]*len(price_series), "tnx": [0.0]*len(price_series)}, population, generations, top_k)
-    
+        return _evolve_multi(
+            {
+                "close": list(price_series),
+                "volume": [1.0] * len(price_series),
+                "dxy": [0.0] * len(price_series),
+                "vix": [0.0] * len(price_series),
+                "tnx": [0.0] * len(price_series),
+            },
+            population,
+            generations,
+            top_k,
+        )
+
     if not pair:
         return []
-    
+
     from hermes_forex.backtest import TIMEFRAME_MAP, _MACRO_SYMBOLS, _FEATURE_KEYS
+
     mult = TIMEFRAME_MAP.get(pair, 1)
-    
+
     all_results = []
     try:
         md = _fetch_multi(pair, "1d", "3y", "daily")
-        if md: all_results.extend(_evolve_multi(md, population, generations, top_k))
+        if md:
+            all_results.extend(_evolve_multi(md, population, generations, top_k))
     except Exception as e:
         print(f"[DISCOVER] daily fetch failed: {e}", flush=True)
     if mult > 1:
         try:
             md = _fetch_multi(pair, "1wk", "5y", "weekly")
-            if md: all_results.extend(_evolve_multi(md, population, generations, top_k))
+            if md:
+                all_results.extend(_evolve_multi(md, population, generations, top_k))
         except Exception as e:
             print(f"[DISCOVER] weekly fetch failed: {e}", flush=True)
     try:
         md = _fetch_multi(pair, "1h", "1mo", "hourly")
-        if md: all_results.extend(_evolve_multi(md, population, generations, top_k))
+        if md:
+            all_results.extend(_evolve_multi(md, population, generations, top_k))
     except Exception as e:
         print(f"[DISCOVER] hourly fetch failed: {e}", flush=True)
     # 5-minute intraday: directly applicable to actual trading loop
     try:
         import yfinance as yf
+
         sym = _SYMBOLS.get(pair)
         if not sym:
-            print(f"[DISCOVER] WARNING: No yfinance symbol for {pair}, skipping 5m intraday", flush=True)
+            print(
+                f"[DISCOVER] WARNING: No yfinance symbol for {pair}, skipping 5m intraday",
+                flush=True,
+            )
         else:
             df_5m = yf.download(sym, period="1mo", interval="5m", progress=False)
             if not df_5m.empty:
@@ -8066,7 +9749,9 @@ def discover_indicator(price_series=None, population=100, generations=15, top_k=
                 if len(closes) >= 400:
                     data_5m = {"close": closes}
                     if "Volume" in df_5m.columns:
-                        data_5m["volume"] = [float(x) for x in df_5m["Volume"].values.flatten() if str(x) != "nan"]
+                        data_5m["volume"] = [
+                            float(x) for x in df_5m["Volume"].values.flatten() if str(x) != "nan"
+                        ]
                     else:
                         data_5m["volume"] = [1.0] * len(closes)
                     for k in _FEATURE_KEYS:
@@ -8076,7 +9761,7 @@ def discover_indicator(price_series=None, population=100, generations=15, top_k=
                     all_results.extend(_evolve_multi(data_5m, population, generations, top_k))
     except Exception as e:
         print(f"[DISCOVER] 5m fetch failed: {e}", flush=True)
-    
+
     # Return best across all timeframes — deduplicated
     seen_exprs = set()
     unique = []
@@ -8088,11 +9773,13 @@ def discover_indicator(price_series=None, population=100, generations=15, top_k=
     unique.sort(key=lambda x: x[1], reverse=True)
     return unique[:top_k]
 
+
 def register_discovered_indicator(expr, fitness, bt_module=None, pair=None, fitness_details=None):
-    '''Register a discovered indicator as a new entry block and persist to disk.
-    Skips duplicates: same expression for same pair.'''
+    """Register a discovered indicator as a new entry block and persist to disk.
+    Skips duplicates: same expression for same pair."""
     import sys
-    bm = bt_module or sys.modules.get('hermes_forex.backtest')
+
+    bm = bt_module or sys.modules.get("hermes_forex.backtest")
     if bm is None:
         import hermes_forex.backtest as bm
     # Check for duplicate expression in existing storage
@@ -8103,19 +9790,33 @@ def register_discovered_indicator(expr, fitness, bt_module=None, pair=None, fitn
             if e.get("expr_str") == expr_str:
                 return None  # Duplicate, skip silently
     name = f"discovered_{_rand.randint(1000, 9999)}"
-    if hasattr(bm, 'ENTRY_BLOCKS') and name not in bm.ENTRY_BLOCKS:
-        entry = {"desc": f"Discovered: {_expr_to_str(expr)} (fit={fitness:.2f})", "params": {"threshold": 0.3}, "_expr": expr}
+    if hasattr(bm, "ENTRY_BLOCKS") and name not in bm.ENTRY_BLOCKS:
+        entry = {
+            "desc": f"Discovered: {_expr_to_str(expr)} (fit={fitness:.2f})",
+            "params": {"threshold": 0.3},
+            "_expr": expr,
+        }
         bm.ENTRY_BLOCKS[name] = entry
-        if hasattr(bm, '_ENTRY_NAMES'): bm._ENTRY_NAMES.append(name)
+        if hasattr(bm, "_ENTRY_NAMES"):
+            bm._ENTRY_NAMES.append(name)
         # Persist to disk
         if pair:
             indicators = load_discovered_indicators(pair)
-            ind_entry = {"name": name, "_expr": expr, "fitness": fitness, "expr_str": _expr_to_str(expr), "params": {"threshold": 0.3}}
+            ind_entry = {
+                "name": name,
+                "_expr": expr,
+                "fitness": fitness,
+                "expr_str": _expr_to_str(expr),
+                "params": {"threshold": 0.3},
+            }
             if fitness_details:
                 ind_entry.update(fitness_details)
             indicators.append(ind_entry)
             save_discovered_indicators(pair, indicators)
-        print(f"[DISCOVER] Registered {name}: {_expr_to_str(expr)} (fit={fitness:.4f}){' for ' + pair if pair else ''}", flush=True)
+        print(
+            f"[DISCOVER] Registered {name}: {_expr_to_str(expr)} (fit={fitness:.4f}){' for ' + pair if pair else ''}",
+            flush=True,
+        )
         return name
     return None
 
@@ -8124,9 +9825,11 @@ def register_discovered_indicator(expr, fitness, bt_module=None, pair=None, fitn
 
 _DISCOVERED_DIR = None  # set by init_discovered_storage()
 
+
 def init_discovered_storage(state_dir=None):
     global _DISCOVERED_DIR
     from pathlib import Path
+
     if state_dir is None:
         # Try multiple paths: dev Windows, Railway Docker
         for candidate in [
@@ -8147,14 +9850,16 @@ def init_discovered_storage(state_dir=None):
         _seed_from_image(state_dir)
     return _DISCOVERED_DIR
 
+
 def _seed_from_image(state_dir):
     """Attempt to copy discovered indicator files from Docker image layers
     that may be hidden by the Railway volume mount at /app/state/."""
     import shutil
+
     candidates = [
-        Path("/app/hermes_forex/discovered"),    # Inside Python package (not on volume)
-        Path("/app/discovered_seed"),             # Dedicated COPY
-        Path("/app/state/discovered"),             # Primary Docker COPY location
+        Path("/app/hermes_forex/discovered"),  # Inside Python package (not on volume)
+        Path("/app/discovered_seed"),  # Dedicated COPY
+        Path("/app/state/discovered"),  # Primary Docker COPY location
     ]
     for src in candidates:
         if src.exists() and src != _DISCOVERED_DIR and list(src.glob("*.json")):
@@ -8167,6 +9872,7 @@ def _seed_from_image(state_dir):
                         pass
             break
 
+
 def _discovered_file(pair):
     d = _DISCOVERED_DIR
     if d is None:
@@ -8174,6 +9880,7 @@ def _discovered_file(pair):
     # Sanitize pair name for filename
     safe = pair.replace("/", "_").replace(" ", "_")
     return d / f"{safe}.json"
+
 
 def load_discovered_indicators(pair):
     """Load discovered indicators for a pair from persistent storage.
@@ -8189,6 +9896,7 @@ def load_discovered_indicators(pair):
     except Exception:
         return []
 
+
 def save_discovered_indicators(pair, indicators):
     """Save discovered indicators for a pair to persistent storage."""
     f = _discovered_file(pair)
@@ -8198,6 +9906,7 @@ def save_discovered_indicators(pair, indicators):
     except Exception as e:
         print(f"[DISCOVER] Save failed: {e}", flush=True)
         return False
+
 
 def _eval_expr_last(expr, prices):
     """Evaluate expression against prices and return the LAST signal value (for real-time use)."""
@@ -8209,6 +9918,7 @@ def _eval_expr_last(expr, prices):
 
 _DEG_FILE = None
 
+
 def _deg_path():
     global _DEG_FILE
     if _DEG_FILE is None:
@@ -8218,6 +9928,7 @@ def _deg_path():
         _DEG_FILE = d / "_live_deg.json"
     return _DEG_FILE
 
+
 def _load_deg():
     f = _deg_path()
     if not f.exists():
@@ -8226,6 +9937,7 @@ def _load_deg():
         return json.loads(f.read_text())
     except Exception:
         return {}
+
 
 def _save_deg(deg):
     try:
@@ -8237,6 +9949,7 @@ def _save_deg(deg):
 # ── Tier 2 (D): per-indicator LIVE SHADOW scorecard ──
 _SHADOW_FILE = None
 
+
 def _shadow_path():
     global _SHADOW_FILE
     if _SHADOW_FILE is None:
@@ -8245,6 +9958,7 @@ def _shadow_path():
             d = init_discovered_storage()
         _SHADOW_FILE = d / "_shadow_scores.json"
     return _SHADOW_FILE
+
 
 def _load_shadow():
     try:
@@ -8255,15 +9969,18 @@ def _load_shadow():
         pass
     return {}
 
+
 def _save_shadow(data):
     try:
         _shadow_path().write_text(json.dumps(data, indent=2))
     except Exception:
         pass
 
+
 SHADOW_MIN_SIGNALS = 30
 SHADOW_MIN_WR = 0.55
 SHADOW_MIN_RETURN = 0.0
+
 
 def record_indicator_shadow(pair, expr_str, direction, next_return_pct):
     if not expr_str or direction == 0:
@@ -8272,8 +9989,7 @@ def record_indicator_shadow(pair, expr_str, direction, next_return_pct):
     pkey = pair.replace("/", "_")
     rec = data.setdefault(pkey, {}).setdefault(
         expr_str,
-        {"signals": 0, "wins": 0, "total_return_pct": 0.0,
-         "first_seen": None, "last_eval": None},
+        {"signals": 0, "wins": 0, "total_return_pct": 0.0, "first_seen": None, "last_eval": None},
     )
     rec["signals"] += 1
     if (direction > 0 and next_return_pct > 0) or (direction < 0 and next_return_pct < 0):
@@ -8285,19 +10001,24 @@ def record_indicator_shadow(pair, expr_str, direction, next_return_pct):
     data[pkey][expr_str] = rec
     _save_shadow(data)
 
+
 def shadow_scorecard(pair):
     data = _load_shadow()
     pkey = pair.replace("/", "_")
     out = {}
     for expr_str, rec in data.get(pkey, {}).items():
         wr = rec["wins"] / rec["signals"] if rec["signals"] else 0.0
-        promotable = (rec["signals"] >= SHADOW_MIN_SIGNALS
-                      and wr >= SHADOW_MIN_WR
-                      and rec["total_return_pct"] > SHADOW_MIN_RETURN)
+        promotable = (
+            rec["signals"] >= SHADOW_MIN_SIGNALS
+            and wr >= SHADOW_MIN_WR
+            and rec["total_return_pct"] > SHADOW_MIN_RETURN
+        )
         out[expr_str] = {**rec, "win_rate": round(wr, 4), "promotable": promotable}
     return out
 
+
 _SHADOW_PENDING = {}
+
 
 def evaluate_shadow_signals(pair, prices):
     """Shadow-only scorecard tick. NEVER affects entries."""
@@ -8337,8 +10058,10 @@ def evaluate_shadow_signals(pair, prices):
 # ── Tier 2 (E): APPROVAL-GATED promotion / retirement ──
 def _discovered_block_name(pair, expr_str):
     import hashlib
+
     h = hashlib.sha1(f"{pair}:{expr_str}".encode()).hexdigest()[:8]
     return f"genetic_{h}"
+
 
 def promote_indicator(pair, expr_str, force=False):
     """Promote a discovered (shadow) indicator to LIVE, after operator approval.
@@ -8346,13 +10069,19 @@ def promote_indicator(pair, expr_str, force=False):
     cleared the bar, unless force=True (explicit override)."""
     sc = shadow_scorecard(pair).get(expr_str)
     if not force and (not sc or not sc.get("promotable")):
-        return False, (f"refused: {expr_str} on {pair} not promotable "
-                       f"(signals={sc.get('signals') if sc else 0}, "
-                       f"WR={sc.get('win_rate') if sc else 0}) "
-                       f"— use force=True only with explicit operator approval")
+        return False, (
+            f"refused: {expr_str} on {pair} not promotable "
+            f"(signals={sc.get('signals') if sc else 0}, "
+            f"WR={sc.get('win_rate') if sc else 0}) "
+            f"— use force=True only with explicit operator approval"
+        )
     try:
-        from hermes_forex.backtest import register_new_block, \
-            save_discovered_indicators, load_discovered_indicators
+        from hermes_forex.backtest import (
+            register_new_block,
+            save_discovered_indicators,
+            load_discovered_indicators,
+        )
+
         inds = load_discovered_indicators(pair)
         target = next((i for i in inds if i.get("expr_str") == expr_str), None)
         if target is None:
@@ -8360,31 +10089,42 @@ def promote_indicator(pair, expr_str, force=False):
         if target.get("live"):
             return False, f"already live: {expr_str} on {pair}"
         block_name = _discovered_block_name(pair, expr_str)
-        description = (f"GP-evolved (PROMOTED): {expr_str} | "
-                       f"shadow signals={sc.get('signals') if sc else '?'} "
-                       f"WR={sc.get('win_rate') if sc else '?'} | "
-                       f"OOS corr: {target.get('oos_corr', 0):.3f}")
-        params = {"expr": target.get("_expr"), "expr_str": expr_str,
-                  "oos_corr": target.get("oos_corr", 0), "type": "genetic",
-                  "source": "gp_correlation_discovery_promoted",
-                  "ts": datetime.now(timezone.utc).isoformat()}
+        description = (
+            f"GP-evolved (PROMOTED): {expr_str} | "
+            f"shadow signals={sc.get('signals') if sc else '?'} "
+            f"WR={sc.get('win_rate') if sc else '?'} | "
+            f"OOS corr: {target.get('oos_corr', 0):.3f}"
+        )
+        params = {
+            "expr": target.get("_expr"),
+            "expr_str": expr_str,
+            "oos_corr": target.get("oos_corr", 0),
+            "type": "genetic",
+            "source": "gp_correlation_discovery_promoted",
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
         registered = register_new_block(block_name, "entry", description, params)
         target["live"] = True
         target["promoted_at"] = datetime.now(timezone.utc).isoformat()
         target["promotion_forced"] = bool(force)
         save_discovered_indicators(pair, inds)
-        msg = (f"[GP-PROMOTE] {pair}: '{expr_str}' -> LIVE "
-               f"(block={block_name}, wired={registered})")
+        msg = f"[GP-PROMOTE] {pair}: '{expr_str}' -> LIVE (block={block_name}, wired={registered})"
         print(msg, flush=True)
         return True, msg
     except Exception as e:
         return False, f"error: {e}"
 
+
 def retire_indicator(pair, expr_str):
     """Retire a LIVE indicator back to shadow (kill switch). Operator-only."""
     try:
-        from hermes_forex.backtest import ENTRY_BLOCKS, _ENTRY_NAMES, \
-            save_discovered_indicators, load_discovered_indicators
+        from hermes_forex.backtest import (
+            ENTRY_BLOCKS,
+            _ENTRY_NAMES,
+            save_discovered_indicators,
+            load_discovered_indicators,
+        )
+
         block_name = _discovered_block_name(pair, expr_str)
         removed = ENTRY_BLOCKS.pop(block_name, None) is not None
         if block_name in _ENTRY_NAMES:
@@ -8395,8 +10135,7 @@ def retire_indicator(pair, expr_str):
             target["live"] = False
             target["retired_at"] = datetime.now(timezone.utc).isoformat()
             save_discovered_indicators(pair, inds)
-        msg = (f"[GP-RETIRE] {pair}: '{expr_str}' -> shadow "
-               f"(block_removed={removed})")
+        msg = f"[GP-RETIRE] {pair}: '{expr_str}' -> shadow (block_removed={removed})"
         print(msg, flush=True)
         return True, msg
     except Exception as e:
@@ -8419,6 +10158,7 @@ def record_signal_outcome(pair, direction, next_return):
         deg[key]["wins"] += 1
     _save_deg(deg)
 
+
 def get_indicator_live_wr(pair, direction):
     """Get live win rate for an indicator's signal direction on a pair."""
     deg = _load_deg()
@@ -8430,6 +10170,7 @@ def get_indicator_live_wr(pair, direction):
 
 
 # ── Regime detection for indicator filtering ──
+
 
 def _compute_current_regime(prices):
     """Quick regime detection from price data. Returns 'BULL', 'BEAR', or 'NEUTRAL'."""
@@ -8445,12 +10186,15 @@ def _compute_current_regime(prices):
         return "BEAR"
     return "NEUTRAL"
 
+
 def _compute_volatility_regime(prices):
     """Returns 'HIGH', 'NORMAL', or 'LOW' volatility based on recent ATR."""
     if not prices or len(prices) < 30:
         return "NORMAL"
     recent = prices[-30:]
-    atr = sum(abs(recent[i] - recent[i-1]) / recent[i-1] for i in range(1, len(recent))) / (len(recent) - 1)
+    atr = sum(abs(recent[i] - recent[i - 1]) / recent[i - 1] for i in range(1, len(recent))) / (
+        len(recent) - 1
+    )
     if atr > 0.015:
         return "HIGH"
     elif atr < 0.005:
@@ -8462,9 +10206,10 @@ def _compute_volatility_regime(prices):
 
 # Pairs that share indicators across bots
 _SHARED_INDICATOR_GROUPS = [
-    {"XAU/USD", "XAG/USD"},           # Gold and silver share macro relationships
-    {"EUR/USD", "GBP/USD", "AUD/USD"}, # USD pairs share DXY relationships
+    {"XAU/USD", "XAG/USD"},  # Gold and silver share macro relationships
+    {"EUR/USD", "GBP/USD", "AUD/USD"},  # USD pairs share DXY relationships
 ]
+
 
 def _get_shared_pairs(pair):
     """Return pairs from other bots whose indicators are relevant for this pair."""
@@ -8499,7 +10244,14 @@ def check_discovered_signals(pair, prices, live_only=True):
         # Drop shadow indicators — they must NOT influence live entries yet.
         indicators = [i for i in indicators if i.get("live", True)]
     if not indicators or not prices or len(prices) < 100:
-        base = {"signal": 0, "active": 0, "consensus": "neutral", "regime_breakdown": {}, "degraded": 0, "shared": 0}
+        base = {
+            "signal": 0,
+            "active": 0,
+            "consensus": "neutral",
+            "regime_breakdown": {},
+            "degraded": 0,
+            "shared": 0,
+        }
         return 0.0, 0, base
 
     # ── Load degradation data ──
@@ -8524,8 +10276,8 @@ def check_discovered_signals(pair, prices, live_only=True):
             shared_count += 1
 
     # ── Evaluate each indicator ──
-    votes = []        # (weighted_direction, weight, indicator_name)
-    regime_votes = {} # per-regime breakdown
+    votes = []  # (weighted_direction, weight, indicator_name)
+    regime_votes = {}  # per-regime breakdown
     degraded_count = 0
     culled = []
 
@@ -8581,14 +10333,27 @@ def check_discovered_signals(pair, prices, live_only=True):
 
     # ── Cull degraded indicators from disk ──
     if culled:
-        remaining = [ind for ind in indicators if ind.get("name", "?") not in {c[0] for c in culled}]
+        remaining = [
+            ind for ind in indicators if ind.get("name", "?") not in {c[0] for c in culled}
+        ]
         save_discovered_indicators(pair, remaining)
         for name, lwr, n in culled:
             print(f"[DEGRADATION] Culled {name}: WR {lwr:.0%} < 40% over {n} signals", flush=True)
 
     # ── Ensemble calculation ──
     if not votes:
-        return 0.0, 0, {"signal": 0, "active": 0, "consensus": "neutral", "regime_breakdown": {k: 0 for k in regime_votes}, "degraded": degraded_count, "shared": shared_count}
+        return (
+            0.0,
+            0,
+            {
+                "signal": 0,
+                "active": 0,
+                "consensus": "neutral",
+                "regime_breakdown": {k: 0 for k in regime_votes},
+                "degraded": degraded_count,
+                "shared": shared_count,
+            },
+        )
 
     total_weighted = sum(v[0] for v in votes)
     total_weight = sum(v[1] for v in votes)
@@ -8610,7 +10375,11 @@ def check_discovered_signals(pair, prices, live_only=True):
     # Flag conflict: some bullish, some bearish
     bullish_w = sum(v[1] for v in votes if v[0] > 0)
     bearish_w = sum(v[1] for v in votes if v[0] < 0)
-    if bullish_w > 0 and bearish_w > 0 and min(bullish_w, bearish_w) / max(bullish_w, bearish_w) > 0.3:
+    if (
+        bullish_w > 0
+        and bearish_w > 0
+        and min(bullish_w, bearish_w) / max(bullish_w, bearish_w) > 0.3
+    ):
         consensus = "conflict"
 
     # ── Regime breakdown ──
@@ -8620,20 +10389,24 @@ def check_discovered_signals(pair, prices, live_only=True):
         rt = sum(v[1] for v in reg_votes)
         regime_breakdown[regime] = rw / max(rt, 0.001)
 
-    return signal_strength, num_active, {
-        "signal": signal_strength,
-        "active": num_active,
-        "consensus": consensus,
-        "weighted_strength": total_weighted / max(total_weight, 0.001),
-        "total_weight": total_weight,
-        "bullish_weight": bullish_w,
-        "bearish_weight": bearish_w,
-        "regime_breakdown": regime_breakdown,
-        "current_regime": cur_regime,
-        "current_volatility": cur_vol,
-        "degraded": degraded_count,
-        "shared": shared_count,
-    }
+    return (
+        signal_strength,
+        num_active,
+        {
+            "signal": signal_strength,
+            "active": num_active,
+            "consensus": consensus,
+            "weighted_strength": total_weighted / max(total_weight, 0.001),
+            "total_weight": total_weight,
+            "bullish_weight": bullish_w,
+            "bearish_weight": bearish_w,
+            "regime_breakdown": regime_breakdown,
+            "current_regime": cur_regime,
+            "current_volatility": cur_vol,
+            "degraded": degraded_count,
+            "shared": shared_count,
+        },
+    )
 ```
 
 ### hermes-forex/hermes_forex/genetic_discovery.py
@@ -8678,35 +10451,61 @@ PRIMITIVES = {
 }
 
 WINDOW_OPS = {
-    "min_window": lambda arr, w: min(arr[-int(w):]) if len(arr) >= w else arr[-1],
-    "max_window": lambda arr, w: max(arr[-int(w):]) if len(arr) >= w else arr[-1],
-    "mean_window": lambda arr, w: statistics.mean(arr[-int(w):]) if len(arr) >= w else arr[-1],
-    "stdev_window": lambda arr, w: statistics.stdev(arr[-int(w):]) if len(arr) >= w and len(set(arr[-int(w):])) >= 2 else 0.0001,
-    "ema": lambda arr, w: _ema(arr[-int(w):]) if len(arr) >= w else arr[-1],
-    "roc": lambda arr, w: (arr[-1] / max(arr[-int(w)-1], 0.0001) - 1) * 100 if len(arr) > w else 0,
+    "min_window": lambda arr, w: min(arr[-int(w) :]) if len(arr) >= w else arr[-1],
+    "max_window": lambda arr, w: max(arr[-int(w) :]) if len(arr) >= w else arr[-1],
+    "mean_window": lambda arr, w: statistics.mean(arr[-int(w) :]) if len(arr) >= w else arr[-1],
+    "stdev_window": lambda arr, w: (
+        statistics.stdev(arr[-int(w) :])
+        if len(arr) >= w and len(set(arr[-int(w) :])) >= 2
+        else 0.0001
+    ),
+    "ema": lambda arr, w: _ema(arr[-int(w) :]) if len(arr) >= w else arr[-1],
+    "roc": lambda arr, w: (
+        (arr[-1] / max(arr[-int(w) - 1], 0.0001) - 1) * 100 if len(arr) > w else 0
+    ),
 }
 
 WINDOW_PERIODS = [5, 7, 10, 14, 20, 30, 50, 60]
 
+
 def _ema(values, smoothing=2):
     """Exponential moving average helper."""
-    if len(values) < 2: return values[-1] if values else 0
+    if len(values) < 2:
+        return values[-1] if values else 0
     k = smoothing / (len(values) + 1)
     ema = values[0]
     for v in values[1:]:
         ema = v * k + ema * (1 - k)
     return ema
 
+
 # Will be set from backtest.py's _FEATURE_KEYS at runtime
-TERMINALS = ["close", "volume", "dxy", "vix", "tnx", "spx", "oil", "copper", "gold", "btc", "fvx", "eem", "bonds", "hour", "day"]
+TERMINALS = [
+    "close",
+    "volume",
+    "dxy",
+    "vix",
+    "tnx",
+    "spx",
+    "oil",
+    "copper",
+    "gold",
+    "btc",
+    "fvx",
+    "eem",
+    "bonds",
+    "hour",
+    "day",
+]
 
 # ── Expression tree helpers ──
+
 
 def _random_tree(depth=0, max_depth=4):
     """Generate a random expression tree. Returns nested list: [op, arg1, arg2]."""
     if depth >= max_depth or (depth > 0 and random.random() < 0.3):
         return random.choice(TERMINALS)
-    
+
     # Choose between binary primitive, unary primitive, or window op
     if random.random() < 0.5:
         # Binary primitive
@@ -8745,35 +10544,54 @@ def _eval_tree(expr, data):
         return [0.0] * max(length, 1)
 
     op = expr[0]
-    
+
     if len(expr) == 3 and isinstance(expr[2], (int, float)):
         # Window op: [op, child, period]
         child_vals = _eval_tree(expr[1], data)
         period = int(expr[2])
         if op == "min_window":
-            return [min(child_vals[max(0, i-period+1):i+1]) if i >= period-1 else child_vals[i] for i in range(len(child_vals))]
+            return [
+                min(child_vals[max(0, i - period + 1) : i + 1])
+                if i >= period - 1
+                else child_vals[i]
+                for i in range(len(child_vals))
+            ]
         elif op == "max_window":
-            return [max(child_vals[max(0, i-period+1):i+1]) if i >= period-1 else child_vals[i] for i in range(len(child_vals))]
+            return [
+                max(child_vals[max(0, i - period + 1) : i + 1])
+                if i >= period - 1
+                else child_vals[i]
+                for i in range(len(child_vals))
+            ]
         elif op == "mean_window":
-            return [statistics.mean(child_vals[max(0, i-period+1):i+1]) if i >= period-1 else child_vals[i] for i in range(len(child_vals))]
+            return [
+                statistics.mean(child_vals[max(0, i - period + 1) : i + 1])
+                if i >= period - 1
+                else child_vals[i]
+                for i in range(len(child_vals))
+            ]
         elif op == "stdev_window":
             result = []
             for i in range(len(child_vals)):
-                window = child_vals[max(0, i-period+1):i+1]
+                window = child_vals[max(0, i - period + 1) : i + 1]
                 if len(window) >= 3 and len(set(window)) >= 2:
                     result.append(statistics.stdev(window))
                 else:
                     result.append(0.0001)
             return result
-    
+
     # Binary ops: [op, left, right]
     left = _eval_tree(expr[1], data)
-    right = _eval_tree(expr[2], data) if len(expr) > 2 and isinstance(expr[2], (list, str)) else [0.0] * len(left)
+    right = (
+        _eval_tree(expr[2], data)
+        if len(expr) > 2 and isinstance(expr[2], (list, str))
+        else [0.0] * len(left)
+    )
     if not isinstance(right, list):
         right = [float(right)] * len(left)
     min_len = min(len(left), len(right))
     left, right = left[:min_len], right[:min_len]
-    
+
     if op in ("add", "sub", "mul", "div", "ratio"):
         if op == "add":
             return [left[i] + (right[i] if i < len(right) else 0) for i in range(min_len)]
@@ -8782,14 +10600,17 @@ def _eval_tree(expr, data):
         elif op == "mul":
             return [left[i] * (right[i] if i < len(right) else 0) for i in range(min_len)]
         elif op in ("div", "ratio"):
-            return [left[i] / max(right[i] if i < len(right) else 0.0001, 0.0001) for i in range(min_len)]
+            return [
+                left[i] / max(right[i] if i < len(right) else 0.0001, 0.0001)
+                for i in range(min_len)
+            ]
     elif op == "log":
         return [math.log(max(left[i] if i < len(left) else 0.0001, 0.0001)) for i in range(min_len)]
     elif op == "neg":
         return [-(left[i] if i < len(left) else 0) for i in range(min_len)]
     elif op == "abs":
         return [abs(left[i] if i < len(left) else 0) for i in range(min_len)]
-    
+
     return [0.0] * length
 
 
@@ -8831,6 +10652,7 @@ def _replace_node(tree, target, replacement):
 def _crossover(e1, e2):
     """Swap random subtrees between two expressions."""
     import copy
+
     e1 = copy.deepcopy(e1)
     nodes1 = _get_nodes(e1)
     nodes2 = _get_nodes(e2)
@@ -8846,6 +10668,7 @@ def _mutate(expr):
     nodes = _get_nodes(expr)
     if nodes:
         import copy
+
         e = copy.deepcopy(expr)
         node = random.choice(nodes)
         _replace_node(e, node, _random_tree(depth=random.randint(0, 2)))
@@ -8862,6 +10685,7 @@ def _count_nodes(expr):
 
 # ── Fitness: correlation with next-candle price change ──
 
+
 def _compute_fitness(signal, prices, horizon=1):
     """Compute fitness as correlation between signal and FORWARD-horizon
     returns. horizon=1 => next-candle return (original behaviour). horizon=H
@@ -8872,11 +10696,10 @@ def _compute_fitness(signal, prices, horizon=1):
     Higher absolute correlation = better predictive power.
     Returns (correlation, forward_returns)."""
     # Forward-horizon returns: total pct move from i to i+horizon
-    forward = [((prices[i+horizon] / prices[i]) - 1) * 100
-               for i in range(len(prices) - horizon)]
+    forward = [((prices[i + horizon] / prices[i]) - 1) * 100 for i in range(len(prices) - horizon)]
 
     # Align signal to forward returns (signal must be same length or longer)
-    sig = signal[:len(forward)]
+    sig = signal[: len(forward)]
     if len(sig) < 10:
         return 0.0, forward
 
@@ -8909,7 +10732,7 @@ def _permutation_pvalue(signal, prices, horizon=1, n_perm=200, seed=0):
     real_corr, forward = _compute_fitness(signal, prices, horizon)
     if not forward or len(forward) < 20:
         return 1.0, real_corr, 0.0
-    sig = signal[:len(forward)]
+    sig = signal[: len(forward)]
     n = len(sig)
     mean_sig = sum(sig) / n
     den_s = math.sqrt(sum((sig[i] - mean_sig) ** 2 for i in range(n)))
@@ -8938,7 +10761,7 @@ def _compute_signal_stats(signal, prices):
     because both the dashboard frontend (win_rate*100 → %) and the ensemble
     weight (fitness*win_rate) expect 0-1, NOT a percent."""
     returns = [((prices[i + 1] / prices[i]) - 1) * 100 for i in range(len(prices) - 1)]
-    sig = signal[:len(returns) + 1]
+    sig = signal[: len(returns) + 1]
     if len(sig) < 11:
         return 0.0, 0.0
     wins = 0
@@ -8980,8 +10803,11 @@ def _evolve_population(data, population_size, generations, horizon):
         best_fitness = scores[0][0]
         if gen % 10 == 0 or gen == generations - 1:
             elapsed = time.time() - t0
-            print(f"[GP] Gen {gen}/{generations}: best fitness = {best_fitness:.4f} "
-                  f"| pop = {len(pop)} | elapsed = {elapsed:.1f}s", flush=True)
+            print(
+                f"[GP] Gen {gen}/{generations}: best fitness = {best_fitness:.4f} "
+                f"| pop = {len(pop)} | elapsed = {elapsed:.1f}s",
+                flush=True,
+            )
         keep = max(15, population_size // 10)
         survivors = [s[1] for s in scores[:keep]]
         new_pop = list(survivors)
@@ -8998,8 +10824,7 @@ def _evolve_population(data, population_size, generations, horizon):
     return pop
 
 
-def _discover_walkforward(data, population_size, generations, top_k,
-                          threshold, horizon, n_windows):
+def _discover_walkforward(data, population_size, generations, top_k, threshold, horizon, n_windows):
     """Walk-forward (expanding-window) GP discovery.
 
     Splits the series into n_windows contiguous folds. For each fold f, evolves
@@ -9017,8 +10842,11 @@ def _discover_walkforward(data, population_size, generations, top_k,
         train = {k: v[:cut] for k, v in data.items()}
         test = {k: v[cut:] for k, v in data.items()}
         if len(train["close"]) < 200 or len(test["close"]) < 50:
-            print(f"[GP] fold {f} too short (train={len(train['close'])} "
-                  f"test={len(test['close'])}), skipping", flush=True)
+            print(
+                f"[GP] fold {f} too short (train={len(train['close'])} "
+                f"test={len(test['close'])}), skipping",
+                flush=True,
+            )
             continue
         pop = _evolve_population(train, population_size, generations, horizon)
         seen = set()
@@ -9034,8 +10862,9 @@ def _discover_walkforward(data, population_size, generations, top_k,
                 corr, _ = _compute_fitness(sig, test["close"], horizon)
                 train_sig = _eval_tree(expr, train)
                 train_corr, _ = _compute_fitness(train_sig, train["close"], horizon)
-                rec = agg.setdefault(es, {"corrs": [], "train_corrs": [],
-                                          "nodes": _count_nodes(expr), "expr": expr})
+                rec = agg.setdefault(
+                    es, {"corrs": [], "train_corrs": [], "nodes": _count_nodes(expr), "expr": expr}
+                )
                 rec["corrs"].append(round(corr, 4))
                 rec["train_corrs"].append(round(train_corr, 4))
             except Exception:
@@ -9051,31 +10880,44 @@ def _discover_walkforward(data, population_size, generations, top_k,
             # (A) permutation null-test: reject if score is not better than
             # random label shuffles (p >= 0.05) — closes the "lucky noise"
             # gap that walk-forward alone cannot catch.
-            p_val, real_c, null_mean = _permutation_pvalue(
-                sig_full, prices, horizon, n_perm=200)
+            p_val, real_c, null_mean = _permutation_pvalue(sig_full, prices, horizon, n_perm=200)
             if p_val >= 0.05:
                 continue
             win_rate, pnl = _compute_signal_stats(sig_full, prices)
-            final.append({
-                "expr": rec["expr"], "expr_str": es, "name": es,
-                "oos_corr": round(mean_c, 4),
-                "train_corr": round(sum(rec["train_corrs"]) / len(rec["train_corrs"]), 4),
-                "oos_corr_min": round(min(rec["corrs"]), 4),
-                "wf_windows_clear": clear, "n_windows": n_folds,
-                "perm_pvalue": round(p_val, 4), "null_mean_corr": null_mean,
-                "nodes": rec["nodes"],
-                "fitness": round(mean_c - (sum(rec["train_corrs"]) / len(rec["train_corrs"])) * 0.3, 4),
-                "win_rate": win_rate, "total_pnl": pnl, "uses": 0,
-            })
+            final.append(
+                {
+                    "expr": rec["expr"],
+                    "expr_str": es,
+                    "name": es,
+                    "oos_corr": round(mean_c, 4),
+                    "train_corr": round(sum(rec["train_corrs"]) / len(rec["train_corrs"]), 4),
+                    "oos_corr_min": round(min(rec["corrs"]), 4),
+                    "wf_windows_clear": clear,
+                    "n_windows": n_folds,
+                    "perm_pvalue": round(p_val, 4),
+                    "null_mean_corr": null_mean,
+                    "nodes": rec["nodes"],
+                    "fitness": round(
+                        mean_c - (sum(rec["train_corrs"]) / len(rec["train_corrs"])) * 0.3, 4
+                    ),
+                    "win_rate": win_rate,
+                    "total_pnl": pnl,
+                    "uses": 0,
+                }
+            )
     final.sort(key=lambda x: x["fitness"], reverse=True)
     total_elapsed = time.time() - t0
-    print(f"[GP] Walk-forward complete in {total_elapsed:.1f}s ({n_folds} folds): "
-          f"found {len(final)} robust candidates (mean OOS>={threshold}, "
-          f"clear>={(n_folds + 1) // 2}/{n_folds} folds, perm p<0.05)", flush=True)
+    print(
+        f"[GP] Walk-forward complete in {total_elapsed:.1f}s ({n_folds} folds): "
+        f"found {len(final)} robust candidates (mean OOS>={threshold}, "
+        f"clear>={(n_folds + 1) // 2}/{n_folds} folds, perm p<0.05)",
+        flush=True,
+    )
     return final[:top_k]
 
 
 # ── The GP loop ──
+
 
 def discover_indicators_correlation(
     data,
@@ -9090,7 +10932,7 @@ def discover_indicators_correlation(
     fitness. horizon=1 => next-candle (original). horizon=H => cumulative
     move over next H candles (longer-horizon objective; clears the 0.15 bar
     on 1d data where next-candle cannot).
-    
+
     Args:
         data: dict with "close" key (and optionally volume, dxy, vix, tnx, etc.)
         population_size: number of random expressions per generation (default 200)
@@ -9100,13 +10942,16 @@ def discover_indicators_correlation(
         horizon: forward-return lookahead in candles (1 = next-candle)
         n_windows: walk-forward folds; >1 enables expanding-window validation
             (default 1 = legacy single 60/40 split)
-    
+
     Returns:
         list of (expr, fitness_score, correlation, details_dict)
     """
     prices = data.get("close", data) if isinstance(data, dict) else data
     if not isinstance(prices, list) or len(prices) < 200:
-        print(f"[GP] Need >= 200 candles, got {len(prices) if isinstance(prices, list) else 0}", flush=True)
+        print(
+            f"[GP] Need >= 200 candles, got {len(prices) if isinstance(prices, list) else 0}",
+            flush=True,
+        )
         return []
 
     # Ensure data is a dict
@@ -9119,8 +10964,8 @@ def discover_indicators_correlation(
     # ── WALK-FORWARD (expanding window) vs legacy single split ──
     if n_windows > 1:
         return _discover_walkforward(
-            data, population_size, generations, top_k,
-            correlation_threshold, horizon, n_windows)
+            data, population_size, generations, top_k, correlation_threshold, horizon, n_windows
+        )
 
     # Train/test split (60/40) — legacy single split
     split = int(len(prices) * 0.6)
@@ -9133,7 +10978,7 @@ def discover_indicators_correlation(
 
     # Initialise population
     pop = [_random_tree() for _ in range(population_size)]
-    
+
     for gen in range(generations):
         scores = []
         for expr in pop:
@@ -9152,11 +10997,14 @@ def discover_indicators_correlation(
 
         scores.sort(key=lambda x: x[0], reverse=True)
         best_fitness = scores[0][0]
-        
+
         if gen % 10 == 0 or gen == generations - 1:
             elapsed = time.time() - t0
-            print(f"[GP] Gen {gen}/{generations}: best fitness = {best_fitness:.4f} "
-                  f"| pop = {len(pop)} | elapsed = {elapsed:.1f}s", flush=True)
+            print(
+                f"[GP] Gen {gen}/{generations}: best fitness = {best_fitness:.4f} "
+                f"| pop = {len(pop)} | elapsed = {elapsed:.1f}s",
+                flush=True,
+            )
 
         # Selection: top 10% (or at least 15)
         keep = max(15, population_size // 10)
@@ -9193,29 +11041,34 @@ def discover_indicators_correlation(
             # Also compute on training to ensure not overfit
             train_sig = _eval_tree(expr, train)
             train_corr, _ = _compute_fitness(train_sig, train_prices, horizon)
-            
+
             if corr >= correlation_threshold:
                 win_rate, pnl = _compute_signal_stats(sig, test_prices)
-                final.append({
-                    "expr": expr,
-                    "expr_str": _expr_to_str(expr),
-                    "name": _expr_to_str(expr),
-                    "oos_corr": round(corr, 4),
-                    "train_corr": round(train_corr, 4),
-                    "nodes": _count_nodes(expr),
-                    "fitness": round(corr - train_corr * 0.3, 4),  # prefer OOS performance
-                    "win_rate": win_rate,
-                    "total_pnl": pnl,
-                    "uses": 0,
-                })
+                final.append(
+                    {
+                        "expr": expr,
+                        "expr_str": _expr_to_str(expr),
+                        "name": _expr_to_str(expr),
+                        "oos_corr": round(corr, 4),
+                        "train_corr": round(train_corr, 4),
+                        "nodes": _count_nodes(expr),
+                        "fitness": round(corr - train_corr * 0.3, 4),  # prefer OOS performance
+                        "win_rate": win_rate,
+                        "total_pnl": pnl,
+                        "uses": 0,
+                    }
+                )
         except Exception:
             pass
 
     final.sort(key=lambda x: x["fitness"], reverse=True)
-    
+
     total_elapsed = time.time() - t0
-    print(f"[GP] Complete in {total_elapsed:.1f}s: found {len(final)} candidates above "
-          f"OOS correlation {correlation_threshold}", flush=True)
+    print(
+        f"[GP] Complete in {total_elapsed:.1f}s: found {len(final)} candidates above "
+        f"OOS correlation {correlation_threshold}",
+        flush=True,
+    )
 
     return final[:top_k]
 
@@ -9223,7 +11076,7 @@ def discover_indicators_correlation(
 def run_genetic_discovery(pair, intervals=None):
     """Run the full genetic indicator discovery pipeline for a pair.
     Fetches data for multiple timeframes, runs GP, registers valid indicators.
-    
+
     Args:
         pair: currency pair (e.g., "EUR/USD")
         intervals: list of (interval, period) tuples, e.g. [("5m", "1mo"), ("1h", "1mo")]
@@ -9237,9 +11090,9 @@ def run_genetic_discovery(pair, intervals=None):
         intervals = [("1d", "2y", 60)]
     # Allow legacy (interval, period) tuples without a horizon (default 1)
     intervals = [(iv[0], iv[1], iv[2] if len(iv) > 2 else 1) for iv in intervals]
-    
+
     print(f"[GP] Running genetic discovery for {pair}...", flush=True)
-    
+
     try:
         import yfinance as yf
     except ImportError:
@@ -9254,6 +11107,7 @@ def run_genetic_discovery(pair, intervals=None):
     # infinite retry) on EVERY download, and fetch the 10 macro symbols
     # concurrently so the window can't blow the budget.
     from concurrent.futures import ThreadPoolExecutor, as_completed
+
     _YT = 25  # seconds — hard ceiling per yfinance HTTP request
     _WALL_CAP = 240  # seconds — hard ceiling for the ENTIRE discovery run
     _start = time.time()
@@ -9267,15 +11121,20 @@ def run_genetic_discovery(pair, intervals=None):
         # Hard wall-clock guard: never let a misbehaving yfinance (retries,
         # DNS stalls, backoff) blow the caller's 900s subprocess budget.
         if time.time() - _start > _WALL_CAP:
-            print(f"[GP] Wall-clock cap {_WALL_CAP}s reached for {pair} — "
-                  f"returning {len(all_results)} candidates found so far", flush=True)
+            print(
+                f"[GP] Wall-clock cap {_WALL_CAP}s reached for {pair} — "
+                f"returning {len(all_results)} candidates found so far",
+                flush=True,
+            )
             break
         key = f"{pair}:{interval}:{period}"
         if key in data_cache:
             data_arr = data_cache[key]
         else:
             try:
-                df = yf.download(symbol, period=period, interval=interval, progress=False, timeout=_YT)
+                df = yf.download(
+                    symbol, period=period, interval=interval, progress=False, timeout=_YT
+                )
                 if df.empty:
                     continue
                 closes = [float(x) for x in df["Close"].values.flatten() if str(x) != "nan"]
@@ -9283,24 +11142,40 @@ def run_genetic_discovery(pair, intervals=None):
                     continue
                 data_arr = {"close": closes}
                 if "Volume" in df.columns:
-                    data_arr["volume"] = [float(x) for x in df["Volume"].values.flatten() if str(x) != "nan"]
+                    data_arr["volume"] = [
+                        float(x) for x in df["Volume"].values.flatten() if str(x) != "nan"
+                    ]
                 else:
                     data_arr["volume"] = [1.0] * len(closes)
                 # Try macro data — fetched concurrently with a per-request cap
                 macro_map = {
-                    "dxy": "DX-Y.NYB", "vix": "^VIX", "tnx": "^TNX",
-                    "spx": "^GSPC", "oil": "CL=F", "gold": "GC=F",
-                    "btc": "BTC-USD", "fvx": "^FVX", "eem": "EEM",
+                    "dxy": "DX-Y.NYB",
+                    "vix": "^VIX",
+                    "tnx": "^TNX",
+                    "spx": "^GSPC",
+                    "oil": "CL=F",
+                    "gold": "GC=F",
+                    "btc": "BTC-USD",
+                    "fvx": "^FVX",
+                    "eem": "EEM",
                 }
+
                 def _fetch_macro(mkey, msym):
                     try:
-                        mdf = yf.download(msym, period=period, interval=interval, progress=False, timeout=_YT)
+                        mdf = yf.download(
+                            msym, period=period, interval=interval, progress=False, timeout=_YT
+                        )
                         if not mdf.empty:
-                            vals = [float(x) for x in mdf["Close"].values.flatten() if str(x) != "nan"]
-                            return mkey, (vals[:len(closes)] + [vals[-1]] * max(0, len(closes) - len(vals)))
+                            vals = [
+                                float(x) for x in mdf["Close"].values.flatten() if str(x) != "nan"
+                            ]
+                            return mkey, (
+                                vals[: len(closes)] + [vals[-1]] * max(0, len(closes) - len(vals))
+                            )
                     except Exception:
                         pass
                     return mkey, [0.0] * len(closes)
+
                 with ThreadPoolExecutor(max_workers=10) as ex:
                     for mkey, vals in ex.map(_fetch_macro, *zip(*macro_map.items())):
                         data_arr[mkey] = vals
@@ -9313,7 +11188,7 @@ def run_genetic_discovery(pair, intervals=None):
             except Exception as e:
                 print(f"[GP] {interval} fetch failed: {e}", flush=True)
                 continue
-        
+
         results = discover_indicators_correlation(
             data=data_arr,
             population_size=200,
@@ -9328,7 +11203,7 @@ def run_genetic_discovery(pair, intervals=None):
             r["horizon"] = horizon
             r["interval"] = interval
         all_results.extend(results)
-    
+
     # Deduplicate by expression string
     seen = set()
     unique = []
@@ -9337,7 +11212,7 @@ def run_genetic_discovery(pair, intervals=None):
         if es not in seen:
             seen.add(es)
             unique.append(r)
-    
+
     unique.sort(key=lambda x: x["fitness"], reverse=True)
     return unique[:5]
 
@@ -9363,7 +11238,11 @@ def register_genetic_indicator(indicator_info, pair, live=False):
         bool: True if saved successfully
     """
     try:
-        from hermes_forex.backtest import register_new_block, save_discovered_indicators, load_discovered_indicators
+        from hermes_forex.backtest import (
+            register_new_block,
+            save_discovered_indicators,
+            load_discovered_indicators,
+        )
 
         block_name = f"genetic_{int(time.time())}"
 
@@ -9386,8 +11265,11 @@ def register_genetic_indicator(indicator_info, pair, live=False):
             }
             registered = register_new_block(block_name, "entry", description, params)
         else:
-            print(f"[GP] SHADOW: not wiring '{indicator_info.get('expr_str')}' "
-                  f"into live entries (shadow mode)", flush=True)
+            print(
+                f"[GP] SHADOW: not wiring '{indicator_info.get('expr_str')}' "
+                f"into live entries (shadow mode)",
+                flush=True,
+            )
 
         # Always save to discovered indicators (feeds the dashboard tab)
         es_for_uses = indicator_info.get("expr_str") or _expr_to_str(indicator_info["expr"])
@@ -9398,7 +11280,9 @@ def register_genetic_indicator(indicator_info, pair, live=False):
             "name": indicator_info.get("name") or es_for_uses or "GP-evolved",
             "expr": es_for_uses,
             "expr_str": es_for_uses,
-            "_expr": indicator_info.get("expr"),  # raw tree for live evaluation (check_discovered_signals reads _expr)
+            "_expr": indicator_info.get(
+                "expr"
+            ),  # raw tree for live evaluation (check_discovered_signals reads _expr)
             "fitness": indicator_info.get("fitness", 0),
             "oos_corr": indicator_info.get("oos_corr", 0),
             "train_corr": indicator_info.get("train_corr", 0),
@@ -9418,15 +11302,18 @@ def register_genetic_indicator(indicator_info, pair, live=False):
         # seed/discovered records all survive. Drop any corrupt placeholders
         # (name=='?' or empty expr_str) and dedupe by expression string.
         existing = load_discovered_indicators(pair)
-        existing = [e for e in existing
-                    if e.get("name") and e.get("name") != "?"
-                    and e.get("expr_str")]
+        existing = [
+            e for e in existing if e.get("name") and e.get("name") != "?" and e.get("expr_str")
+        ]
         if not any(e.get("expr_str") == discovered_indicator["expr_str"] for e in existing):
             existing.append(discovered_indicator)
         save_discovered_indicators(pair, existing)
 
         if live and registered:
-            print(f"[GP] Registered '{block_name}' for {pair}: {indicator_info['expr_str']}", flush=True)
+            print(
+                f"[GP] Registered '{block_name}' for {pair}: {indicator_info['expr_str']}",
+                flush=True,
+            )
         elif live:
             print(f"[GP] Block '{block_name}' already exists (dedup)", flush=True)
 
@@ -9455,33 +11342,46 @@ def run_and_register(pair, live=False):
             print(f"[GP] Registration error for {pair}: {e}", flush=True)
     # Wording deliberately includes "registered"/"new indicators" tokens so
     # the loop's subprocess stdout parser still captures the count.
-    print(f"[GP] {pair}: registered {count}/{len(results)} new indicators "
-          f"(saved to discovered store, live={live})", flush=True)
+    print(
+        f"[GP] {pair}: registered {count}/{len(results)} new indicators "
+        f"(saved to discovered store, live={live})",
+        flush=True,
+    )
     return results
 
 
 # ── CLI entry point ──
 if __name__ == "__main__":
     import sys, json
+
     if len(sys.argv) >= 2 and sys.argv[1] in ("promote", "retire"):
         from hermes_forex.backtest import promote_indicator, retire_indicator
+
         action = sys.argv[1]
         pair = sys.argv[2] if len(sys.argv) > 2 else "EUR/USD"
         expr_str = sys.argv[3] if len(sys.argv) > 3 else None
         force = "--force" in sys.argv
         if not expr_str:
-            print(f"usage: python -m hermes_forex.genetic_discovery "
-                  f"{action} <pair> <expr_str> [--force]", flush=True)
+            print(
+                f"usage: python -m hermes_forex.genetic_discovery "
+                f"{action} <pair> <expr_str> [--force]",
+                flush=True,
+            )
             sys.exit(2)
-        ok, msg = (promote_indicator(pair, expr_str, force=force)
-                   if action == "promote" else retire_indicator(pair, expr_str))
+        ok, msg = (
+            promote_indicator(pair, expr_str, force=force)
+            if action == "promote"
+            else retire_indicator(pair, expr_str)
+        )
         print(msg, flush=True)
         sys.exit(0 if ok else 1)
     pair = sys.argv[1] if len(sys.argv) > 1 else "EUR/USD"
     print(f"Running genetic indicator discovery for {pair}...", flush=True)
     results = run_and_register(pair)
     for r in results:
-        print(f"  [{r.get('n', 0)}] {r['expr_str']}: OOS corr={r.get('oos_corr', 0):.4f}", flush=True)
+        print(
+            f"  [{r.get('n', 0)}] {r['expr_str']}: OOS corr={r.get('oos_corr', 0):.4f}", flush=True
+        )
 ```
 
 ### hermes-forex/hermes_forex/gp_intelligence.py
@@ -9586,9 +11486,13 @@ class GpIntelligence:
                     for name in entry.get("indicators", []):
                         self._update_indicator(name, entry.get("regime", "UNKNOWN"), outcome)
                     # Update matrix
-                    ck = self._condition_key(pair, entry.get("regime", "UNKNOWN"),
-                                             entry.get("adx"), entry.get("vol_pct"),
-                                             entry.get("session"))
+                    ck = self._condition_key(
+                        pair,
+                        entry.get("regime", "UNKNOWN"),
+                        entry.get("adx"),
+                        entry.get("vol_pct"),
+                        entry.get("session"),
+                    )
                     self._update_matrix(ck, "gp", pnl_pct, "gp_ensemble")
                     break
             except Exception:
@@ -9657,8 +11561,10 @@ class GpIntelligence:
 
     def _update_matrix(self, key, entry_type, pnl_pct, stype):
         if key not in self._matrix:
-            self._matrix[key] = {"gp": {"n": 0, "wins": 0, "pnl": 0},
-                                 "traditional": {"n": 0, "wins": 0, "pnl": 0}}
+            self._matrix[key] = {
+                "gp": {"n": 0, "wins": 0, "pnl": 0},
+                "traditional": {"n": 0, "wins": 0, "pnl": 0},
+            }
         m = self._matrix[key].setdefault(entry_type, {"n": 0, "wins": 0, "pnl": 0})
         m["n"] += 1
         m["wins"] += 1 if pnl_pct > 0 else 0
@@ -9692,24 +11598,38 @@ class GpIntelligence:
         if not self._entry_log.exists():
             return []
         try:
-            entries = [json.loads(l) for l in self._entry_log.read_text().strip().split("\n") if l.strip()]
+            entries = [
+                json.loads(l) for l in self._entry_log.read_text().strip().split("\n") if l.strip()
+            ]
         except Exception:
             return []
 
-        fp = {"pair": pair, "regime": regime, "adx": round(adx or 0, 1),
-              "vol_pct": round(vol_pct or 0, 4), "session": session, "rsi": round(rsi or 0, 1)}
+        fp = {
+            "pair": pair,
+            "regime": regime,
+            "adx": round(adx or 0, 1),
+            "vol_pct": round(vol_pct or 0, 4),
+            "session": session,
+            "rsi": round(rsi or 0, 1),
+        }
 
         scored = []
         for e in entries:
             if e.get("outcome") is None:
                 continue
             score = 0
-            if e.get("pair") == pair: score += 5
-            if e.get("regime") == fp["regime"]: score += 3
-            if abs((e.get("adx") or 0) - fp["adx"]) < 5: score += 2
-            if abs((e.get("vol_pct") or 0) - fp["vol_pct"]) < 0.02: score += 2
-            if e.get("session") == fp["session"]: score += 2
-            if abs((e.get("rsi") or 0) - fp["rsi"]) < 10: score += 1
+            if e.get("pair") == pair:
+                score += 5
+            if e.get("regime") == fp["regime"]:
+                score += 3
+            if abs((e.get("adx") or 0) - fp["adx"]) < 5:
+                score += 2
+            if abs((e.get("vol_pct") or 0) - fp["vol_pct"]) < 0.02:
+                score += 2
+            if e.get("session") == fp["session"]:
+                score += 2
+            if abs((e.get("rsi") or 0) - fp["rsi"]) < 10:
+                score += 1
             scored.append((score, e))
 
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -9779,6 +11699,7 @@ class GpIntelligence:
 
 ```python
 """Chart vision module using yfinance + mplfinance + Groq AI analysis (Gemini fallback)."""
+
 import json
 import logging
 import os
@@ -9789,6 +11710,7 @@ from pathlib import Path
 # Set matplotlib backend BEFORE importing mplfinance
 os.environ["MPLBACKEND"] = "Agg"
 import matplotlib
+
 matplotlib.use("Agg")
 
 import httpx
@@ -9800,7 +11722,9 @@ logger = logging.getLogger(__name__)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-2.5-flash"
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+GEMINI_URL = (
+    f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+)
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -9884,18 +11808,29 @@ def generate_chart_png(df: pd.DataFrame, symbol: str) -> Path | None:
         style = mpf.make_mpf_style(
             base_mpf_style="nightclouds",
             marketcolors=mpf.make_marketcolors(
-                up="lime", down="red",
-                edge="inherit", wick="inherit", volume="in",
+                up="lime",
+                down="red",
+                edge="inherit",
+                wick="inherit",
+                volume="in",
             ),
         )
         add_plots = [
-            mpf.make_addplot(df["Close"].ewm(span=20).mean(), color="cyan", width=0.8, label="EMA20"),
-            mpf.make_addplot(df["Close"].ewm(span=50).mean(), color="yellow", width=0.8, label="EMA50"),
+            mpf.make_addplot(
+                df["Close"].ewm(span=20).mean(), color="cyan", width=0.8, label="EMA20"
+            ),
+            mpf.make_addplot(
+                df["Close"].ewm(span=50).mean(), color="yellow", width=0.8, label="EMA50"
+            ),
         ]
         mpf.plot(
-            df, type="candle", style=style,
-            title=f"\n{symbol} — 1H Chart", ylabel="Price",
-            volume=True, addplot=add_plots,
+            df,
+            type="candle",
+            style=style,
+            title=f"\n{symbol} — 1H Chart",
+            ylabel="Price",
+            volume=True,
+            addplot=add_plots,
             savefig=dict(fname=str(cache_path), dpi=150, bbox_inches="tight"),
             returnfig=False,
         )
@@ -9909,6 +11844,7 @@ def _parse_chart_response(text: str) -> str:
     """Try to parse JSON from LLM response. Falls back to raw text with structured prefix."""
     try:
         import re
+
         # Find JSON object in the response
         match = re.search(r'{[^}]*"trend"[^}]*}', text, re.DOTALL)
         if match:
@@ -9929,6 +11865,7 @@ def analyze_chart_gemini(png_path: Path, symbol: str) -> str | None:
     if not GEMINI_API_KEY:
         return None
     import base64
+
     try:
         with open(png_path, "rb") as f:
             img_bytes = f.read()
@@ -9937,12 +11874,14 @@ def analyze_chart_gemini(png_path: Path, symbol: str) -> str | None:
         return f"Chart read failed: {e}"
 
     payload = {
-        "contents": [{
-            "parts": [
-                {"text": CHART_PROMPT},
-                {"inline_data": {"mime_type": "image/png", "data": img_b64}},
-            ]
-        }]
+        "contents": [
+            {
+                "parts": [
+                    {"text": CHART_PROMPT},
+                    {"inline_data": {"mime_type": "image/png", "data": img_b64}},
+                ]
+            }
+        ]
     }
     params = {"key": GEMINI_API_KEY}
 
@@ -9970,6 +11909,7 @@ def analyze_chart_groq(png_path: Path, symbol: str) -> str | None:
     if not GROQ_API_KEY:
         return None
     import base64
+
     try:
         with open(png_path, "rb") as f:
             img_bytes = f.read()
@@ -9980,13 +11920,15 @@ def analyze_chart_groq(png_path: Path, symbol: str) -> str | None:
 
     payload = {
         "model": GROQ_MODEL,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": CHART_PROMPT},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
-            ],
-        }],
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": CHART_PROMPT},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
+                ],
+            }
+        ],
         "max_tokens": 300,
         "temperature": 0.3,
     }
@@ -10027,7 +11969,11 @@ def get_chart_context(symbol: str) -> str:
         else:
             print(f"[{symbol}] Groq failed ({context[:50]}) — trying Gemini fallback", flush=True)
         gemini_context = analyze_chart_gemini(png_path, symbol)
-        if gemini_context is not None and "unavailable" not in gemini_context.lower() and "failed" not in gemini_context.lower():
+        if (
+            gemini_context is not None
+            and "unavailable" not in gemini_context.lower()
+            and "failed" not in gemini_context.lower()
+        ):
             context = gemini_context
             first_line = context.splitlines()[0] if context else "N/A"
             print(f"[{symbol}] Chart: {first_line}", flush=True)
@@ -10226,6 +12172,7 @@ def get_crisis_recommendation(features):
 
 # ── Online Crisis Learning (Phase 2b) ──
 
+
 def _compute_crisis_signature_from_history(price_history, volume_history):
     """Build a crisis signature feature vector from recent price history.
     Samples at intervals to create the multi-timestep signature."""
@@ -10238,7 +12185,9 @@ def _compute_crisis_signature_from_history(price_history, volume_history):
         if abs(idx) >= len(price_history):
             continue
         chunk = price_history[idx:]
-        vol_chunk = volume_history[idx:] if volume_history and abs(idx) < len(volume_history) else None
+        vol_chunk = (
+            volume_history[idx:] if volume_history and abs(idx) < len(volume_history) else None
+        )
         features = _extract_crisis_features(chunk, vol_chunk)
         if features:
             signature.append(features)
@@ -10313,7 +12262,10 @@ def save_lived_crisis(pair, pnl_impact, price_history, volume_history):
         "ts": datetime.now(timezone.utc).isoformat(),
     }
     _save_crises(crises)
-    print(f"[CRISIS] Saved lived crisis: {crisis_id} ({'survived' if is_survived else 'danger'}, pnl={pnl_impact:.2f}%)", flush=True)
+    print(
+        f"[CRISIS] Saved lived crisis: {crisis_id} ({'survived' if is_survived else 'danger'}, pnl={pnl_impact:.2f}%)",
+        flush=True,
+    )
 
 
 def get_safety_status():
@@ -10335,6 +12287,7 @@ Decision Cortex — unified memory for Reflection Engine, GP Discovery, and Back
 
 Every system reads from and writes to the Cortex. No more silos.
 """
+
 import json
 from pathlib import Path
 from datetime import datetime, timezone
@@ -10342,13 +12295,17 @@ from collections import defaultdict
 
 # ── State paths ──
 _STATE_DIR = None
+
+
 def _resolve_state():
     global _STATE_DIR
     if _STATE_DIR:
         return _STATE_DIR
-    for p in [Path("/app/state"),
-              Path("D:/projects/hermes-forex/state"),
-              Path("D:/projects/hermes-gold/state")]:
+    for p in [
+        Path("/app/state"),
+        Path("D:/projects/hermes-forex/state"),
+        Path("D:/projects/hermes-gold/state"),
+    ]:
         if p.exists():
             _STATE_DIR = p
             break
@@ -10368,49 +12325,70 @@ def _load_json(name, default=None):
     try:
         if p.exists():
             return json.loads(p.read_text())
-    except: pass
+    except:
+        pass
     return default if default is not None else {}
 
 
 def _save_json(name, data):
     try:
         (_cdir() / name).write_text(json.dumps(data, indent=2))
-    except: pass
+    except:
+        pass
 
 
 # ─────────────────────────────────────────────
 # 1. ENTRY TRACKING — every trade, every type
 # ─────────────────────────────────────────────
 
-def record_entry(pair: str, entry_type: str, strategy_ver: str,
-                 indicators: list = None, regime: str = None,
-                 adx: float = None, vol_pct: float = None,
-                 session: str = None, rsi: float = None):
+
+def record_entry(
+    pair: str,
+    entry_type: str,
+    strategy_ver: str,
+    indicators: list = None,
+    regime: str = None,
+    adx: float = None,
+    vol_pct: float = None,
+    session: str = None,
+    rsi: float = None,
+):
     """Log every trade open — called by loop.py."""
     entry = {
-        "pair": pair, "type": entry_type, "ver": strategy_ver,
+        "pair": pair,
+        "type": entry_type,
+        "ver": strategy_ver,
         "ts": datetime.now(timezone.utc).isoformat(),
-        "outcome": None, "pnl": None, "exit_reason": None,
-        "fp": {"regime": regime, "adx": round(adx or 0, 1),
-               "vol": round(vol_pct or 0, 4), "session": session,
-               "rsi": round(rsi or 0, 1),
-               "day": datetime.now(timezone.utc).strftime("%A"),
-               "hour": datetime.now(timezone.utc).hour},
+        "outcome": None,
+        "pnl": None,
+        "exit_reason": None,
+        "fp": {
+            "regime": regime,
+            "adx": round(adx or 0, 1),
+            "vol": round(vol_pct or 0, 4),
+            "session": session,
+            "rsi": round(rsi or 0, 1),
+            "day": datetime.now(timezone.utc).strftime("%A"),
+            "hour": datetime.now(timezone.utc).hour,
+        },
         "indicators": indicators or [],
     }
     try:
         with open(_cdir() / "entries.jsonl", "a") as f:
             f.write(json.dumps(entry) + "\n")
-    except: pass
+    except:
+        pass
 
 
 def record_outcome(pair: str, entry_type: str, pnl: float, exit_reason: str):
     """Record trade close outcome — called by loop.py."""
     log = _cdir() / "entries.jsonl"
-    if not log.exists(): return
+    if not log.exists():
+        return
     try:
         lines = log.read_text().strip().split("\n")
-    except: return
+    except:
+        return
     updated = False
     for i in range(len(lines) - 1, -1, -1):
         try:
@@ -10428,46 +12406,70 @@ def record_outcome(pair: str, entry_type: str, pnl: float, exit_reason: str):
                 # Auto-decay: reconsider exiled indicators periodically
                 _exile_decay_check()
                 break
-        except: pass
+        except:
+            pass
     if updated:
         try:
             log.write_text("\n".join(lines) + "\n")
-        except: pass
+        except:
+            pass
 
 
 # ─────────────────────────────────────────────
 # 2. REFLECTION HYPOTHESIS TRACKING
 # ─────────────────────────────────────────────
 
-def record_hypothesis(pair: str, param: str, old_val, new_val, verdict: str, entry_types: list = None):
+
+def record_hypothesis(
+    pair: str, param: str, old_val, new_val, verdict: str, entry_types: list = None
+):
     """Log every reflection proposal — called by reflect.py."""
     h = {
-        "pair": pair, "param": param, "old": old_val, "new": new_val,
-        "verdict": verdict, "ts": datetime.now(timezone.utc).isoformat(),
+        "pair": pair,
+        "param": param,
+        "old": old_val,
+        "new": new_val,
+        "verdict": verdict,
+        "ts": datetime.now(timezone.utc).isoformat(),
         "entry_types": entry_types or [],
         "impact": None,
     }
     try:
         with open(_cdir() / "hypotheses.jsonl", "a") as f:
             f.write(json.dumps(h) + "\n")
-    except: pass
+    except:
+        pass
 
 
 # ─────────────────────────────────────────────
 # 3. GP DISCOVERY TRACKING
 # ─────────────────────────────────────────────
 
-def record_discovery(pair: str, name: str, expr: str, backtest_wr: float, backtest_pnl: float, 
-                     crisis_passed: bool = True, multi_dim: list = None):
+
+def record_discovery(
+    pair: str,
+    name: str,
+    expr: str,
+    backtest_wr: float,
+    backtest_pnl: float,
+    crisis_passed: bool = True,
+    multi_dim: list = None,
+):
     """Log every new indicator discovery — called by backtest.py."""
     d = {
-        "pair": pair, "name": name, "expr": expr,
-        "bt_wr": backtest_wr, "bt_pnl": backtest_pnl,
+        "pair": pair,
+        "name": name,
+        "expr": expr,
+        "bt_wr": backtest_wr,
+        "bt_pnl": backtest_pnl,
         "crisis_passed": crisis_passed,
         "multi_dim": multi_dim or [],
         "ts": datetime.now(timezone.utc).isoformat(),
-        "live_entries": 0, "live_wins": 0, "live_pnl": 0.0,
-        "exiled": False, "exile_reason": None,
+        "live_entries": 0,
+        "live_wins": 0,
+        "live_pnl": 0.0,
+        "exiled": False,
+        "exile_reason": None,
     }
     # Check if already registered
     existing = load_discoveries(pair=pair)
@@ -10477,13 +12479,15 @@ def record_discovery(pair: str, name: str, expr: str, backtest_wr: float, backte
     try:
         with open(_cdir() / "discoveries.jsonl", "a") as f:
             f.write(json.dumps(d) + "\n")
-    except: pass
+    except:
+        pass
     return True
 
 
 # ─────────────────────────────────────────────
 # 4. QUERIES — what the three systems ask
 # ─────────────────────────────────────────────
+
 
 def entry_type_wr(pair: str = None, entry_type: str = None, min_trades: int = 5):
     """Reflection engine asks: what's the WR for GP entries on EUR/USD?"""
@@ -10536,8 +12540,9 @@ def condition_key(pair: str, regime: str, adx: float, vol_pct: float, session: s
     return f"{ref}|{regime}|{ab}|{vb}|{session}"
 
 
-def best_entry_type(pair: str, regime: str, adx: float, vol_pct: float, session: str,
-                    min_data: int = 5):
+def best_entry_type(
+    pair: str, regime: str, adx: float, vol_pct: float, session: str, min_data: int = 5
+):
     """Return which entry type performs best in these conditions."""
     ck = condition_key(pair, regime, adx, vol_pct, session)
     types = ["gp_ensemble", "mean_reversion", "rsi_momentum"]
@@ -10558,15 +12563,19 @@ def best_entry_type(pair: str, regime: str, adx: float, vol_pct: float, session:
 def load_discoveries(pair: str = None) -> list:
     """Load all GP discoveries, optionally filtered by pair."""
     log = _cdir() / "discoveries.jsonl"
-    if not log.exists(): return []
+    if not log.exists():
+        return []
     results = []
     try:
         for line in log.read_text().strip().split("\n"):
-            if not line.strip(): continue
+            if not line.strip():
+                continue
             d = json.loads(line)
-            if pair and d.get("pair") != pair: continue
+            if pair and d.get("pair") != pair:
+                continue
             results.append(d)
-    except: pass
+    except:
+        pass
     return results
 
 
@@ -10580,26 +12589,30 @@ def summary() -> dict:
     for e in entries:
         t = e.get("type", "unknown")
         by_type[t]["n"] += 1
-        if e.get("outcome") == "win": by_type[t]["wins"] += 1
+        if e.get("outcome") == "win":
+            by_type[t]["wins"] += 1
         by_type[t]["pnl"] += e.get("pnl", 0)
 
     by_pair = defaultdict(lambda: {"n": 0, "wins": 0, "pnl": 0.0})
     for e in entries:
         p = e.get("pair", "?")
         by_pair[p]["n"] += 1
-        if e.get("outcome") == "win": by_pair[p]["wins"] += 1
+        if e.get("outcome") == "win":
+            by_pair[p]["wins"] += 1
         by_pair[p]["pnl"] += e.get("pnl", 0)
 
     # Which indicators are near exile threshold?
     near_exile = []
     for name, s in stats.items():
         if s.get("entries", 0) >= 5 and s.get("wins", 0) / s["entries"] < 0.3:
-            near_exile.append({
-                "name": name,
-                "entries": s["entries"],
-                "wr": round(s["wins"] / s["entries"], 3),
-                "exiled": name in exiles,
-            })
+            near_exile.append(
+                {
+                    "name": name,
+                    "entries": s["entries"],
+                    "wr": round(s["wins"] / s["entries"], 3),
+                    "exiled": name in exiles,
+                }
+            )
 
     all_entries = _load_entries()
     entries_open = sum(1 for e in all_entries if e.get("outcome") is None)
@@ -10618,19 +12631,26 @@ def summary() -> dict:
 
 # ─── Internal helpers ───
 
+
 def _load_entries(pair: str = None, entry_type: str = None, completed: bool = False) -> list:
     log = _cdir() / "entries.jsonl"
-    if not log.exists(): return []
+    if not log.exists():
+        return []
     results = []
     try:
         for line in log.read_text().strip().split("\n"):
-            if not line.strip(): continue
+            if not line.strip():
+                continue
             e = json.loads(line)
-            if pair and e.get("pair") != pair: continue
-            if entry_type and e.get("type") != entry_type: continue
-            if completed and e.get("outcome") is None: continue
+            if pair and e.get("pair") != pair:
+                continue
+            if entry_type and e.get("type") != entry_type:
+                continue
+            if completed and e.get("outcome") is None:
+                continue
             results.append(e)
-    except: pass
+    except:
+        pass
     return results
 
 
@@ -10654,9 +12674,11 @@ def _check_exile(entry: dict):
     newly_exiled = []
     for ind in entry.get("indicators", []):
         name = ind if isinstance(ind, str) else ind.get("name", ind.get("expr", "?"))
-        if name in exiles: continue
+        if name in exiles:
+            continue
         s = stats.get(name)
-        if not s: continue
+        if not s:
+            continue
         gp_stats = s.get("by_type", {}).get("gp_ensemble", {})
         n = gp_stats.get("entries", 0)
         if n >= 5:
@@ -10673,10 +12695,13 @@ def _check_exile(entry: dict):
 
 
 _DISCORD_EXILE_WEBHOOK = None
+
+
 def _get_webhook():
     global _DISCORD_EXILE_WEBHOOK
     if _DISCORD_EXILE_WEBHOOK is None:
         import os
+
         _DISCORD_EXILE_WEBHOOK = os.environ.get("DISCORD_ALERTS_WEBHOOK", "")
         if not _DISCORD_EXILE_WEBHOOK:
             wf = _resolve_state() / ".discord_alerts_webhook"
@@ -10684,21 +12709,27 @@ def _get_webhook():
                 _DISCORD_EXILE_WEBHOOK = wf.read_text().strip()
     return _DISCORD_EXILE_WEBHOOK
 
+
 def _notify_exile(names: list, entry: dict):
     webhook = _get_webhook()
-    if not webhook: return
+    if not webhook:
+        return
     try:
         import httpx
-        desc = "\n".join(f"• `{n}` — {entry.get('pair','?')}" for n in names)
+
+        desc = "\n".join(f"• `{n}` — {entry.get('pair', '?')}" for n in names)
         httpx.post(webhook, json={"content": f"🚫 **Indicator Exiled**\n{desc}"}, timeout=5)
         print(f"[CORTEX] Discord alert sent for {len(names)} exiled indicators", flush=True)
-    except Exception: pass
+    except Exception:
+        pass
+
 
 def _update_indicator_stats(entry: dict):
     """Update per-indicator live entry statistics."""
     stats = _load_json("indicator_tracker.json")
     outcome = entry.get("outcome")
-    if not outcome: return
+    if not outcome:
+        return
     for ind in entry.get("indicators", []):
         name = ind if isinstance(ind, str) else ind.get("name", ind.get("expr", "?"))
         if name not in stats:
@@ -10706,18 +12737,22 @@ def _update_indicator_stats(entry: dict):
         s = stats[name]
         t = entry.get("type", "unknown")
         s["entries"] += 1
-        if outcome == "win": s["wins"] += 1
+        if outcome == "win":
+            s["wins"] += 1
         s["pnl"] += entry.get("pnl", 0)
         if t not in s["by_type"]:
             s["by_type"][t] = {"entries": 0, "wins": 0}
         s["by_type"][t]["entries"] += 1
-        if outcome == "win": s["by_type"][t]["wins"] += 1
+        if outcome == "win":
+            s["by_type"][t]["wins"] += 1
     _save_json("indicator_tracker.json", stats)
 
 
 # ── Exile decay: reconsider exiled indicators after enough new data ──
 
 _EXILE_DECAY_INTERVAL = 100  # Check every N total entries
+
+
 def _exile_decay_check():
     """Reconsider exiled indicators if they've proven themselves since exile."""
     exiles = _load_json("indicator_exile.json")
@@ -10729,7 +12764,8 @@ def _exile_decay_check():
     try:
         if entries_log.exists():
             total = len(entries_log.read_text().strip().split("\n"))
-    except: pass
+    except:
+        pass
     if total == 0 or total % _EXILE_DECAY_INTERVAL != 0:
         return
 
@@ -10746,22 +12782,33 @@ def _exile_decay_check():
                 reinstated.append(name)
     if reinstated:
         _save_json("indicator_exile.json", exiles)
-        print(f"[CORTEX] Reinstated {len(reinstated)} indicators after decay check: "
-              f"{', '.join(reinstated)}", flush=True)
+        print(
+            f"[CORTEX] Reinstated {len(reinstated)} indicators after decay check: "
+            f"{', '.join(reinstated)}",
+            flush=True,
+        )
         # Send Discord notification
         _notify_reinstatement(reinstated)
 
 
 _DISCORD_WEBHOOK_CHECKED = False
+
+
 def _notify_reinstatement(names: list):
     global _DISCORD_WEBHOOK_CHECKED
     webhook = _get_webhook()
-    if not webhook: return
+    if not webhook:
+        return
     try:
         import httpx
-        httpx.post(webhook, json={
-            "content": f"♻️ **Indicator Reinstated**\n" + "\n".join(f"• `{n}`" for n in names)
-        }, timeout=5)
+
+        httpx.post(
+            webhook,
+            json={
+                "content": f"♻️ **Indicator Reinstated**\n" + "\n".join(f"• `{n}`" for n in names)
+            },
+            timeout=5,
+        )
     except Exception:
         pass
 ```
@@ -10776,6 +12823,7 @@ strategies, trigger priority discovery, and accelerate probes.
 
 Runs every POLICY_INTERVAL cycles. Stores decisions in state/cortex/policy.json.
 """
+
 import json, os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10785,33 +12833,45 @@ _POLICY_CACHE = None  # Latest policy dict
 
 # ── Shared state paths (mirrors decision_cortex) ──
 _STATE_DIR = None
+
+
 def _resolve_state():
     global _STATE_DIR
-    if _STATE_DIR: return _STATE_DIR
+    if _STATE_DIR:
+        return _STATE_DIR
     for p in [Path("/app/state"), Path("state"), Path("D:/projects/hermes-forex/state")]:
-        if p.exists(): _STATE_DIR = p; break
-    if not _STATE_DIR: _STATE_DIR = Path.home() / "hermes_state"
+        if p.exists():
+            _STATE_DIR = p
+            break
+    if not _STATE_DIR:
+        _STATE_DIR = Path.home() / "hermes_state"
     _STATE_DIR.mkdir(parents=True, exist_ok=True)
     return _STATE_DIR
 
+
 def _load_policy():
     global _POLICY_CACHE
-    if _POLICY_CACHE is not None: return _POLICY_CACHE
+    if _POLICY_CACHE is not None:
+        return _POLICY_CACHE
     p = _resolve_state() / "cortex" / "policy.json"
     if p.exists():
-        try: _POLICY_CACHE = json.loads(p.read_text())
-        except: pass
+        try:
+            _POLICY_CACHE = json.loads(p.read_text())
+        except:
+            pass
     if _POLICY_CACHE is None:
         _POLICY_CACHE = {
-            "version": 1, "updated_at": None,
-            "suppressions": {},      # {pair: {entry_type: bool}}
-            "allocation": {},         # {pair: {entry_type: weight_pct}}
-            "probe_interval": 50,    # Default probe every 50 cycles
-            "priority_discovery": [], # Pairs needing urgent GP discovery
-            "rollback_candidates": [],# Strategy versions that should be rolled back
-            "decisions": [],         # Last 20 decisions with reasoning
+            "version": 1,
+            "updated_at": None,
+            "suppressions": {},  # {pair: {entry_type: bool}}
+            "allocation": {},  # {pair: {entry_type: weight_pct}}
+            "probe_interval": 50,  # Default probe every 50 cycles
+            "priority_discovery": [],  # Pairs needing urgent GP discovery
+            "rollback_candidates": [],  # Strategy versions that should be rolled back
+            "decisions": [],  # Last 20 decisions with reasoning
         }
     return _POLICY_CACHE
+
 
 def _save_policy(policy):
     global _POLICY_CACHE
@@ -10820,15 +12880,20 @@ def _save_policy(policy):
     d.mkdir(parents=True, exist_ok=True)
     (d / "policy.json").write_text(json.dumps(policy, indent=2))
 
+
 def _add_decision(policy, decision: str):
     policy.setdefault("decisions", [])
-    policy["decisions"].append({
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "text": decision,
-    })
+    policy["decisions"].append(
+        {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "text": decision,
+        }
+    )
     policy["decisions"] = policy["decisions"][-20:]  # Keep last 20
 
+
 # ── Public API ──
+
 
 def get_policy() -> dict:
     """Return the current policy. Thread-safe (re-reads on each call)."""
@@ -10836,9 +12901,10 @@ def get_policy() -> dict:
     _POLICY_CACHE = None  # Force re-read
     return _load_policy()
 
+
 def evaluate(cycle: int, pairs: list, current_strategies: dict, cycle_age: int = 0):
     """Run the policy engine. Called from loop.py every POLICY_INTERVAL cycles.
-    
+
     Args:
         cycle: Current bot cycle number
         pairs: List of active trading pairs
@@ -10856,8 +12922,10 @@ def evaluate(cycle: int, pairs: list, current_strategies: dict, cycle_age: int =
     # Import cortex functions
     try:
         from hermes_forex.decision_cortex import (
-            entry_type_wr, entry_type_pnl, summary,
-            get_exiled_indicators
+            entry_type_wr,
+            entry_type_pnl,
+            summary,
+            get_exiled_indicators,
         )
     except Exception:
         return policy
@@ -10894,7 +12962,7 @@ def evaluate(cycle: int, pairs: list, current_strategies: dict, cycle_age: int =
             pnl = entry_type_pnl(pair, et)
             if wr is not None:
                 entry_types.append((et, label, wr, pnl))
-        
+
         if entry_types and len(entry_types) >= 2:
             # Weight by WR * positive PnL bias
             total_weight = sum(max(0.05, w * (1 + max(0, p))) for _, _, w, p in entry_types)
@@ -10902,7 +12970,7 @@ def evaluate(cycle: int, pairs: list, current_strategies: dict, cycle_age: int =
             for et, label, w, p in entry_types:
                 raw = max(0.05, w * (1 + max(0, p)))
                 new_alloc[et] = round(raw / total_weight * 100, 1)
-            
+
             # Check if allocation changed significantly
             old_pct = {k: alloc.get(k, 0) for k in new_alloc}
             if any(abs(new_alloc.get(k, 0) - old_pct.get(k, 0)) > 10 for k in new_alloc):
@@ -10915,7 +12983,9 @@ def evaluate(cycle: int, pairs: list, current_strategies: dict, cycle_age: int =
         if total_exiles >= 2 and not policy.get("priority_discovery"):
             for pair in pairs:
                 policy.setdefault("priority_discovery", []).append(pair)
-            _add_decision(policy, f"🔬 Priority discovery: {total_exiles} indicators exiled across fleet")
+            _add_decision(
+                policy, f"🔬 Priority discovery: {total_exiles} indicators exiled across fleet"
+            )
             changed = True
         elif total_exiles < 2 and policy.get("priority_discovery"):
             policy["priority_discovery"] = []
@@ -10929,10 +12999,13 @@ def evaluate(cycle: int, pairs: list, current_strategies: dict, cycle_age: int =
         new_interval = 25
     else:
         new_interval = 50
-    
+
     if new_interval != policy.get("probe_interval", 50):
         policy["probe_interval"] = new_interval
-        _add_decision(policy, f"🚀 Probe interval accelerated to every {new_interval} cycles ({total_entries} entries)")
+        _add_decision(
+            policy,
+            f"🚀 Probe interval accelerated to every {new_interval} cycles ({total_entries} entries)",
+        )
         changed = True
 
     # ── 5. Auto-Rollback Candidates ──
@@ -10949,13 +13022,19 @@ def evaluate(cycle: int, pairs: list, current_strategies: dict, cycle_age: int =
                 # Simple heuristic: if MR WR is below 30% and the pair has 10+ trades, flag
                 if mr_wr_curr and mr_wr_curr < 0.3 and total_trades >= 10:
                     # Check if pair+version already exists in rollback list
-                    existing = [c for c in policy.get("rollback_candidates", [])
-                               if c.get("pair") == pair and c.get("version") == cur_ver]
+                    existing = [
+                        c
+                        for c in policy.get("rollback_candidates", [])
+                        if c.get("pair") == pair and c.get("version") == cur_ver
+                    ]
                     if not existing:
                         policy.setdefault("rollback_candidates", []).append(
                             {"pair": pair, "version": cur_ver, "reason": f"MR WR={mr_wr_curr:.0%}"}
                         )
-                        _add_decision(policy, f"[{pair}] ⚠️ Rollback candidate v{cur_ver}: MR WR={mr_wr_curr:.0%}")
+                        _add_decision(
+                            policy,
+                            f"[{pair}] ⚠️ Rollback candidate v{cur_ver}: MR WR={mr_wr_curr:.0%}",
+                        )
                         changed = True
             except Exception:
                 pass
@@ -10963,15 +13042,18 @@ def evaluate(cycle: int, pairs: list, current_strategies: dict, cycle_age: int =
     if changed:
         policy["updated_at"] = datetime.now(timezone.utc).isoformat()
         _save_policy(policy)
-    
+
     return policy
+
 
 # ── Integration: hook called from loop.py after entry logic ──
 ENABLED = True
 
+
 def set_enabled(state: bool):
     global ENABLED
     ENABLED = state
+
 
 def is_enabled() -> bool:
     return ENABLED
@@ -10984,9 +13066,11 @@ def is_enabled() -> bool:
 Self-Audit System — finds gaps, contradictions, and silent failures
 Run on demand or as a weekly cron. Reports findings in structured format.
 """
+
 import json, os, sys
 from pathlib import Path
 from datetime import datetime, timezone
+
 
 class SelfAudit:
     def __init__(self):
@@ -10996,9 +13080,11 @@ class SelfAudit:
         self.info = 0
         # Resolve state dir (same logic as decision_cortex)
         self.state = None
-        for p in [Path("/app/state"),
-                  Path("D:/projects/hermes-forex/state"),
-                  Path("D:/projects/hermes-gold/state")]:
+        for p in [
+            Path("/app/state"),
+            Path("D:/projects/hermes-forex/state"),
+            Path("D:/projects/hermes-gold/state"),
+        ]:
             if p.exists():
                 self.state = p
                 break
@@ -11028,14 +13114,18 @@ class SelfAudit:
 
         trades_file = state / "trades.jsonl"
         if not trades_file.exists():
-            self._warn("Reflection: trades.jsonl missing",
-                       "Trades file doesn't exist. Recovery may have failed or no trades yet.")
+            self._warn(
+                "Reflection: trades.jsonl missing",
+                "Trades file doesn't exist. Recovery may have failed or no trades yet.",
+            )
             return
 
         trade_lines = trades_file.read_text().strip().split("\n")
         if len(trade_lines) < 3:
-            self._warn("Reflection: data quality gate active",
-                       f"Only {len(trade_lines)} trades — reflection needs ≥3 to act.")
+            self._warn(
+                "Reflection: data quality gate active",
+                f"Only {len(trade_lines)} trades — reflection needs ≥3 to act.",
+            )
 
         # Check hypotheses
         hyp_file = state / "hypotheses.jsonl"
@@ -11044,29 +13134,39 @@ class SelfAudit:
             scored = [h for h in hyps if h.get("scored")]
             unscored = [h for h in hyps if not h.get("scored")]
             if unscored:
-                self._info("Reflection: pending hypotheses",
-                           f"{len(unscored)} hypotheses waiting for trade data to be scored.")
+                self._info(
+                    "Reflection: pending hypotheses",
+                    f"{len(unscored)} hypotheses waiting for trade data to be scored.",
+                )
             if scored:
                 failed = [h for h in scored if h.get("score", 0) < 0]
                 if failed:
-                    self._warn("Reflection: failed hypotheses",
-                               f"{len(failed)}/{len(scored)} hypotheses scored negative. "
-                               f"Check {', '.join(h.get('variable','?') for h in failed[:3])}.")
+                    self._warn(
+                        "Reflection: failed hypotheses",
+                        f"{len(failed)}/{len(scored)} hypotheses scored negative. "
+                        f"Check {', '.join(h.get('variable', '?') for h in failed[:3])}.",
+                    )
         else:
-            self._info("Reflection: no hypotheses yet",
-                       "No hypotheses file. Engine may not have run yet.")
+            self._info(
+                "Reflection: no hypotheses yet", "No hypotheses file. Engine may not have run yet."
+            )
 
         # Check cooldown
         cd_file = state / ".cooldown.json"
         if cd_file.exists():
             try:
                 cd = json.loads(cd_file.read_text())
-                cooling = {k for k, v in cd.items() if isinstance(v, dict) and v.get("skips", 0) >= 5}
+                cooling = {
+                    k for k, v in cd.items() if isinstance(v, dict) and v.get("skips", 0) >= 5
+                }
                 if cooling:
-                    self._warn("Reflection: cooldown active",
-                               f"{len(cooling)} pairs in cooldown: {', '.join(cooling)}. "
-                               "Reflection has skipped 5+ cycles without making changes.")
-            except: pass
+                    self._warn(
+                        "Reflection: cooldown active",
+                        f"{len(cooling)} pairs in cooldown: {', '.join(cooling)}. "
+                        "Reflection has skipped 5+ cycles without making changes.",
+                    )
+            except:
+                pass
 
     # ── 2. GP Entry Health ──
 
@@ -11077,18 +13177,24 @@ class SelfAudit:
         # Entry log
         entry_log = state / "gp_entries.jsonl"
         if entry_log.exists():
-            entries = [json.loads(l) for l in entry_log.read_text().strip().split("\n") if l.strip()]
+            entries = [
+                json.loads(l) for l in entry_log.read_text().strip().split("\n") if l.strip()
+            ]
             completed = [e for e in entries if e.get("outcome")]
             if completed:
                 wins = sum(1 for e in completed if e["outcome"] == "win")
                 total_pnl = sum(e.get("pnl", 0) for e in completed)
-                self._info("GP Entries: track record",
-                           f"{len(completed)} completed GP entries: {wins}W/{len(completed)-wins}L "
-                           f"({wins/len(completed)*100:.0f}%) PnL={total_pnl:+.2f}%")
+                self._info(
+                    "GP Entries: track record",
+                    f"{len(completed)} completed GP entries: {wins}W/{len(completed) - wins}L "
+                    f"({wins / len(completed) * 100:.0f}%) PnL={total_pnl:+.2f}%",
+                )
                 if wins / len(completed) < 0.4 and len(completed) >= 5:
-                    self._critical("GP Entries: losing consistently",
-                                   f"{wins}/{len(completed)} wins ({wins/len(completed)*100:.0f}%) "
-                                   f"across {len(completed)} completions. GP Intelligence should suppress.")
+                    self._critical(
+                        "GP Entries: losing consistently",
+                        f"{wins}/{len(completed)} wins ({wins / len(completed) * 100:.0f}%) "
+                        f"across {len(completed)} completions. GP Intelligence should suppress.",
+                    )
                 # Check per-indicator
                 indicators = {}
                 for e in completed:
@@ -11098,19 +13204,28 @@ class SelfAudit:
                         indicators[name]["total"] += 1
                         if e["outcome"] == "win":
                             indicators[name]["wins"] += 1
-                bad_inds = {k: v for k, v in indicators.items()
-                           if v["total"] >= 5 and v["wins"]/v["total"] < 0.3}
+                bad_inds = {
+                    k: v
+                    for k, v in indicators.items()
+                    if v["total"] >= 5 and v["wins"] / v["total"] < 0.3
+                }
                 if bad_inds:
                     for name, stats in bad_inds.items():
-                        self._critical(f"GP Entry: indicator {name} losing",
-                                       f"{stats['wins']}/{stats['total']} wins "
-                                       f"({stats['wins']/stats['total']*100:.0f}%) — "
-                                       f"should be exiled from GP entry votes.")
+                        self._critical(
+                            f"GP Entry: indicator {name} losing",
+                            f"{stats['wins']}/{stats['total']} wins "
+                            f"({stats['wins'] / stats['total'] * 100:.0f}%) — "
+                            f"should be exiled from GP entry votes.",
+                        )
             else:
-                self._info("GP Entries: no completions yet",
-                           f"{len(entries)} entries logged, none completed.")
+                self._info(
+                    "GP Entries: no completions yet",
+                    f"{len(entries)} entries logged, none completed.",
+                )
         else:
-            self._info("GP Entries: no log yet", "No gp_entries.jsonl. GP Intelligence may not have run.")
+            self._info(
+                "GP Entries: no log yet", "No gp_entries.jsonl. GP Intelligence may not have run."
+            )
 
         # Lockout
         lockout_file = state / "gp_lockout.json"
@@ -11118,8 +13233,10 @@ class SelfAudit:
             lo = json.loads(lockout_file.read_text())
             locked = {k for k, v in lo.items() if v.get("locked")}
             if locked:
-                self._info("GP Entries: locked out pairs",
-                           f"{len(locked)} pairs locked: {', '.join(locked)}")
+                self._info(
+                    "GP Entries: locked out pairs",
+                    f"{len(locked)} pairs locked: {', '.join(locked)}",
+                )
 
         # Indicator stats
         stats_file = state / "gp_indicator_stats.json"
@@ -11127,9 +13244,11 @@ class SelfAudit:
             stats = json.loads(stats_file.read_text())
             for name, s in stats.items():
                 if s.get("total", 0) >= 5 and s.get("wins", 0) / s["total"] < 0.3:
-                    self._critical(f"GP Intelligence: indicator {name} failing",
-                                   f"{s['wins']}/{s['total']} GP entry wins "
-                                   f"({s['wins']/s['total']*100:.0f}%) — below 30% threshold.")
+                    self._critical(
+                        f"GP Intelligence: indicator {name} failing",
+                        f"{s['wins']}/{s['total']} GP entry wins "
+                        f"({s['wins'] / s['total'] * 100:.0f}%) — below 30% threshold.",
+                    )
         else:
             self._info("GP Intelligence: no stats yet", "Indicator stats not initialized.")
 
@@ -11142,22 +13261,33 @@ class SelfAudit:
         if deg_file.exists():
             deg = json.loads(deg_file.read_text())
             if not deg:
-                self._warn("Degradation: empty",
-                           "_live_deg.json exists but is empty. No indicators have 50+ signals.")
+                self._warn(
+                    "Degradation: empty",
+                    "_live_deg.json exists but is empty. No indicators have 50+ signals.",
+                )
             else:
                 culled = {k for k, v in deg.items() if v.get("culled")}
                 if culled:
-                    self._info("Degradation: culled indicators",
-                               f"{len(culled)} indicators auto-culled: {', '.join(list(culled)[:5])}")
-                near_cull = {k for k, v in deg.items()
-                            if v.get("count", 0) >= 40 and v.get("win_rate", 1) < 0.4}
+                    self._info(
+                        "Degradation: culled indicators",
+                        f"{len(culled)} indicators auto-culled: {', '.join(list(culled)[:5])}",
+                    )
+                near_cull = {
+                    k
+                    for k, v in deg.items()
+                    if v.get("count", 0) >= 40 and v.get("win_rate", 1) < 0.4
+                }
                 if near_cull:
-                    self._warn("Degradation: near cull threshold",
-                               f"{len(near_cull)} indicators close to being culled: "
-                               f"{', '.join(list(near_cull)[:3])}")
+                    self._warn(
+                        "Degradation: near cull threshold",
+                        f"{len(near_cull)} indicators close to being culled: "
+                        f"{', '.join(list(near_cull)[:3])}",
+                    )
         else:
-            self._warn("Degradation: file missing",
-                       "_live_deg.json doesn't exist. record_signal_outcome may not be writing.")
+            self._warn(
+                "Degradation: file missing",
+                "_live_deg.json doesn't exist. record_signal_outcome may not be writing.",
+            )
 
     # ── 4. GP Discovery / Cron ──
 
@@ -11168,18 +13298,23 @@ class SelfAudit:
         if disc_dir.exists():
             files = list(disc_dir.glob("*.json"))
             non_deg = [f for f in files if f.name != "_live_deg.json"]
-            self._info("Discovery: registered indicators",
-                       f"{len(non_deg)} pair files with discovered indicators.")
+            self._info(
+                "Discovery: registered indicators",
+                f"{len(non_deg)} pair files with discovered indicators.",
+            )
             total_inds = 0
             for f in non_deg:
                 try:
                     data = json.loads(f.read_text())
                     total_inds += len(data.get("indicators", []))
-                except: pass
+                except:
+                    pass
             self._info(f"Discovery: {total_inds} total indicators across {len(non_deg)} pairs")
         else:
-            self._warn("Discovery: no indicator directory",
-                       "state/discovered/ doesn't exist. GP discovery may not have run.")
+            self._warn(
+                "Discovery: no indicator directory",
+                "state/discovered/ doesn't exist. GP discovery may not have run.",
+            )
 
     # ── 5. Dashboard API Health ──
 
@@ -11187,8 +13322,10 @@ class SelfAudit:
         """Check dashboard API is reachable and returning data."""
         try:
             import httpx as _h
-            base = os.environ.get("DASHBOARD_URL",
-                                  "https://hermes-dashboard-api-production.up.railway.app")
+
+            base = os.environ.get(
+                "DASHBOARD_URL", "https://hermes-dashboard-api-production.up.railway.app"
+            )
             # Pulse
             r = _h.get(f"{base}/api/bot/forex/pulse", timeout=5)
             if r.status_code != 200:
@@ -11204,8 +13341,10 @@ class SelfAudit:
             # Ingest test
             r3 = _h.post(f"{base}/api/ingest/forex", json={"bot_name": "forex"}, timeout=5)
             if r3.status_code == 500:
-                self._critical("Dashboard: ingest returning 500",
-                               "Bot heartbeat pushes will fail. Check for missing 'await' or schema issues.")
+                self._critical(
+                    "Dashboard: ingest returning 500",
+                    "Bot heartbeat pushes will fail. Check for missing 'await' or schema issues.",
+                )
             elif r3.status_code == 401:
                 pass  # Ingest token required, expected
             elif r3.status_code == 422:
@@ -11219,7 +13358,10 @@ class SelfAudit:
         """Check that state files survive restarts properly."""
         state = self.state
         if not state.exists():
-            self._critical("Persistence: no state directory", "/app/state doesn't exist. Volume may be missing.")
+            self._critical(
+                "Persistence: no state directory",
+                "/app/state doesn't exist. Volume may be missing.",
+            )
             return
 
         # Check core files
@@ -11230,7 +13372,10 @@ class SelfAudit:
         for fname, purpose in critical_files.items():
             p = state / fname
             if not p.exists():
-                self._warn(f"Persistence: {purpose} missing", f"{fname} not found. Data may be lost on restart.")
+                self._warn(
+                    f"Persistence: {purpose} missing",
+                    f"{fname} not found. Data may be lost on restart.",
+                )
 
         # Check volume writability
         test_file = state / ".audit_write_test"
@@ -11238,8 +13383,10 @@ class SelfAudit:
             test_file.write_text("ok")
             test_file.unlink()
         except Exception as e:
-            self._critical("Persistence: volume not writable",
-                           f"Cannot write to state directory: {e}. Trades and intelligence data won't persist.")
+            self._critical(
+                "Persistence: volume not writable",
+                f"Cannot write to state directory: {e}. Trades and intelligence data won't persist.",
+            )
 
     # ── 7. Self-Correction Chain Audit ──
 
@@ -11251,9 +13398,11 @@ class SelfAudit:
         # Check: does the 3-strike lockout actually work end-to-end?
         lockout_file = state / "gp_lockout.json"
         if not lockout_file.exists():
-            self._warn("Correction: lockout not persisted",
-                       "gp_lockout.json doesn't exist. Consecutive GP loss tracking is in-memory only "
-                       "and will be wiped on restart.")
+            self._warn(
+                "Correction: lockout not persisted",
+                "gp_lockout.json doesn't exist. Consecutive GP loss tracking is in-memory only "
+                "and will be wiped on restart.",
+            )
 
         # Check: does degradation have data?
         deg_file = state / "discovered" / "_live_deg.json"
@@ -11262,22 +13411,30 @@ class SelfAudit:
             if deg:
                 total_signals = sum(v.get("count", 0) for v in deg.values())
                 if total_signals < 50:
-                    self._info("Correction: degradation needs more data",
-                               f"{total_signals} total signals across all indicators. "
-                               f"Needs ≥50 per indicator to cull. "
-                               f"At current rate: ~{max(1, total_signals//len(deg))} per indicator.")
+                    self._info(
+                        "Correction: degradation needs more data",
+                        f"{total_signals} total signals across all indicators. "
+                        f"Needs ≥50 per indicator to cull. "
+                        f"At current rate: ~{max(1, total_signals // len(deg))} per indicator.",
+                    )
             else:
-                self._warn("Correction: degradation empty",
-                           "_live_deg.json exists but is empty. record_signal_outcome may not be called correctly.")
+                self._warn(
+                    "Correction: degradation empty",
+                    "_live_deg.json exists but is empty. record_signal_outcome may not be called correctly.",
+                )
         else:
-            self._warn("Correction: degradation file missing",
-                       "Without _live_deg.json, bad indicators are never culled. "
-                       "GP entries will keep using them indefinitely.")
+            self._warn(
+                "Correction: degradation file missing",
+                "Without _live_deg.json, bad indicators are never culled. "
+                "GP entries will keep using them indefinitely.",
+            )
 
         # Check: does the cron actually run?
-        self._info("Correction: weekly cron expected",
-                   "GP cron runs Sunday 02:00 UTC. Check if it fired by looking for "
-                   "'hermes_gp_cron' in Railway deploy logs.")
+        self._info(
+            "Correction: weekly cron expected",
+            "GP cron runs Sunday 02:00 UTC. Check if it fired by looking for "
+            "'hermes_gp_cron' in Railway deploy logs.",
+        )
 
     # ── 8. Decision Cortex Audit ──
 
@@ -11286,22 +13443,32 @@ class SelfAudit:
         state = Path("/app/state")
         cortex_dir = state / "cortex"
         if not cortex_dir.exists():
-            self._info("Cortex: not initialized", "state/cortex/ doesn't exist. No entries recorded yet.")
+            self._info(
+                "Cortex: not initialized", "state/cortex/ doesn't exist. No entries recorded yet."
+            )
             return
 
         try:
             from hermes_forex.decision_cortex import (
-                summary, get_exiled_indicators, entry_type_wr, entry_type_pnl
+                summary,
+                get_exiled_indicators,
+                entry_type_wr,
+                entry_type_pnl,
             )
+
             s = summary()
 
             # Check exile count
             if s["exiled_indicators"] > 0:
-                self._info("Cortex: exiled indicators",
-                           f"{s['exiled_indicators']} indicators permanently banned from GP entry voting.")
+                self._info(
+                    "Cortex: exiled indicators",
+                    f"{s['exiled_indicators']} indicators permanently banned from GP entry voting.",
+                )
             else:
-                self._info("Cortex: no exiles yet",
-                           "No indicators have reached 5 GP-entry attempts. Need more GP entry trades.")
+                self._info(
+                    "Cortex: no exiles yet",
+                    "No indicators have reached 5 GP-entry attempts. Need more GP entry trades.",
+                )
 
             # Check per-type WR gaps
             for pair in ["EUR/USD", "GBP/USD", "AUD/USD", "GBP/JPY"]:
@@ -11310,20 +13477,26 @@ class SelfAudit:
                 if mr_wr and gp_wr and mr_wr >= 0.5 and gp_wr < 0.3:
                     mr_pnl = entry_type_pnl(pair, "mean_reversion")
                     gp_pnl = entry_type_pnl(pair, "gp_ensemble")
-                    self._warn(f"Cortex: {pair} GP entries underperforming",
-                               f"MR {mr_wr:.0%}WR ({mr_pnl:+.2f}%) vs GP {gp_wr:.0%}WR ({gp_pnl:+.2f}%). "
-                               f"Reflection should not widen stops — GP is the problem.")
+                    self._warn(
+                        f"Cortex: {pair} GP entries underperforming",
+                        f"MR {mr_wr:.0%}WR ({mr_pnl:+.2f}%) vs GP {gp_wr:.0%}WR ({gp_pnl:+.2f}%). "
+                        f"Reflection should not widen stops — GP is the problem.",
+                    )
 
             # Check indicators near exile
             if s.get("indicators_near_exile", 0) > 0:
-                self._info("Cortex: indicators near exile",
-                           f"{s['indicators_near_exile']} indicators close to 30% WR threshold. "
-                           f"Next few GP entries will determine their fate.")
+                self._info(
+                    "Cortex: indicators near exile",
+                    f"{s['indicators_near_exile']} indicators close to 30% WR threshold. "
+                    f"Next few GP entries will determine their fate.",
+                )
 
             # Check total entries
             if s["entries_total"] == 0:
-                self._warn("Cortex: no entries recorded",
-                           "record_entry/record_outcome not firing. Check loop.py integration.")
+                self._warn(
+                    "Cortex: no entries recorded",
+                    "record_entry/record_outcome not firing. Check loop.py integration.",
+                )
 
         except Exception as e:
             self._warn("Cortex: audit failed", f"Cannot query cortex: {e}")
@@ -11335,6 +13508,7 @@ class SelfAudit:
     def audit_policy(self):
         try:
             from hermes_forex.policy_engine import get_policy
+
             pol = get_policy()
         except (ImportError, Exception):
             self._info("Policy: engine not available", "policy_engine module could not be imported")
@@ -11350,39 +13524,54 @@ class SelfAudit:
         if sup:
             suppressed = [(p, list(sp.keys())) for p, sp in sup.items() if any(sp.values())]
             if suppressed:
-                self._info("Policy: active suppressions",
-                           f"{len(suppressed)} pairs with suppressed entry types: {suppressed}")
+                self._info(
+                    "Policy: active suppressions",
+                    f"{len(suppressed)} pairs with suppressed entry types: {suppressed}",
+                )
         else:
-            self._info("Policy: no suppressions active",
-                       "No entry types suppressed. Pairs need more trade data (≥5 per type).")
+            self._info(
+                "Policy: no suppressions active",
+                "No entry types suppressed. Pairs need more trade data (≥5 per type).",
+            )
 
         if alloc:
             total_pairs = len(alloc)
-            self._info("Policy: capital allocation active",
-                       f"{total_pairs} pairs have dynamic allocation. "
-                       f"Check Cortex tab for per-pair breakdown.")
-        
+            self._info(
+                "Policy: capital allocation active",
+                f"{total_pairs} pairs have dynamic allocation. "
+                f"Check Cortex tab for per-pair breakdown.",
+            )
+
         if prio:
-            self._info("Policy: priority discovery needed",
-                       f"{len(prio)} pairs flagged: {', '.join(prio)}. "
-                       f"2+ indicators exiled — urgent GP discovery required.")
-        
+            self._info(
+                "Policy: priority discovery needed",
+                f"{len(prio)} pairs flagged: {', '.join(prio)}. "
+                f"2+ indicators exiled — urgent GP discovery required.",
+            )
+
         if roll:
-            self._warn("Policy: rollback candidates",
-                       "{} strategy versions with degraded performance: {}".format(
-                           len(roll),
-                           ", ".join('{} v{}'.format(r.get("pair","?"), r.get("version","?")) for r in roll)
-                       ))
-        
+            self._warn(
+                "Policy: rollback candidates",
+                "{} strategy versions with degraded performance: {}".format(
+                    len(roll),
+                    ", ".join(
+                        "{} v{}".format(r.get("pair", "?"), r.get("version", "?")) for r in roll
+                    ),
+                ),
+            )
+
         if pi < 50:
-            self._info(f"Policy: probe interval = {pi} cycles",
-                       f"Accelerated probe interval active (default: 50). "
-                       f"Data collection is being prioritized.")
-        
+            self._info(
+                f"Policy: probe interval = {pi} cycles",
+                f"Accelerated probe interval active (default: 50). "
+                f"Data collection is being prioritized.",
+            )
+
         if not decs:
-            self._info("Policy: no decisions yet",
-                       "Policy engine has not made any decisions. "
-                       "It fires every 10 cycles.")
+            self._info(
+                "Policy: no decisions yet",
+                "Policy engine has not made any decisions. It fires every 10 cycles.",
+            )
 
     # ── Run All ──
 
@@ -11410,7 +13599,7 @@ if __name__ == "__main__":
     result = SelfAudit().run()
     print(json.dumps(result, indent=2))
     total = result["critical"] + result["warnings"] + result["info"]
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"Audit complete: {result['summary']}")
     if result["critical"]:
         print(f"⚠️  {result['critical']} CRITICAL issues need attention")
@@ -11442,8 +13631,8 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 # Module-level candle cache  {ticker: (fetch_wall_time, last_candle_ts, row)}
 # ---------------------------------------------------------------------------
-_candle_cache: dict = {}   # ticker -> (wall_fetched, candle_iso, price_dict)
-_CACHE_TTL_SEC = 300       # re-fetch after 5 minutes
+_candle_cache: dict = {}  # ticker -> (wall_fetched, candle_iso, price_dict)
+_CACHE_TTL_SEC = 300  # re-fetch after 5 minutes
 
 # Mapping from FOREX_PAIR env value to yfinance ticker
 _YF_MAP = {
@@ -11467,10 +13656,10 @@ def _fetch_yfinance_candle(ticker: str) -> Optional[dict]:
     try:
         import yfinance as yf
         import warnings
+
         warnings.filterwarnings("ignore")
 
-        df = yf.download(ticker, period="2d", interval="5m",
-                         progress=False, auto_adjust=True)
+        df = yf.download(ticker, period="2d", interval="5m", progress=False, auto_adjust=True)
         if df is None or len(df) == 0:
             return None
 
@@ -11480,8 +13669,8 @@ def _fetch_yfinance_candle(ticker: str) -> Optional[dict]:
 
         row = df.iloc[-1]
         close = float(row["Close"])
-        high  = float(row["High"])
-        low   = float(row["Low"])
+        high = float(row["High"])
+        low = float(row["Low"])
         open_ = float(row["Open"])
 
         # Sanity check — reject if H/L are identical to close (stale candle)
@@ -11490,17 +13679,17 @@ def _fetch_yfinance_candle(ticker: str) -> Optional[dict]:
             if len(df) >= 2:
                 row = df.iloc[-2]
                 close = float(row["Close"])
-                high  = float(row["High"])
-                low   = float(row["Low"])
+                high = float(row["High"])
+                low = float(row["Low"])
                 open_ = float(row["Open"])
 
         candle_ts = str(df.index[-1])
         return {
-            "price":     round(close, 5),
-            "high":      round(high,  5),
-            "low":       round(low,   5),
-            "open":      round(open_, 5),
-            "source":    "yfinance_5m",
+            "price": round(close, 5),
+            "high": round(high, 5),
+            "low": round(low, 5),
+            "open": round(open_, 5),
+            "source": "yfinance_5m",
             "candle_ts": candle_ts,
         }
     except Exception as e:
@@ -11517,16 +13706,16 @@ async def fetch() -> dict:
       - If cached result is < 5 min old: return it immediately (sub-ms).
       - Otherwise: call yfinance, update cache, return fresh result.
     """
-    pair   = os.environ.get("FOREX_PAIR", "EUR/USD")
+    pair = os.environ.get("FOREX_PAIR", "EUR/USD")
     ticker = _to_ticker(pair)
-    now    = time.monotonic()
+    now = time.monotonic()
 
     cached = _candle_cache.get(ticker)
     if cached is not None:
         wall_fetched, _, price_dict = cached
         age = now - wall_fetched
         if age < _CACHE_TTL_SEC:
-            return price_dict   # fast path — no HTTP call
+            return price_dict  # fast path — no HTTP call
 
     # Cache miss or stale — fetch fresh
     result = _fetch_yfinance_candle(ticker)
@@ -11540,9 +13729,12 @@ async def fetch() -> dict:
         raise Exception(f"yfinance fetch failed for {ticker} and no cache available")
 
     _candle_cache[ticker] = (now, result["candle_ts"], result)
-    print(f"[PRICE] {pair}: {result['price']:.5f} "
-          f"H:{result['high']:.5f} L:{result['low']:.5f} "
-          f"[{result['candle_ts']}]", flush=True)
+    print(
+        f"[PRICE] {pair}: {result['price']:.5f} "
+        f"H:{result['high']:.5f} L:{result['low']:.5f} "
+        f"[{result['candle_ts']}]",
+        flush=True,
+    )
     return result
 
 
@@ -11560,10 +13752,10 @@ def fetch_history_df(pair: str, period: str = "5d"):
     try:
         import yfinance as yf
         import warnings
+
         warnings.filterwarnings("ignore")
 
-        df = yf.download(ticker, period=period, interval="5m",
-                         progress=False, auto_adjust=True)
+        df = yf.download(ticker, period=period, interval="5m", progress=False, auto_adjust=True)
         if df is None or len(df) < 20:
             return None
 
@@ -11595,11 +13787,19 @@ from hermes_trading.chart_vision import get_chart_context, get_all_chart_context
 
 # ── Level 6 imports ──
 try:
-    from hermes_trading.crisis_learning import find_nearest_crisis, save_lived_crisis, get_crisis_recommendation
+    from hermes_trading.crisis_learning import (
+        find_nearest_crisis,
+        save_lived_crisis,
+        get_crisis_recommendation,
+    )
+
     _HAS_CRISIS = True
 except ImportError:
     _HAS_CRISIS = False
-    def _noop(*a, **kw): return None
+
+    def _noop(*a, **kw):
+        return None
+
     find_nearest_crisis = _noop
     save_lived_crisis = _noop
     get_crisis_recommendation = _noop
@@ -11611,9 +13811,14 @@ _DISCORD_DAILY_WEBHOOK = os.environ.get("DISCORD_DAILY_WEBHOOK", "")
 _DISCORD_WEBHOOKS_LOADED = False
 _discord_session = None
 
+
 def _load_discord_webhooks():
     """Lazy-load webhook URLs from state files if not set via env vars."""
-    global _DISCORD_ALERTS_WEBHOOK, _DISCORD_REFLECTION_WEBHOOK, _DISCORD_DAILY_WEBHOOK, _DISCORD_WEBHOOKS_LOADED
+    global \
+        _DISCORD_ALERTS_WEBHOOK, \
+        _DISCORD_REFLECTION_WEBHOOK, \
+        _DISCORD_DAILY_WEBHOOK, \
+        _DISCORD_WEBHOOKS_LOADED
     if _DISCORD_WEBHOOKS_LOADED:
         return
     _DISCORD_WEBHOOKS_LOADED = True
@@ -11636,6 +13841,7 @@ def _load_discord_webhooks():
     except Exception as e:
         print(f"[DISCORD] Webhook file load error: {e}", flush=True)
 
+
 async def send_discord_alert(message: str, target: str = "alerts"):
     """Send an alert to Discord via webhook.
     target="alerts"     -> #bot-alerts webhook
@@ -11655,22 +13861,30 @@ async def send_discord_alert(message: str, target: str = "alerts"):
         return
     try:
         import httpx as _httpx
+
         if _discord_session is None:
             _discord_session = _httpx.AsyncClient(timeout=10)
         payload = {"content": message[:2000]}
         resp = await _discord_session.post(url, json=payload)
         if resp.status_code >= 400:
-            print(f"[DISCORD] Webhook error {resp.status_code} ({target}): {resp.text[:200]}", flush=True)
+            print(
+                f"[DISCORD] Webhook error {resp.status_code} ({target}): {resp.text[:200]}",
+                flush=True,
+            )
         else:
             print(f"[DISCORD] Sent OK ({resp.status_code}) -> {target}", flush=True)
     except Exception as e:
         print(f"[DISCORD] Send failed ({target}): {e}", flush=True)
 
+
 # ── Dashboard push ──
-_DASHBOARD_URL = os.environ.get("DASHBOARD_API_URL", os.environ.get("RAILWAY_SERVICE_HERMES_DASHBOARD_API_URL", ""))
+_DASHBOARD_URL = os.environ.get(
+    "DASHBOARD_API_URL", os.environ.get("RAILWAY_SERVICE_HERMES_DASHBOARD_API_URL", "")
+)
 if _DASHBOARD_URL and not _DASHBOARD_URL.startswith("http"):
     _DASHBOARD_URL = f"https://{_DASHBOARD_URL}"
 print(f"[DASHBOARD] Module load — _DASHBOARD_URL = '{_DASHBOARD_URL}'", flush=True)
+
 
 async def push_to_dashboard(bot_name: str):
     """Push a JSON snapshot of current state to the dashboard backend.
@@ -11680,6 +13894,7 @@ async def push_to_dashboard(bot_name: str):
         return
     try:
         import httpx as _httpx
+
         _push_url = f"{_DASHBOARD_URL}/api/ingest/{bot_name}"
         print(f"[DASHBOARD] Pushing to: {_push_url}", flush=True)
         strats = {}
@@ -11746,33 +13961,58 @@ async def push_to_dashboard(bot_name: str):
         }
         try:
             from hermes_trading.backtest import load_discovered_indicators
+
             for pair in _pairs:
                 inds = load_discovered_indicators(pair)
                 if inds:
-                    snapshot["discovered"][pair] = [{
-                        "name": i.get("name","?"),
-                        "expr": i.get("expr_str","")[:60],
-                        "fitness": round(i.get("fitness",0),4),
-                        "win_rate": i.get("win_rate",0),
-                        "total_pnl": round(i.get("total_pnl",0),4),
-                        "uses": [k for k in ["volume","dxy","vix","tnx","spx","oil","gold","btc","fvx","eem"]
-                                 if k in i.get("expr_str","")],
-                    } for i in inds]
+                    snapshot["discovered"][pair] = [
+                        {
+                            "name": i.get("name", "?"),
+                            "expr": i.get("expr_str", "")[:60],
+                            "fitness": round(i.get("fitness", 0), 4),
+                            "win_rate": i.get("win_rate", 0),
+                            "total_pnl": round(i.get("total_pnl", 0), 4),
+                            "uses": [
+                                k
+                                for k in [
+                                    "volume",
+                                    "dxy",
+                                    "vix",
+                                    "tnx",
+                                    "spx",
+                                    "oil",
+                                    "gold",
+                                    "btc",
+                                    "fvx",
+                                    "eem",
+                                ]
+                                if k in i.get("expr_str", "")
+                            ],
+                        }
+                        for i in inds
+                    ]
         except Exception:
             pass
         # ── Cortex summary for dashboard ──
         try:
-            from hermes_trading.decision_cortex import summary as cortex_summary, get_exiled_indicators
+            from hermes_trading.decision_cortex import (
+                summary as cortex_summary,
+                get_exiled_indicators,
+            )
             from hermes_trading.decision_cortex import _load_json as _cj
             from hermes_trading.policy_engine import get_policy
+
             snapshot["cortex"] = {
                 "summary": cortex_summary(),
                 "exiled": list(get_exiled_indicators().keys()),
                 "indicators": _cj("indicator_tracker.json"),
                 "policy": get_policy(),
             }
-            print(f"[CORTEX] Push data: {len(snapshot['cortex']['exiled'])} exiled, "
-                  f"{snapshot['cortex']['summary']['entries_total']} entries tracked", flush=True)
+            print(
+                f"[CORTEX] Push data: {len(snapshot['cortex']['exiled'])} exiled, "
+                f"{snapshot['cortex']['summary']['entries_total']} entries tracked",
+                flush=True,
+            )
         except Exception as e:
             print(f"[CORTEX] Push failed: {e}", flush=True)
         async with _httpx.AsyncClient(timeout=5) as client:
@@ -11780,6 +14020,7 @@ async def push_to_dashboard(bot_name: str):
             print(f"[DASHBOARD] Push response: {resp.status_code} — {resp.text[:200]}", flush=True)
     except Exception as e:
         print(f"[DASHBOARD] Push failed (non-critical): {e}", flush=True)
+
 
 STATE_DIR = Path("/app/state")
 TRADES_FILE = STATE_DIR / "trades.jsonl"
@@ -11794,14 +14035,18 @@ CHART_ANALYSIS_INTERVAL = 3600  # 60 minutes
 
 _price_histories = {}
 
+
 def _recover_trades_from_dashboard():
     """On restart, restore trades.jsonl from dashboard API if local file is empty."""
     if TRADES_FILE.exists() and TRADES_FILE.stat().st_size > 100:
         return  # Already has data
     try:
         import httpx as _h
+
         bot_name = os.environ.get("HERMES_BOT_NAME", "gold")
-        dash_url = os.environ.get("DASHBOARD_URL", "https://hermes-dashboard-api-production.up.railway.app")
+        dash_url = os.environ.get(
+            "DASHBOARD_URL", "https://hermes-dashboard-api-production.up.railway.app"
+        )
         resp = _h.get(f"{dash_url}/api/bot/{bot_name}/trades?limit=200", timeout=15)
         if resp.status_code != 200:
             return
@@ -11818,6 +14063,7 @@ def _recover_trades_from_dashboard():
         print(f"[RECOVERY] Restored {recovered} trades from dashboard API", flush=True)
     except Exception:
         pass
+
 
 _recover_trades_from_dashboard()
 
@@ -11839,15 +14085,20 @@ _feature_training_buffer = {}  # pair -> list of feature vectors for novelty det
 
 # ── GP Intelligence (Stages 1-3) ──
 _gp_intel = None  # Lazy init
+
+
 def _get_gp_intel():
     global _gp_intel
     if _gp_intel is None:
         try:
             from hermes_trading.gp_intelligence import GpIntelligence
+
             _gp_intel = GpIntelligence()
         except Exception:
             _gp_intel = False  # Sentinel
     return _gp_intel if _gp_intel is not False else None
+
+
 _NOVELTY_THRESHOLD_MULT = 3.0  # how many median-distances before flagging as novel
 _FEATURE_WINDOW = 500  # max feature vectors to keep for training
 _ANOMALY_DIM = 9  # feature vector dimension
@@ -11862,6 +14113,7 @@ _last_discovery_run_ts = None
 # ── Safety state persistence (survives restarts) ──
 _SAFETY_STATE_FILE = STATE_DIR / ".safety_state.json"
 
+
 def _load_safety_state():
     """Load flatline + consecutive-loss + stop-loss-blocklist + discovery ts from disk."""
     global _last_discovery_run_ts
@@ -11873,10 +14125,14 @@ def _load_safety_state():
             _stop_loss_blocklist.update(data.get("stop_loss_blocklist", {}))
             _gp_consecutive_bad.update(data.get("gp_consecutive_bad", {}))
             _last_discovery_run_ts = data.get("last_discovery_run_ts")
-            print(f"[SAFETY] Restored state: {len(_flatline)} flatlined, "
-                  f"{len(_consecutive_losses)} consecutive-loss counters", flush=True)
+            print(
+                f"[SAFETY] Restored state: {len(_flatline)} flatlined, "
+                f"{len(_consecutive_losses)} consecutive-loss counters",
+                flush=True,
+            )
         except Exception:
             pass
+
 
 def _save_safety_state():
     """Persist flatline + consecutive-loss + stop-loss-blocklist + discovery ts to disk."""
@@ -11892,8 +14148,10 @@ def _save_safety_state():
     except Exception:
         pass
 
+
 # ── Restore safety state from disk (survives restarts) ──
 _load_safety_state()
+
 
 def _load_reflection_latches():
     try:
@@ -11903,11 +14161,13 @@ def _load_reflection_latches():
         return {}
     return {}
 
+
 def _save_reflection_latches(latches):
     try:
         _REFLECTION_LATCH_FILE.write_text(json.dumps(latches))
     except Exception:
         pass
+
 
 def _is_reflection_done(pair, closed_count):
     latches = _load_reflection_latches()
@@ -11917,13 +14177,16 @@ def _is_reflection_done(pair, closed_count):
     # Done if we already reflected at this trade count (NOT version-keyed — prevents rapid-fire cascade)
     return entry.get("reflected_count") == closed_count
 
+
 def _mark_reflection_done(pair, closed_count):
     latches = _load_reflection_latches()
     latches[pair] = {"reflected_count": closed_count}
     _save_reflection_latches(latches)
 
+
 def _strategy_filename(pair):
     return pair.replace("/", "_").replace("-", "_") + ".yaml"
+
 
 def load_strategy_for_pair(pair):
     per_pair = STRATEGY_DIR / _strategy_filename(pair)
@@ -11931,6 +14194,7 @@ def load_strategy_for_pair(pair):
         with open(per_pair) as f:
             data = yaml.safe_load(f)
             from hermes_trading.reflect import validate_strategy_params
+
             validate_strategy_params(data, raise_on_fail=False)
             return data
     default = STATE_DIR / "strategy.yaml"
@@ -11938,24 +14202,28 @@ def load_strategy_for_pair(pair):
         with open(default) as f:
             data = yaml.safe_load(f)
             from hermes_trading.reflect import validate_strategy_params
+
             validate_strategy_params(data, raise_on_fail=False)
             return data
     raise FileNotFoundError(f"No strategy for {pair}")
+
 
 async def fetch_with_retry(fetch_fn, name):
     for attempt in range(1, RETRY_ATTEMPTS + 1):
         try:
             return await fetch_fn()
         except Exception as e:
-            delay = RETRY_BASE_DELAY ** attempt
+            delay = RETRY_BASE_DELAY**attempt
             print(f"[{name}] Attempt {attempt} failed: {e}. Retrying in {delay}s...", flush=True)
             await asyncio.sleep(delay)
     print(f"[{name}] All attempts failed.", flush=True)
     return {}
 
+
 def load_goal():
     with open(GOAL_FILE) as f:
         return yaml.safe_load(f)
+
 
 def load_trades():
     if not TRADES_FILE.exists():
@@ -11967,6 +14235,7 @@ def load_trades():
             if line:
                 trades.append(json.loads(line))
     return trades
+
 
 import tempfile
 
@@ -11984,39 +14253,56 @@ def _atomic_write(path, data, mode="w"):
         tmp.close()
         os.replace(tmp.name, str(path))
     except Exception:
-        try: os.unlink(tmp.name)
-        except: pass
+        try:
+            os.unlink(tmp.name)
+        except:
+            pass
         raise
 
 
 def write_heartbeat(asset, cycle, consecutive_failures, last_price):
-    data = {"ts": datetime.now(timezone.utc).isoformat(), "asset": asset, "cycle": cycle, "consecutive_failures": consecutive_failures, "last_price": last_price, "status": "ok" if consecutive_failures < MAX_CONSECUTIVE_FAILURES else "circuit_open"}
+    data = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "asset": asset,
+        "cycle": cycle,
+        "consecutive_failures": consecutive_failures,
+        "last_price": last_price,
+        "status": "ok" if consecutive_failures < MAX_CONSECUTIVE_FAILURES else "circuit_open",
+    }
     _atomic_write(HEARTBEAT_FILE, data)
+
 
 def _get_session(hour):
     """Classify UTC hour into trading session."""
-    if 8 <= hour < 17: return "LDN"
-    if 13 <= hour < 21: return "NY"
-    if 0 <= hour < 8: return "ASIA"
+    if 8 <= hour < 17:
+        return "LDN"
+    if 13 <= hour < 21:
+        return "NY"
+    if 0 <= hour < 8:
+        return "ASIA"
     return "OTHER"
+
 
 def _get_day_name(ts_iso):
     """Return day of week name from ISO timestamp."""
     try:
         dt = datetime.fromisoformat(ts_iso)
         return dt.strftime("%A")
-    except Exception: return "UNKNOWN"
+    except Exception:
+        return "UNKNOWN"
+
 
 def compute_rsi(prices, period=14):
     if len(prices) < period + 1:
         return 50.0
-    deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
+    deltas = [prices[i] - prices[i - 1] for i in range(1, len(prices))]
     gains = [d for d in deltas if d > 0]
     losses = [-d for d in deltas if d < 0]
     avg_gain = sum(gains[-period:]) / period if gains else 0
     avg_loss = sum(losses[-period:]) / period if losses else 1e-10
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
+
 
 def compute_roc(prices, period=20):
     """Rate of change over N periods. Negative = price declining."""
@@ -12028,11 +14314,12 @@ def compute_roc(prices, period=20):
         return 0.0
     return (new - old) / old * 100
 
+
 def compute_atr(prices, period=14):
     """Average True Range using Wilder's smoothing. Uses close-to-close TR."""
     if len(prices) < period + 1:
         return None
-    trs = [abs(prices[i] - prices[i-1]) for i in range(1, len(prices))]
+    trs = [abs(prices[i] - prices[i - 1]) for i in range(1, len(prices))]
     if len(trs) < period:
         return None
     atr = sum(trs[:period]) / period
@@ -12101,7 +14388,12 @@ def compute_rsi_divergence(prices, period=14):
     recent = prices[-20:]
     lows = []
     for i in range(2, len(recent) - 2):
-        if recent[i] < recent[i-1] and recent[i] < recent[i-2] and recent[i] < recent[i+1] and recent[i] < recent[i+2]:
+        if (
+            recent[i] < recent[i - 1]
+            and recent[i] < recent[i - 2]
+            and recent[i] < recent[i + 1]
+            and recent[i] < recent[i + 2]
+        ):
             lows.append((i, recent[i]))
     if len(lows) < 2:
         return False
@@ -12111,37 +14403,59 @@ def compute_rsi_divergence(prices, period=14):
     if not (price2 < price1):  # Need lower low in price
         return False
     # Compute RSI at each swing low point (using window from start to that point)
-    rsi_at_low1 = compute_rsi(prices[:len(prices)-20+idx1+1], period)
-    rsi_at_low2 = compute_rsi(prices[:len(prices)-20+idx2+1], period)
+    rsi_at_low1 = compute_rsi(prices[: len(prices) - 20 + idx1 + 1], period)
+    rsi_at_low2 = compute_rsi(prices[: len(prices) - 20 + idx2 + 1], period)
     if rsi_at_low1 is None or rsi_at_low2 is None:
         return False
     # Bullish divergence: price lower low, RSI higher low
     return rsi_at_low2 > rsi_at_low1
 
 
-def compute_entry_quality_score(rsi, threshold, regime, volume_above_avg, fg_boost=False, adx_above=False, fast_regime="NEUTRAL", divergence=False, session_bonus=0, daily_rsi_bonus=0):
+def compute_entry_quality_score(
+    rsi,
+    threshold,
+    regime,
+    volume_above_avg,
+    fg_boost=False,
+    adx_above=False,
+    fast_regime="NEUTRAL",
+    divergence=False,
+    session_bonus=0,
+    daily_rsi_bonus=0,
+):
     """Compute entry quality score 0-10 with enhanced scoring."""
     score = 0
     # RSI margin — ratio-based: deeper oversold = higher score
     rsi_margin = threshold - rsi
     rsi_ratio = rsi_margin / max(threshold, 1)  # how far below threshold as a fraction
-    if rsi_ratio >= 0.4: score += 3       # 40%+ below threshold (e.g., RSI 24 vs threshold 40)
-    elif rsi_ratio >= 0.25: score += 2    # 25%+ below
-    elif rsi_ratio > 0: score += 1        # any margin
+    if rsi_ratio >= 0.4:
+        score += 3  # 40%+ below threshold (e.g., RSI 24 vs threshold 40)
+    elif rsi_ratio >= 0.25:
+        score += 2  # 25%+ below
+    elif rsi_ratio > 0:
+        score += 1  # any margin
     # Regime (slow 50/200)
-    if regime == "BULL": score += 2
-    elif regime == "NEUTRAL": score += 1
+    if regime == "BULL":
+        score += 2
+    elif regime == "NEUTRAL":
+        score += 1
     # Fast regime (20/50 EMA) — timing bonus
-    if fast_regime == "BULL": score += 1
-    elif fast_regime == "BEAR": score -= 1  # penalty for buying into EMA downtrend
+    if fast_regime == "BULL":
+        score += 1
+    elif fast_regime == "BEAR":
+        score -= 1  # penalty for buying into EMA downtrend
     # Volume
-    if volume_above_avg: score += 2
+    if volume_above_avg:
+        score += 2
     # Fear & Greed (crypto only)
-    if fg_boost: score += 2
+    if fg_boost:
+        score += 2
     # ADX
-    if adx_above: score += 1
+    if adx_above:
+        score += 1
     # Divergence bonus
-    if divergence: score += 1
+    if divergence:
+        score += 1
     # Session quality bonus
     score += session_bonus
     # Multi-timeframe RSI bonus (Layer 20): daily trend confluence
@@ -12218,6 +14532,7 @@ _PAIR_ZONES = {
 _CALENDAR_CACHE = {"events": [], "ts": 0.0}
 _CALENDAR_CACHE_TTL = 3600  # 1 hour
 
+
 def _fetch_calendar_events():
     """Fetch upcoming economic events from FMP API. Cached for 1 hour.
     Returns list of {time_str, name, zone, label}."""
@@ -12230,10 +14545,11 @@ def _fetch_calendar_events():
         api_key = os.environ.get("FINANCIALMODELINGPREP_API_KEY", "")
         if api_key:
             import httpx as _cal_httpx
+
             resp = _cal_httpx.get(
                 f"https://financialmodelingprep.com/api/v3/economic_calendar",
                 params={"apikey": api_key, "from": datetime.now(timezone.utc).strftime("%Y-%m-%d")},
-                timeout=10
+                timeout=10,
             )
             if resp.status_code == 200:
                 data = resp.json()
@@ -12246,12 +14562,14 @@ def _fetch_calendar_events():
                             continue
                         dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
                         h, m = dt.hour, dt.minute
-                        events.append({
-                            "time_str": f"{h:02d}:{m:02d}",
-                            "name": event_name.replace(" ", ""),
-                            "zone": "US",
-                            "label": event_name,
-                        })
+                        events.append(
+                            {
+                                "time_str": f"{h:02d}:{m:02d}",
+                                "name": event_name.replace(" ", ""),
+                                "zone": "US",
+                                "label": event_name,
+                            }
+                        )
                     except Exception:
                         pass
     except Exception:
@@ -12261,14 +14579,17 @@ def _fetch_calendar_events():
         return events
     return _CALENDAR_CACHE.get("events", [])
 
+
 def _get_zones_for_pair(pair):
     """Return list of economic zones relevant to this pair."""
     return _PAIR_ZONES.get(pair.replace("-", "/"), ["US"])
+
 
 def _is_fomc_week():
     """Approximate FOMC week: 8 meetings/year, ~every 6 weeks."""
     # Simplified: week-of-year mod 6 ≈ 0 is FOMC week (rough)
     import datetime as _dt
+
     iso = _dt.date.today().isocalendar()
     week = iso[1]
     # FOMC months: ~Jan, Mar, May, Jun, Jul, Sep, Nov, Dec
@@ -12278,13 +14599,16 @@ def _is_fomc_week():
         return week % 6 < 2  # first or second week of FOMC months
     return False
 
+
 def _is_first_friday():
     """Check if today is the first Friday of the month (NFP day)."""
     from datetime import date as _dd
+
     today = _dd.today()
     if today.weekday() != 4:  # Not Friday
         return False
     return today.day <= 7
+
 
 def _is_near_economic_event(pair=None):
     """Block entries 10min before/after major economic events.
@@ -12344,7 +14668,9 @@ def _is_near_economic_event(pair=None):
 
     return False, ""
 
+
 # ── PHASE 1a: Anomaly Detection / Feature Extraction ──
+
 
 def _extract_features(prices, volumes, pair=None):
     """Compute feature vector for current market state.
@@ -12432,7 +14758,7 @@ def _compute_novelty_score(features, training_buf):
         if len(tf) != len(features):
             continue
         sq_sum = sum((features[i] - tf[i]) ** 2 for i in range(len(features)))
-        distances.append(sq_sum ** 0.5)
+        distances.append(sq_sum**0.5)
     if not distances:
         return 0.0, False, 0.0
     min_dist = min(distances)
@@ -12462,11 +14788,16 @@ def _is_novel_regime(pair, prices, volumes):
     buf_normed = [_normalize_features(f, buf) for f in buf[:-1]]  # exclude current
     score, is_novel, median_dist = _compute_novelty_score(normed, buf_normed)
     if is_novel:
-        return True, score, f"novelty_score={score} median={median_dist} threshold={median_dist*_NOVELTY_THRESHOLD_MULT:.4f}"
+        return (
+            True,
+            score,
+            f"novelty_score={score} median={median_dist} threshold={median_dist * _NOVELTY_THRESHOLD_MULT:.4f}",
+        )
     return False, score, "normal"
 
 
 # ── PHASE 1b: Consecutive-Loss Cooldown ──
+
 
 def _update_consecutive_losses(pair, exit_reason):
     """Update consecutive-loss counter and return flatline action.
@@ -12490,6 +14821,7 @@ def _update_consecutive_losses(pair, exit_reason):
 
 # ── PHASE 1c: Spread / Slippage Guard ──
 
+
 def _check_spread(pair, current_price, stop_loss_pct, vol_max_pct=None):
     """Check if spread is too large relative to stop loss.
     Uses range-based spread proxy when real spread unavailable.
@@ -12506,7 +14838,9 @@ def _check_spread(pair, current_price, stop_loss_pct, vol_max_pct=None):
             atr = compute_atr(prices, period=14)
             if atr is not None and atr > 0 and current_price > 0:
                 spread_proxy = (atr * 0.3) / current_price * 100  # spread as % of price
-                ceiling = vol_max_pct if (vol_max_pct and vol_max_pct > 0) else (stop_loss_pct / 3.0)
+                ceiling = (
+                    vol_max_pct if (vol_max_pct and vol_max_pct > 0) else (stop_loss_pct / 3.0)
+                )
                 if spread_proxy > ceiling:
                     return True, f"spread_proxy={spread_proxy:.4f}% > vol_max/normal {ceiling:.4f}%"
     except Exception:
@@ -12517,6 +14851,7 @@ def _check_spread(pair, current_price, stop_loss_pct, vol_max_pct=None):
 # ── Flatline logging ──
 
 FLATLINE_LOG_FILE = STATE_DIR / "flatline_log.jsonl"
+
 
 def _log_flatline(pair, reason, details=""):
     """Log flatline event to flatline_log.jsonl and in-memory cache."""
@@ -12535,8 +14870,11 @@ def _log_flatline(pair, reason, details=""):
     except Exception:
         pass
     print(f"[FLATLINE] {pair}: {reason} | {details}", flush=True)
+
+
 _DAILY_RSI_CACHE = {}  # pair -> {"rsi": float, "ts": timestamp}
 _DAILY_RSI_TTL = 3600  # 1 hour
+
 
 def _get_daily_rsi_bonus(pair):
     """Fetch daily RSI from yfinance and return quality bonus [-1, 0, +1].
@@ -12550,6 +14888,7 @@ def _get_daily_rsi_bonus(pair):
         return cached["bonus"]
     try:
         import yfinance as yf
+
         ticker = yf.Ticker(pair.replace("/", "") + "=X")
         df = ticker.history(period="1mo", interval="1d")
         if df.empty or len(df) < 20:
@@ -12575,6 +14914,7 @@ def _get_daily_rsi_bonus(pair):
     except Exception:
         _DAILY_RSI_CACHE[pair] = {"bonus": 0, "ts": now_ts}
         return 0
+
 
 def session_quality_bonus():
     """Return quality score bonus based on current session.
@@ -12613,21 +14953,21 @@ def compute_adx(prices, period=14):
     plus_dm = []
     minus_dm = []
     for i in range(1, len(prices)):
-        up = prices[i] - prices[i-1]
-        down = prices[i-1] - prices[i]
+        up = prices[i] - prices[i - 1]
+        down = prices[i - 1] - prices[i]
         plus_dm.append(up if up > down and up > 0 else 0.0)
         minus_dm.append(down if down > up and down > 0 else 0.0)
     if len(plus_dm) < period:
         return None
     # Wilder's smoothing
-    atr = sum(abs(prices[i] - prices[i-1]) for i in range(1, period + 1)) / period
+    atr = sum(abs(prices[i] - prices[i - 1]) for i in range(1, period + 1)) / period
     plus_di = 100.0
     minus_di = 100.0
     for i in range(period, len(plus_dm)):
         if atr > 0:
             plus_di = (plus_di * (period - 1) + (plus_dm[i] / atr * 100)) / period
             minus_di = (minus_di * (period - 1) + (minus_dm[i] / atr * 100)) / period
-            atr = (atr * (period - 1) + abs(prices[i+1] - prices[i])) / period
+            atr = (atr * (period - 1) + abs(prices[i + 1] - prices[i])) / period
         else:
             atr = 0.001
     if plus_di + minus_di == 0:
@@ -12648,7 +14988,7 @@ def compute_bollinger(prices, period=20, num_std=2.0):
     window = prices[-period:]
     middle = sum(window) / period
     variance = sum((p - middle) ** 2 for p in window) / period
-    std = variance ** 0.5
+    std = variance**0.5
     upper = middle + num_std * std
     lower = middle - num_std * std
     bandwidth = (upper - lower) / middle * 100 if middle != 0 else 0
@@ -12695,6 +15035,8 @@ def get_pairs():
 
 
 _SKIPPED_FILE = STATE_DIR / "skipped_signals.jsonl"
+
+
 def load_skipped():
     if not _SKIPPED_FILE.exists():
         return []
@@ -12706,6 +15048,7 @@ def load_skipped():
                 skipped.append(json.loads(line))
     return skipped
 
+
 def save_skipped(skipped):
     # Cap at last 500 entries to prevent unbounded growth on Railway volume
     if len(skipped) > 500:
@@ -12714,10 +15057,12 @@ def save_skipped(skipped):
         for s in skipped:
             f.write(json.dumps(s) + "\n")
 
+
 def log_skip(pair, reason, rsi, price, regime, adx=None, cycle=None):
     entry = {
         "ts": datetime.now(timezone.utc).isoformat(),
-        "pair": pair, "bot_id": "hermes-forex",
+        "pair": pair,
+        "bot_id": "hermes-forex",
         "reason_skipped": reason,
         "rsi_at_skip": round(rsi, 2) if rsi is not None else "N/A",
         "price_at_skip": price,
@@ -12731,6 +15076,7 @@ def log_skip(pair, reason, rsi, price, regime, adx=None, cycle=None):
     with open(_SKIPPED_FILE, "a") as f:
         f.write(json.dumps(entry) + "\n")
     print(f"[SKIP] {pair}: {reason} | RSI {rsi:.1f} @ {price:.5f}", flush=True)
+
 
 async def backfill_skipped(pairs):
     """Update skips older than 24h with actual 24h-later price and missed PnL."""
@@ -12748,7 +15094,8 @@ async def backfill_skipped(pairs):
                 entry_price = s["price_at_skip"]
                 os.environ["FOREX_PAIR"] = pair
                 price_data = await fetch_with_retry(
-                    lambda: fetch_price(pair), f"SKIP-BACKFILL-{pair}")
+                    lambda: fetch_price(pair), f"SKIP-BACKFILL-{pair}"
+                )
                 if price_data and "price" in price_data:
                     current_price = float(price_data["price"])
                     # --- Stale candle guard: don't append the same candle twice ---
@@ -12760,7 +15107,10 @@ async def backfill_skipped(pairs):
                     s["price_24h_later"] = current_price
                     s["missed_pnl"] = round((current_price - entry_price) / entry_price * 100, 4)
                     changed = True
-                    print(f"[SKIP-BACKFILL] {pair}: entry {entry_price:.5f} -> 24h {current_price:.5f} | missed PnL: {s['missed_pnl']:+.4f}%", flush=True)
+                    print(
+                        f"[SKIP-BACKFILL] {pair}: entry {entry_price:.5f} -> 24h {current_price:.5f} | missed PnL: {s['missed_pnl']:+.4f}%",
+                        flush=True,
+                    )
         except Exception:
             pass
     if changed:
@@ -12771,6 +15121,7 @@ async def seed_forex_price_history(pairs):
     """Pre-seed forex price history on startup using 5 days of real 5m candles.
     This gives RSI, ATR, regime, ADX, and Bollinger accurate values from cycle 1."""
     from hermes_trading.adapters.price import fetch_history_df
+
     for pair in pairs:
         try:
             df = fetch_history_df(pair, period="5d")
@@ -12779,8 +15130,8 @@ async def seed_forex_price_history(pairs):
                 continue
 
             closes = df["Close"].dropna().tolist()
-            highs  = df["High"].dropna().tolist()
-            lows   = df["Low"].dropna().tolist()
+            highs = df["High"].dropna().tolist()
+            lows = df["Low"].dropna().tolist()
 
             _price_histories[pair] = closes[-300:]
 
@@ -12792,10 +15143,10 @@ async def seed_forex_price_history(pairs):
             if vols:
                 _volume_histories[pair] = vols[-300:]
 
-            rsi    = compute_rsi(closes)
-            atr    = compute_atr(closes)
+            rsi = compute_rsi(closes)
+            atr = compute_atr(closes)
             regime = compute_regime(closes)
-            adx    = compute_adx(closes)
+            adx = compute_adx(closes)
             print(
                 f"[SEED] {pair}: {len(closes)} x 5m candles | "
                 f"RSI: {rsi:.1f} | ATR: {atr:.6f} | Regime: {regime} | ADX: {adx:.1f}",
@@ -12818,7 +15169,10 @@ async def run_loop(run_once=False):
     pairs = get_pairs()
     cycle = 0
     consecutive_failures = 0
-    print(f"[{datetime.now(timezone.utc).isoformat()}] Starting multi-pair forex bot for {', '.join(pairs)}.", flush=True)
+    print(
+        f"[{datetime.now(timezone.utc).isoformat()}] Starting multi-pair forex bot for {', '.join(pairs)}.",
+        flush=True,
+    )
     # Pre-seed price history from yfinance so RSI/ATR/regime/ADX are real from cycle 1
     await seed_forex_price_history(pairs)
 
@@ -12840,9 +15194,11 @@ async def run_loop(run_once=False):
             status = "ok"
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    "python", "-c",
+                    "python",
+                    "-c",
                     f"from hermes_trading.genetic_discovery import run_and_register as r; r('{pair}')",
-                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
                 )
                 stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=900)
                 output = stdout.decode() if stdout else ""
@@ -12879,7 +15235,8 @@ async def run_loop(run_once=False):
         wall_time = time.time() - start_wall
         # Build Discord summary
         indicator_total = sum(
-            int(c.split("/")[0]) for _, s, _, c in results
+            int(c.split("/")[0])
+            for _, s, _, c in results
             if s == "ok" and c not in ("0?", "N/A") and "/" in c
         )
         lines = [f"**🔬 GP Discovery — gold** ({int(wall_time)}s, {indicator_total} indicators)"]
@@ -12898,7 +15255,10 @@ async def run_loop(run_once=False):
         print(f"[CYCLE {cycle}] {datetime.now(timezone.utc).isoformat()}", flush=True)
         try:
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                print(f"[CIRCUIT OPEN] {consecutive_failures} consecutive failures. Waiting 5 min.", flush=True)
+                print(
+                    f"[CIRCUIT OPEN] {consecutive_failures} consecutive failures. Waiting 5 min.",
+                    flush=True,
+                )
                 await asyncio.sleep(300)
                 consecutive_failures = 0
                 continue
@@ -12906,14 +15266,20 @@ async def run_loop(run_once=False):
             # ── Pause check: honor dashboard pause signal ──
             try:
                 import httpx as _httpx_pulse
+
                 pulse_url = f"{_DASHBOARD_URL}/api/bot/gold/pulse" if _DASHBOARD_URL else ""
                 if pulse_url:
                     pr = await _httpx_pulse.AsyncClient(timeout=3).get(pulse_url)
                     if pr.status_code == 200:
                         pulse = pr.json()
                         if pulse.get("desired_state") == "paused":
-                            print(f"[PAUSE] Bot paused via dashboard. Entering sleep mode.", flush=True)
-                            await send_discord_alert("⏸ **Bot paused via dashboard — entering sleep mode.**")
+                            print(
+                                f"[PAUSE] Bot paused via dashboard. Entering sleep mode.",
+                                flush=True,
+                            )
+                            await send_discord_alert(
+                                "⏸ **Bot paused via dashboard — entering sleep mode.**"
+                            )
                             # Internal pause: just sleep and re-check periodically instead of killing deployment
                             for _ in range(60):
                                 await asyncio.sleep(60)
@@ -12930,6 +15296,7 @@ async def run_loop(run_once=False):
                     # so combined_reflect never runs for it — unpause it here
                     # every cycle instead (rolling recovery or max-pause timeout).
                     from hermes_trading.reflect import maybe_auto_unpause
+
                     maybe_auto_unpause(pair, strategies[pair])
                 except FileNotFoundError:
                     print(f"[WARN] No strategy for {pair}, skipping.", flush=True)
@@ -12945,7 +15312,9 @@ async def run_loop(run_once=False):
                     if not price_data or "price" not in price_data:
                         continue
                     current_price = float(price_data["price"])
-                    unrealised_pct = (current_price - trade["entry_price"]) / trade["entry_price"] * 100
+                    unrealised_pct = (
+                        (current_price - trade["entry_price"]) / trade["entry_price"] * 100
+                    )
                     trade["_unrealised_pct"] = round(unrealised_pct, 4)
                     trade["current_price"] = current_price
                     hold_cycles = cycle - trade.get("_entry_cycle", cycle)
@@ -12962,7 +15331,11 @@ async def run_loop(run_once=False):
                         trade["_regime_changes"] = 0
                         trade["_last_regime"] = trade.get("entry_regime", "UNKNOWN")
                     current_regime = compute_regime(_price_histories.get(asset, []))
-                    if current_regime and trade.get("_last_regime") and current_regime != trade["_last_regime"]:
+                    if (
+                        current_regime
+                        and trade.get("_last_regime")
+                        and current_regime != trade["_last_regime"]
+                    ):
                         trade["_regime_changes"] = trade.get("_regime_changes", 0) + 1
                         trade["_last_regime"] = current_regime
                     # Use ATR stop stored at entry time, or recalculate if missing (legacy trades)
@@ -12973,15 +15346,23 @@ async def run_loop(run_once=False):
                         if atr is not None and atr > 0:
                             stop_price = trade["entry_price"] - (atr * 1.5)
                         else:
-                            stop_price = trade["entry_price"] * (1 - pair_strategy["stop_loss_pct"] / 100)
-                    trailing_stop_price = trade["_peak_price"] * (1 - pair_strategy.get("trailing_stop_pct", 0.10) / 100)
+                            stop_price = trade["entry_price"] * (
+                                1 - pair_strategy["stop_loss_pct"] / 100
+                            )
+                    trailing_stop_price = trade["_peak_price"] * (
+                        1 - pair_strategy.get("trailing_stop_pct", 0.10) / 100
+                    )
                     # ATR dynamic trailing stop: once in profit (>0.3%), trail ATR-based distance
                     att = compute_atr(_price_histories.get(asset, []))
                     if att is not None and att > 0 and unrealised_pct > 0.3:
                         atr_trail = trade["_peak_price"] - (att * 1.5)
-                        fixed_trail = trade["_peak_price"] * (1 - pair_strategy.get("trailing_stop_pct", 0.10) / 100)
+                        fixed_trail = trade["_peak_price"] * (
+                            1 - pair_strategy.get("trailing_stop_pct", 0.10) / 100
+                        )
                         trailing_stop_price = max(trailing_stop_price, atr_trail, fixed_trail)
-                    profit_target_price = trade["entry_price"] * (1 + pair_strategy.get("profit_target_pct", 0.15) / 100)
+                    profit_target_price = trade["entry_price"] * (
+                        1 + pair_strategy.get("profit_target_pct", 0.15) / 100
+                    )
                     time_exit_cycles = pair_strategy.get("time_exit_cycles", 120)
 
                     # ── Layer 17: Breakeven management ──
@@ -12990,7 +15371,10 @@ async def run_loop(run_once=False):
                     if not trade.get("_breakeven_set") and unrealised_pct >= breakeven_trigger:
                         trade["_breakeven_set"] = True
                         stop_price = max(stop_price, trade["entry_price"])
-                        print(f"[{asset}] BREAKEVEN: profit {unrealised_pct:.2f}% >= {breakeven_trigger:.2f}% — stop moved to entry {trade['entry_price']:.5f}", flush=True)
+                        print(
+                            f"[{asset}] BREAKEVEN: profit {unrealised_pct:.2f}% >= {breakeven_trigger:.2f}% — stop moved to entry {trade['entry_price']:.5f}",
+                            flush=True,
+                        )
                         await send_discord_alert(
                             f"🔒 **BREAKEVEN: {asset}** | Profit {unrealised_pct:.2f}% >= {breakeven_trigger:.2f}%\n"
                             f"Stop moved to entry {trade['entry_price']:.5f} | Trail active"
@@ -13003,7 +15387,10 @@ async def run_loop(run_once=False):
                         trade["_partial_taken"] = True
                         # Reset stop to breakeven for remaining 50%
                         stop_price = max(stop_price, trade["entry_price"])
-                        print(f"[{asset}] PARTIAL PROFIT: {unrealised_pct:.2f}% >= target {partial_target_pct:.2f}% — took 50% profit, trailing rest at breakeven", flush=True)
+                        print(
+                            f"[{asset}] PARTIAL PROFIT: {unrealised_pct:.2f}% >= target {partial_target_pct:.2f}% — took 50% profit, trailing rest at breakeven",
+                            flush=True,
+                        )
                         await send_discord_alert(
                             f"💰 **PARTIAL PROFIT: {asset}** | Hit target +{unrealised_pct:.2f}%\n"
                             f"Took 50% profit. Stop at breakeven, trailing remainder."
@@ -13014,13 +15401,20 @@ async def run_loop(run_once=False):
 
                     if trade_stype == "mean_reversion":
                         # ── Mean Reversion Exit: price returns to BB middle band ──
-                        bb_result = compute_bollinger(_price_histories.get(asset, []), period=20, num_std=pair_strategy.get("bb_std_dev", 1.5))
+                        bb_result = compute_bollinger(
+                            _price_histories.get(asset, []),
+                            period=20,
+                            num_std=pair_strategy.get("bb_std_dev", 1.5),
+                        )
                         if bb_result is not None:
                             bb_middle, bb_upper, bb_lower, bb_bw = bb_result
                             # Exit long when price reaches or exceeds middle band (but NOT on flat prices)
                             if bb_bw >= 0.001 and current_price >= bb_middle:
                                 exit_reason = "profit_target"
-                                print(f"[{asset}] MR PROFIT TARGET: price {current_price:.5f} >= BB middle {bb_middle:.5f}", flush=True)
+                                print(
+                                    f"[{asset}] MR PROFIT TARGET: price {current_price:.5f} >= BB middle {bb_middle:.5f}",
+                                    flush=True,
+                                )
                         # MR also has stop loss and time exit
                         if exit_reason is None and current_price <= stop_price:
                             exit_reason = "stop_loss"
@@ -13030,10 +15424,19 @@ async def run_loop(run_once=False):
                         # ── RSI Momentum Exit (original logic) ──
                         # Secondary take-profit: if held > 120 cycles and profitable,
                         # exit at 50% of original target to lock in gains
-                        half_target_price = trade["entry_price"] * (1 + pair_strategy.get("profit_target_pct", 0.15) / 200)
-                        if hold_cycles > 120 and unrealised_pct > 0 and current_price >= half_target_price:  # noqa
+                        half_target_price = trade["entry_price"] * (
+                            1 + pair_strategy.get("profit_target_pct", 0.15) / 200
+                        )
+                        if (
+                            hold_cycles > 120
+                            and unrealised_pct > 0
+                            and current_price >= half_target_price
+                        ):  # noqa
                             exit_reason = "profit_target"
-                            print(f"[{asset}] HALF-TARGET exit (held {hold_cycles}c > 120, profitable {unrealised_pct:.4f}%)", flush=True)
+                            print(
+                                f"[{asset}] HALF-TARGET exit (held {hold_cycles}c > 120, profitable {unrealised_pct:.4f}%)",
+                                flush=True,
+                            )
                         elif current_price <= stop_price:
                             exit_reason = "stop_loss"
                         elif current_price >= profit_target_price:
@@ -13045,18 +15448,33 @@ async def run_loop(run_once=False):
 
                     if exit_reason:
                         pnl_pct = unrealised_pct
-                        print(f"[{asset}] {exit_reason.upper()}. Exit @ {current_price:.5f} | PnL: {pnl_pct:.4f}% | Held {hold_cycles} cycles", flush=True)
-                        exit_emoji = {"stop_loss": "⚠️", "profit_target": "🎯", "trailing_stop": "📉", "time_exit": "⏰"}.get(exit_reason, "📊")
+                        print(
+                            f"[{asset}] {exit_reason.upper()}. Exit @ {current_price:.5f} | PnL: {pnl_pct:.4f}% | Held {hold_cycles} cycles",
+                            flush=True,
+                        )
+                        exit_emoji = {
+                            "stop_loss": "⚠️",
+                            "profit_target": "🎯",
+                            "trailing_stop": "📉",
+                            "time_exit": "⏰",
+                        }.get(exit_reason, "📊")
                         await send_discord_alert(
                             f"{exit_emoji} **TRADE CLOSED: {asset}** | {exit_reason.replace('_', ' ').title()}\n"
                             f"Exit: {current_price:.5f} | PnL: {pnl_pct:.4f}% | Held: {hold_cycles} cycles"
                         )
                         record = {
-                            "id": trade["id"], "asset": asset, "pair": asset, "bot_id": "hermes-forex",
-                            "entry_price": trade["entry_price"], "exit_price": current_price,
-                            "entry_ts": trade["entry_ts"], "exit_ts": datetime.now(timezone.utc).isoformat(),
-                            "pnl_pct": round(pnl_pct, 4), "exit_reason": exit_reason,
-                            "strategy_version": pair_strategy["version"], "mode": "paper",
+                            "id": trade["id"],
+                            "asset": asset,
+                            "pair": asset,
+                            "bot_id": "hermes-forex",
+                            "entry_price": trade["entry_price"],
+                            "exit_price": current_price,
+                            "entry_ts": trade["entry_ts"],
+                            "exit_ts": datetime.now(timezone.utc).isoformat(),
+                            "pnl_pct": round(pnl_pct, 4),
+                            "exit_reason": exit_reason,
+                            "strategy_version": pair_strategy["version"],
+                            "mode": "paper",
                             "hold_cycles": hold_cycles,
                             "price_high": trade.get("_peak_price", current_price),
                             "price_low": trade.get("_low_price", current_price),
@@ -13066,36 +15484,70 @@ async def run_loop(run_once=False):
                             "chart_context": trade.get("chart_context", "unavailable"),
                             "entry_quality_score": trade.get("entry_quality_score", "N/A"),
                             "strategy_type": trade_stype,
-                            "entry_session": _get_session(int(trade.get("entry_ts", "T").split("T")[1].split(":")[0]) if "T" in trade.get("entry_ts", "") else 0),
+                            "entry_session": _get_session(
+                                int(trade.get("entry_ts", "T").split("T")[1].split(":")[0])
+                                if "T" in trade.get("entry_ts", "")
+                                else 0
+                            ),
                             "entry_day": _get_day_name(trade.get("entry_ts", "")),
-                            "entry_hour_utc": int(trade.get("entry_ts", "T").split("T")[1].split(":")[0]) if "T" in trade.get("entry_ts", "") else 0,
+                            "entry_hour_utc": int(
+                                trade.get("entry_ts", "T").split("T")[1].split(":")[0]
+                            )
+                            if "T" in trade.get("entry_ts", "")
+                            else 0,
                             "concurrent_entries": len(_open_trades),
                             "regime_changes": trade.get("_regime_changes", 0),
-                            "exit_regime": best_fast_regime if 'best_fast_regime' in locals() and best_fast_regime else \
-                                           best_regime if 'best_regime' in locals() and best_regime else "UNKNOWN",
-                            "market_move_pct": round((current_price - trade["entry_price"]) / trade["entry_price"] * 100, 4),
-                            "alpha_pct": round(pnl_pct - ((current_price - trade["entry_price"]) / trade["entry_price"] * 100), 4),
+                            "exit_regime": best_fast_regime
+                            if "best_fast_regime" in locals() and best_fast_regime
+                            else best_regime
+                            if "best_regime" in locals() and best_regime
+                            else "UNKNOWN",
+                            "market_move_pct": round(
+                                (current_price - trade["entry_price"]) / trade["entry_price"] * 100,
+                                4,
+                            ),
+                            "alpha_pct": round(
+                                pnl_pct
+                                - (
+                                    (current_price - trade["entry_price"])
+                                    / trade["entry_price"]
+                                    * 100
+                                ),
+                                4,
+                            ),
                         }
                         with open(TRADES_FILE, "a") as f:
                             f.write(json.dumps(record) + "\n")
                         # Save candle data for future backtesting
                         try:
                             from hermes_trading.backtest import save_candle_series
-                            save_candle_series(asset, trade["id"], _price_histories.get(asset, []), STATE_DIR / "candles")
+
+                            save_candle_series(
+                                asset,
+                                trade["id"],
+                                _price_histories.get(asset, []),
+                                STATE_DIR / "candles",
+                            )
                         except Exception:
                             pass
                         # ── Decision Cortex: record trade outcome ──
                         try:
                             from hermes_trading.decision_cortex import record_outcome
+
                             record_outcome(asset, trade_stype, pnl_pct, exit_reason)
                         except Exception:
                             pass
                         # Track stop-loss exits for re-entry cooldown
                         if exit_reason == "stop_loss":
                             _stop_loss_blocklist[asset] = cycle
-                            print(f"[{asset}] STOP-LOSS COOLDOWN: Re-entry blocked for 30 cycles", flush=True)
+                            print(
+                                f"[{asset}] STOP-LOSS COOLDOWN: Re-entry blocked for 30 cycles",
+                                flush=True,
+                            )
                             # ── Level 6: Consecutive-loss cooldown ──
-                            cons_flatline, cons_cycles, cons_reason = _update_consecutive_losses(asset, exit_reason)
+                            cons_flatline, cons_cycles, cons_reason = _update_consecutive_losses(
+                                asset, exit_reason
+                            )
                             if cons_flatline:
                                 # Use the longer of the existing flatline and this one
                                 existing = _flatline.get(asset, 0)
@@ -13113,7 +15565,10 @@ async def run_loop(run_once=False):
                         # ── Degradation tracking: record signal outcome for discovered indicators ──
                         try:
                             from hermes_trading.backtest import record_signal_outcome
-                            record_signal_outcome(asset, 1, pnl_pct)  # bullish signal → trade result
+
+                            record_signal_outcome(
+                                asset, 1, pnl_pct
+                            )  # bullish signal → trade result
                         except Exception:
                             pass
                         # ── GP ensemble signal degradation: track consecutive wrong entries ──
@@ -13121,9 +15576,15 @@ async def run_loop(run_once=False):
                             if exit_reason in ("stop_loss", "time_exit") and pnl_pct < 0:
                                 _gp_consecutive_bad[asset] = _gp_consecutive_bad.get(asset, 0) + 1
                                 n = _gp_consecutive_bad[asset]
-                                print(f"[GP-DEGRADE] {asset}: GP entry lost ({pnl_pct:+.2f}%) — {n} consecutive bad signals", flush=True)
+                                print(
+                                    f"[GP-DEGRADE] {asset}: GP entry lost ({pnl_pct:+.2f}%) — {n} consecutive bad signals",
+                                    flush=True,
+                                )
                                 if n >= 3:
-                                    print(f"[GP-DEGRADE] {asset}: 3+ consecutive GP losses — blocking further GP entries on this pair", flush=True)
+                                    print(
+                                        f"[GP-DEGRADE] {asset}: 3+ consecutive GP losses — blocking further GP entries on this pair",
+                                        flush=True,
+                                    )
                                 # GP Intelligence: record outcome + lockout
                                 gpi = _get_gp_intel()
                                 if gpi:
@@ -13133,31 +15594,52 @@ async def run_loop(run_once=False):
                                 prev = _gp_consecutive_bad.get(asset, 0)
                                 _gp_consecutive_bad[asset] = 0
                                 if prev > 0:
-                                    print(f"[GP-DEGRADE] {asset}: GP entry won ({pnl_pct:+.2f}%) — reset bad counter", flush=True)
+                                    print(
+                                        f"[GP-DEGRADE] {asset}: GP entry won ({pnl_pct:+.2f}%) — reset bad counter",
+                                        flush=True,
+                                    )
                                 # GP Intelligence: record outcome + reset lockout
                                 gpi = _get_gp_intel()
                                 if gpi:
                                     gpi.record_outcome(asset, pnl_pct, exit_reason)
                                     gpi.record_win(asset)
                         # ── GP Intelligence: record traditional entry outcomes for allocation matrix ──
-                        elif (_get_gp_intel() and trade_stype in ("mean_reversion", "rsi_momentum")):
+                        elif _get_gp_intel() and trade_stype in ("mean_reversion", "rsi_momentum"):
                             try:
                                 _get_gp_intel().record_traditional_outcome(
-                                    asset, pnl_pct, trade_stype, trade.get("exit_regime", "UNKNOWN"),
-                                    trade.get("entry_adx", 0), 0.0,
+                                    asset,
+                                    pnl_pct,
+                                    trade_stype,
+                                    trade.get("exit_regime", "UNKNOWN"),
+                                    trade.get("entry_adx", 0),
+                                    0.0,
                                     trade.get("entry_session", "UNKNOWN"),
                                 )
                             except Exception:
                                 pass
                         del _open_trades[asset]
                     else:
-                        stop_label = "ATR" if "_stop_price" in trade else f"fixed {pair_strategy['stop_loss_pct']}%"
-                        half_target_display = f" | Half-Target: {half_target_price:.5f}" if hold_cycles > 100 else ""
-                        print(f"[{asset}] Holding. Unrealised: {unrealised_pct:.4f}% | Stop: {stop_price:.5f} ({stop_label}) | Target: {profit_target_price:.5f}{half_target_display} | Held: {hold_cycles}/{time_exit_cycles}", flush=True)
+                        stop_label = (
+                            "ATR"
+                            if "_stop_price" in trade
+                            else f"fixed {pair_strategy['stop_loss_pct']}%"
+                        )
+                        half_target_display = (
+                            f" | Half-Target: {half_target_price:.5f}" if hold_cycles > 100 else ""
+                        )
+                        print(
+                            f"[{asset}] Holding. Unrealised: {unrealised_pct:.4f}% | Stop: {stop_price:.5f} ({stop_label}) | Target: {profit_target_price:.5f}{half_target_display} | Held: {hold_cycles}/{time_exit_cycles}",
+                            flush=True,
+                        )
                         # Stop loss warning: within 0.5% of stop
-                        stop_distance_pct = abs(current_price - stop_price) / trade["entry_price"] * 100
+                        stop_distance_pct = (
+                            abs(current_price - stop_price) / trade["entry_price"] * 100
+                        )
                         if stop_distance_pct <= 0.5:
-                            print(f"⚠️  STOP WARNING: {asset} within {stop_distance_pct:.2f}% of stop (price {current_price:.5f}, stop {stop_price:.5f})", flush=True)
+                            print(
+                                f"⚠️  STOP WARNING: {asset} within {stop_distance_pct:.2f}% of stop (price {current_price:.5f}, stop {stop_price:.5f})",
+                                flush=True,
+                            )
                             await send_discord_alert(
                                 f"⚠️ **STOP WARNING: {asset}** within {stop_distance_pct:.2f}% of stop\\n"
                                 f"Price: {current_price:.5f} | Stop: {stop_price:.5f} | Held: {hold_cycles}c"
@@ -13182,7 +15664,7 @@ async def run_loop(run_once=False):
             pair_rsi_snapshot = {}
             pair_thresholds = {}
 
-            for pair in ([] if _market_closed else pairs):
+            for pair in [] if _market_closed else pairs:
                 if pair in _open_trades:
                     continue
 
@@ -13190,11 +15672,16 @@ async def run_loop(run_once=False):
                 if _flatline.get(pair, 0) > cycle:
                     remaining = _flatline[pair] - cycle
                     reason = _last_flatline_reason.get(pair, "unknown")
-                    print(f"[SAFETY] {pair}: FLATLINED ({remaining}c remaining) — reason: {reason}", flush=True)
+                    print(
+                        f"[SAFETY] {pair}: FLATLINED ({remaining}c remaining) — reason: {reason}",
+                        flush=True,
+                    )
                     continue
                 elif _flatline.get(pair, 0) != 0 and _flatline[pair] <= cycle:
                     # Flatline expired — log lived experience
-                    print(f"[SAFETY] {pair}: flatline expired — resuming entry scanning", flush=True)
+                    print(
+                        f"[SAFETY] {pair}: flatline expired — resuming entry scanning", flush=True
+                    )
                     if _HAS_CRISIS:
                         try:
                             lived_hist = _price_histories.get(pair, [])
@@ -13234,8 +15721,11 @@ async def run_loop(run_once=False):
                                             f"Distance: {rec['distance']} | PnL Impact: {rec['pnl_impact']:+.1f}%\n"
                                             f"Recommended Stop: {rec['recommended_stop_pct']}% | Target: {rec['recommended_target_pct']}%"
                                         )
-                                        print(f"[CRISIS] {pair}: nearest crisis '{rec['crisis_name']}' "
-                                              f"at distance {rec['distance']} — stopping at {rec['recommended_stop_pct']}%", flush=True)
+                                        print(
+                                            f"[CRISIS] {pair}: nearest crisis '{rec['crisis_name']}' "
+                                            f"at distance {rec['distance']} — stopping at {rec['recommended_stop_pct']}%",
+                                            flush=True,
+                                        )
                             except Exception as e:
                                 print(f"[CRISIS] Lookup error: {e}", flush=True)
                         await send_discord_alert(msg)
@@ -13251,7 +15741,10 @@ async def run_loop(run_once=False):
                         open_in_group = _open_trades.keys() & group
                         if open_in_group:
                             correlated_pair_open = True
-                            print(f"[{pair}] SKIP: correlated pair {list(open_in_group)[0]} already open — {group}", flush=True)
+                            print(
+                                f"[{pair}] SKIP: correlated pair {list(open_in_group)[0]} already open — {group}",
+                                flush=True,
+                            )
                         break
                 if correlated_pair_open:
                     continue
@@ -13265,7 +15758,9 @@ async def run_loop(run_once=False):
                 if pair_stype == "mean_reversion":
                     sym_threshold = float(pair_strategy.get("entry", {}).get("mr_entry_rsi", 40))
                 else:
-                    sym_threshold = float(os.environ.get("ENTRY_THRESHOLD", pair_strategy["entry"]["threshold"]))
+                    sym_threshold = float(
+                        os.environ.get("ENTRY_THRESHOLD", pair_strategy["entry"]["threshold"])
+                    )
                 try:
                     price_data = await fetch_pair_price(pair)
                     if not price_data or "price" not in price_data:
@@ -13277,7 +15772,10 @@ async def run_loop(run_once=False):
                     # breaking RSI, ATR, ADX, and BB bandwidth to zero.
                     candle_ts = price_data.get("candle_ts", "")
                     if candle_ts and candle_ts == _last_candle_ts.get(pair):
-                        print(f"[{pair}] SKIP: same candle {candle_ts} — no new data (market closed?)", flush=True)
+                        print(
+                            f"[{pair}] SKIP: same candle {candle_ts} — no new data (market closed?)",
+                            flush=True,
+                        )
                         continue
                     _last_candle_ts[pair] = candle_ts
                     # --- end stale candle guard ---
@@ -13289,6 +15787,7 @@ async def run_loop(run_once=False):
                     # ── Tier 2 (D): shadow scorecard tick (advisory, no entries) ──
                     try:
                         from hermes_trading.backtest import evaluate_shadow_signals
+
                         evaluate_shadow_signals(pair, _price_histories[pair])
                     except Exception:
                         pass  # shadow tracking is purely observational
@@ -13310,57 +15809,98 @@ async def run_loop(run_once=False):
                     avg_vol = compute_avg_volume(_volume_histories.get(pair, []))
                     avg_vol_str = f"{avg_vol:.2f}" if avg_vol is not None else "N/A"
                     adx_str = f"{adx:.1f}" if adx is not None else "N/A"
-                    print(f"[{pair}] Price: {current_price:.5f} | RSI: {rsi:.1f} | ROC(20): {roc:.4f}% | RangeVol: {range_vol:.2f} (avg:{avg_vol_str}) | ADX: {adx_str} | SType: {pair_stype}", flush=True)
+                    print(
+                        f"[{pair}] Price: {current_price:.5f} | RSI: {rsi:.1f} | ROC(20): {roc:.4f}% | RangeVol: {range_vol:.2f} (avg:{avg_vol_str}) | ADX: {adx_str} | SType: {pair_stype}",
+                        flush=True,
+                    )
 
                     # Flat-price guard: skip if all indicators are zero (stale/weekend data)
                     if rsi < 0.01 and roc == 0.0 and adx in (None, 0.0):
-                        print(f"[{pair}] SKIP: flat prices — all indicators at zero (stale/weekend data)", flush=True)
+                        print(
+                            f"[{pair}] SKIP: flat prices — all indicators at zero (stale/weekend data)",
+                            flush=True,
+                        )
                         continue
 
                     if pair_stype == "mean_reversion":
                         # ── Mean Reversion Entry (Bollinger Band) ──
                         mr_entry_rsi = pair_strategy.get("entry", {}).get("mr_entry_rsi", 40)
                         bb_std = pair_strategy.get("entry", {}).get("bb_std_dev", 1.5)
-                        bb_result = compute_bollinger(_price_histories[pair], period=20, num_std=bb_std)
+                        bb_result = compute_bollinger(
+                            _price_histories[pair], period=20, num_std=bb_std
+                        )
                         if bb_result is None:
                             print(f"[{pair}] SKIP: not enough data for Bollinger Bands", flush=True)
                             continue
                         bb_middle, bb_upper, bb_lower, bb_bw = bb_result
                         # Zero-variance guard: if BB bandwidth is near zero, prices are flat (stale/weekend data)
                         if bb_bw < 0.001:
-                            print(f"[{pair}] SKIP: BB bandwidth {bb_bw:.6f} — flat prices, no mean reversion edge", flush=True)
+                            print(
+                                f"[{pair}] SKIP: BB bandwidth {bb_bw:.6f} — flat prices, no mean reversion edge",
+                                flush=True,
+                            )
                             continue
                         # Session filter for MR pairs
                         session_filter = pair_strategy.get("entry", {}).get("session_filter", "24h")
                         if session_filter == "ny_only" and not is_ny_session():
-                            print(f"[{pair}] SKIP: NY session only (current UTC hour {datetime.now(timezone.utc).hour})", flush=True)
+                            print(
+                                f"[{pair}] SKIP: NY session only (current UTC hour {datetime.now(timezone.utc).hour})",
+                                flush=True,
+                            )
                             continue
                         if session_filter == "london_only" and not is_london_session():
-                            print(f"[{pair}] SKIP: London session only (current UTC hour {datetime.now(timezone.utc).hour})", flush=True)
+                            print(
+                                f"[{pair}] SKIP: London session only (current UTC hour {datetime.now(timezone.utc).hour})",
+                                flush=True,
+                            )
                             continue
                         if session_filter == "asian_only" and not is_asian_session():
-                            print(f"[{pair}] SKIP: Asian session only (current UTC hour {datetime.now(timezone.utc).hour})", flush=True)
+                            print(
+                                f"[{pair}] SKIP: Asian session only (current UTC hour {datetime.now(timezone.utc).hour})",
+                                flush=True,
+                            )
                             continue
                         # Correlation filter: skip GBP pair if the other GBP pair is already open
                         if pair == "GBP/USD" and "GBP/JPY" in _open_trades:
-                            print(f"[{pair}] SKIP: correlated GBP/JPY trade already open", flush=True)
+                            print(
+                                f"[{pair}] SKIP: correlated GBP/JPY trade already open", flush=True
+                            )
                             continue
                         if pair == "GBP/JPY" and "GBP/USD" in _open_trades:
-                            print(f"[{pair}] SKIP: correlated GBP/USD trade already open", flush=True)
+                            print(
+                                f"[{pair}] SKIP: correlated GBP/USD trade already open", flush=True
+                            )
                             continue
                         # Correlation: XAU/USD ↔ XAG/USD
                         if pair == "XAU/USD" and "XAG/USD" in _open_trades:
-                            print(f"[{pair}] SKIP: correlated XAG/USD trade already open", flush=True)
+                            print(
+                                f"[{pair}] SKIP: correlated XAG/USD trade already open", flush=True
+                            )
                             continue
                         if pair == "XAG/USD" and "XAU/USD" in _open_trades:
-                            print(f"[{pair}] SKIP: correlated XAU/USD trade already open", flush=True)
+                            print(
+                                f"[{pair}] SKIP: correlated XAU/USD trade already open", flush=True
+                            )
                             continue
                         # Volatility flag: EUR/USD stop loss → tighten all USD pair position sizes
-                        if (pair in ("GBP/USD", "AUD/USD") and "EUR/USD" in _open_trades
-                                and _open_trades.get("EUR/USD", {}).get("exit_reason") == "stop_loss"):
+                        if (
+                            pair in ("GBP/USD", "AUD/USD")
+                            and "EUR/USD" in _open_trades
+                            and _open_trades.get("EUR/USD", {}).get("exit_reason") == "stop_loss"
+                        ):
                             last_stop_ts = _open_trades.get("EUR/USD", {}).get("exit_ts", "")
-                            if last_stop_ts and (datetime.now(timezone.utc) - datetime.fromisoformat(last_stop_ts.replace("Z","+00:00"))).total_seconds() < 3600:
-                                print(f"[{pair}] SKIP: EUR/USD stop loss within last hour — USD volatility flag", flush=True)
+                            if (
+                                last_stop_ts
+                                and (
+                                    datetime.now(timezone.utc)
+                                    - datetime.fromisoformat(last_stop_ts.replace("Z", "+00:00"))
+                                ).total_seconds()
+                                < 3600
+                            ):
+                                print(
+                                    f"[{pair}] SKIP: EUR/USD stop loss within last hour — USD volatility flag",
+                                    flush=True,
+                                )
                                 continue
                         # MR entry: price touches or crosses below lower BB + RSI confirmation
                         if current_price <= bb_lower and rsi < mr_entry_rsi:
@@ -13370,12 +15910,25 @@ async def run_loop(run_once=False):
                                 # MR ADX bypass: same 50-cycle logic as RSI pairs
                                 _adx_bypass_cycles[pair] = _adx_bypass_cycles.get(pair, 0) + 1
                                 if _adx_bypass_cycles[pair] <= 50:
-                                    print(f"[{pair}] SKIP MR: ADX {adx:.1f} < {adx_threshold} — market ranging ({_adx_bypass_cycles[pair]}c)", flush=True)
+                                    print(
+                                        f"[{pair}] SKIP MR: ADX {adx:.1f} < {adx_threshold} — market ranging ({_adx_bypass_cycles[pair]}c)",
+                                        flush=True,
+                                    )
                                     regime = compute_regime(_price_histories.get(pair, []))
-                                    log_skip(pair, "mr_adx_below_threshold", rsi, current_price, regime, adx)
+                                    log_skip(
+                                        pair,
+                                        "mr_adx_below_threshold",
+                                        rsi,
+                                        current_price,
+                                        regime,
+                                        adx,
+                                    )
                                     continue
                                 else:
-                                    print(f"[{pair}] MR ADX BYPASS: ranging too long ({_adx_bypass_cycles[pair]}c)", flush=True)
+                                    print(
+                                        f"[{pair}] MR ADX BYPASS: ranging too long ({_adx_bypass_cycles[pair]}c)",
+                                        flush=True,
+                                    )
                             else:
                                 _adx_bypass_cycles[pair] = 0
 
@@ -13385,45 +15938,80 @@ async def run_loop(run_once=False):
                             # BEAR regime skip for MR pairs (per-pair configurable via allow_bear_entries)
                             block_bear = not pair_strategy.get("allow_bear_entries", False)
                             if regime == "BEAR" and block_bear:
-                                print(f"[{pair}] SKIP MR: BEAR regime — no long entries", flush=True)
+                                print(
+                                    f"[{pair}] SKIP MR: BEAR regime — no long entries", flush=True
+                                )
                                 log_skip(pair, "bear_regime", rsi, current_price, regime, adx)
                                 continue
 
                             # Economic calendar guard (Layer 19): block 10min before/after major events
                             econ_event, econ_name = _is_near_economic_event(pair=pair)
                             if econ_event:
-                                print(f"[{pair}] SKIP MR: near economic event ({econ_name}) — blocking entry", flush=True)
-                                log_skip(pair, "economic_event", rsi, current_price, compute_regime(_price_histories.get(pair, [])), adx)
+                                print(
+                                    f"[{pair}] SKIP MR: near economic event ({econ_name}) — blocking entry",
+                                    flush=True,
+                                )
+                                log_skip(
+                                    pair,
+                                    "economic_event",
+                                    rsi,
+                                    current_price,
+                                    compute_regime(_price_histories.get(pair, [])),
+                                    adx,
+                                )
                                 continue
 
                             # Quality score for MR pairs (same as RSI momentum)
                             min_quality = pair_strategy.get("minimum_entry_quality", 0)
-                            vol_above = avg_vol is not None and range_vol >= avg_vol * pair_strategy.get("vol_threshold_pct", 0.15)
-                            adx_above = adx is not None and (adx >= adx_threshold if adx_threshold > 0 else True)
+                            vol_above = (
+                                avg_vol is not None
+                                and range_vol
+                                >= avg_vol * pair_strategy.get("vol_threshold_pct", 0.15)
+                            )
+                            adx_above = adx is not None and (
+                                adx >= adx_threshold if adx_threshold > 0 else True
+                            )
                             mr_quality = compute_entry_quality_score(
-                                rsi=rsi, threshold=mr_entry_rsi, regime=regime,
-                                volume_above_avg=vol_above, adx_above=adx_above,
+                                rsi=rsi,
+                                threshold=mr_entry_rsi,
+                                regime=regime,
+                                volume_above_avg=vol_above,
+                                adx_above=adx_above,
                                 fast_regime=compute_regime_fast(_price_histories[pair])[0],
                                 divergence=compute_rsi_divergence(_price_histories[pair]),
                                 session_bonus=session_bonus,
-                                daily_rsi_bonus=_get_daily_rsi_bonus(pair)
+                                daily_rsi_bonus=_get_daily_rsi_bonus(pair),
                             )
                             # Collect RSI for correlation check
                             pair_rsi_snapshot[pair] = rsi
                             pair_thresholds[pair] = mr_entry_rsi
                             if mr_quality < min_quality:
-                                print(f"[{pair}] SKIP MR: quality {mr_quality}/10 < min {min_quality}/10", flush=True)
+                                print(
+                                    f"[{pair}] SKIP MR: quality {mr_quality}/10 < min {min_quality}/10",
+                                    flush=True,
+                                )
                                 log_skip(pair, "quality_below_min", rsi, current_price, regime, adx)
                                 continue
 
                             # ── Discovered indicator guard: skip MR long if ensemble is bearish ──
                             try:
-                                from hermes_trading.backtest import check_discovered_signals, init_discovered_storage
+                                from hermes_trading.backtest import (
+                                    check_discovered_signals,
+                                    init_discovered_storage,
+                                )
+
                                 init_discovered_storage()
-                                _, _, gp_det = check_discovered_signals(pair, _price_histories.get(pair, []))
+                                _, _, gp_det = check_discovered_signals(
+                                    pair, _price_histories.get(pair, [])
+                                )
                                 if gp_det.get("consensus") in ("bearish", "strong_bearish"):
-                                    print(f"[{pair}] SKIP MR: discovered ensemble is {gp_det.get('consensus')} — blocking long entry", flush=True)
-                                    log_skip(pair, "discovered_bearish", rsi, current_price, regime, adx)
+                                    print(
+                                        f"[{pair}] SKIP MR: discovered ensemble is {gp_det.get('consensus')} — blocking long entry",
+                                        flush=True,
+                                    )
+                                    log_skip(
+                                        pair, "discovered_bearish", rsi, current_price, regime, adx
+                                    )
                                     continue
                             except Exception:
                                 pass
@@ -13432,7 +16020,10 @@ async def run_loop(run_once=False):
                             chart_ctx = _chart_state["contexts"].get(pair, "")
                             chart_lower = chart_ctx.lower()
                             if "avoid" in chart_lower or "downtrend" in chart_lower:
-                                print(f"[{pair}] CHART BLOCK: Gemini says avoid/downtrend — blocking MR entry", flush=True)
+                                print(
+                                    f"[{pair}] CHART BLOCK: Gemini says avoid/downtrend — blocking MR entry",
+                                    flush=True,
+                                )
                                 log_skip(pair, "chart_hard_block", rsi, current_price, regime, adx)
                                 continue
                             # ── Shadow chart-veto (LOG ONLY, does not block) ──
@@ -13442,18 +16033,45 @@ async def run_loop(run_once=False):
                             elif "should wait" in chart_lower:
                                 _chart_veto_match = "should_wait"
                             if _chart_veto_match:
-                                print(f"[{pair}] SHADOW VETO ({_chart_veto_match}): would block — logging for future evaluation", flush=True)
-                                log_skip(pair, f"chart_veto_shadow:{_chart_veto_match}", rsi, current_price, regime, adx, cycle)
+                                print(
+                                    f"[{pair}] SHADOW VETO ({_chart_veto_match}): would block — logging for future evaluation",
+                                    flush=True,
+                                )
+                                log_skip(
+                                    pair,
+                                    f"chart_veto_shadow:{_chart_veto_match}",
+                                    rsi,
+                                    current_price,
+                                    regime,
+                                    adx,
+                                    cycle,
+                                )
                             # Re-entry cooldown: skip if stopped out in last 30 cycles
-                            if pair in _stop_loss_blocklist and cycle - _stop_loss_blocklist.get(pair, 0) < 30:
+                            if (
+                                pair in _stop_loss_blocklist
+                                and cycle - _stop_loss_blocklist.get(pair, 0) < 30
+                            ):
                                 remaining = 30 - (cycle - _stop_loss_blocklist[pair])
-                                print(f"[{pair}] SKIP MR: re-entry cooldown {remaining}/30 cycles", flush=True)
+                                print(
+                                    f"[{pair}] SKIP MR: re-entry cooldown {remaining}/30 cycles",
+                                    flush=True,
+                                )
                                 log_skip(pair, "reentry_cooldown", rsi, current_price, regime, adx)
                                 continue
-                            chart_warns = ("sell" in chart_lower)
+                            chart_warns = "sell" in chart_lower
                             if chart_warns and mr_quality < 5:
-                                print(f"[{pair}] SKIP MR: chart warns '{chart_ctx[:60]}...' + quality {mr_quality}/10 < 5", flush=True)
-                                log_skip(pair, "chart_downtrend_quality_filter", rsi, current_price, regime, adx)
+                                print(
+                                    f"[{pair}] SKIP MR: chart warns '{chart_ctx[:60]}...' + quality {mr_quality}/10 < 5",
+                                    flush=True,
+                                )
+                                log_skip(
+                                    pair,
+                                    "chart_downtrend_quality_filter",
+                                    rsi,
+                                    current_price,
+                                    regime,
+                                    adx,
+                                )
                                 continue
 
                             # Use best RSI among MR candidates (lowest RSI wins)
@@ -13467,31 +16085,55 @@ async def run_loop(run_once=False):
                                 best_strategy_type = "mean_reversion"
                                 best_entry_quality = mr_quality
                                 best_fast_regime = compute_regime_fast(_price_histories[pair])[0]
-                                print(f"[{pair}] MR SIGNAL: price {current_price:.5f} <= BB lower {bb_lower:.5f} | RSI {rsi:.1f} < {mr_entry_rsi} | BB bw: {bb_bw:.4f} | Regime: {regime} | Quality: {mr_quality}/10", flush=True)
+                                print(
+                                    f"[{pair}] MR SIGNAL: price {current_price:.5f} <= BB lower {bb_lower:.5f} | RSI {rsi:.1f} < {mr_entry_rsi} | BB bw: {bb_bw:.4f} | Regime: {regime} | Quality: {mr_quality}/10",
+                                    flush=True,
+                                )
                         else:
-                            reason = f"price {current_price:.5f} > BB lower {bb_lower:.5f}" if rsi >= mr_entry_rsi else f"RSI {rsi:.1f} >= {mr_entry_rsi}"
+                            reason = (
+                                f"price {current_price:.5f} > BB lower {bb_lower:.5f}"
+                                if rsi >= mr_entry_rsi
+                                else f"RSI {rsi:.1f} >= {mr_entry_rsi}"
+                            )
                             regime = compute_regime(_price_histories.get(pair, []))
                             log_skip(pair, "mr_no_signal", rsi, current_price, regime, adx)
                     else:
                         # ── RSI Momentary Entry (original logic) ──
                         if rsi < sym_threshold and roc < 0 and rsi < best_rsi:
                             # Session filter for RSI momentum entries
-                            rsi_session_filter = pair_strategy.get("entry", {}).get("session_filter", "24h")
+                            rsi_session_filter = pair_strategy.get("entry", {}).get(
+                                "session_filter", "24h"
+                            )
                             if rsi_session_filter == "london_only" and not is_london_session():
-                                print(f"[{pair}] SKIP: London session only (current UTC hour {datetime.now(timezone.utc).hour})", flush=True)
+                                print(
+                                    f"[{pair}] SKIP: London session only (current UTC hour {datetime.now(timezone.utc).hour})",
+                                    flush=True,
+                                )
                                 continue
                             if rsi_session_filter == "asian_only" and not is_asian_session():
-                                print(f"[{pair}] SKIP: Asian session only (current UTC hour {datetime.now(timezone.utc).hour})", flush=True)
+                                print(
+                                    f"[{pair}] SKIP: Asian session only (current UTC hour {datetime.now(timezone.utc).hour})",
+                                    flush=True,
+                                )
                                 continue
                             if rsi_session_filter == "ny_only" and not is_ny_session():
-                                print(f"[{pair}] SKIP: NY session only (current UTC hour {datetime.now(timezone.utc).hour})", flush=True)
+                                print(
+                                    f"[{pair}] SKIP: NY session only (current UTC hour {datetime.now(timezone.utc).hour})",
+                                    flush=True,
+                                )
                                 continue
                             # Correlation filter for RSI momentum entries
                             if pair == "GBP/USD" and "GBP/JPY" in _open_trades:
-                                print(f"[{pair}] SKIP RSI: correlated GBP/JPY trade already open", flush=True)
+                                print(
+                                    f"[{pair}] SKIP RSI: correlated GBP/JPY trade already open",
+                                    flush=True,
+                                )
                                 continue
                             if pair == "GBP/JPY" and "GBP/USD" in _open_trades:
-                                print(f"[{pair}] SKIP RSI: correlated GBP/USD trade already open", flush=True)
+                                print(
+                                    f"[{pair}] SKIP RSI: correlated GBP/USD trade already open",
+                                    flush=True,
+                                )
                                 continue
                             # ADX trend filter
                             # Bypass: if ADX has been below threshold for >50 consecutive cycles,
@@ -13503,20 +16145,28 @@ async def run_loop(run_once=False):
                                 if _adx_bypass_cycles[pair] > 50:
                                     adx_bypassed = True
                                     best_adx_bypass = True
-                                    print(f"[{pair}] ADX BYPASS: ranging too long ({_adx_bypass_cycles[pair]}c), using RSI+regime only", flush=True)
+                                    print(
+                                        f"[{pair}] ADX BYPASS: ranging too long ({_adx_bypass_cycles[pair]}c), using RSI+regime only",
+                                        flush=True,
+                                    )
                                     try:
                                         regime_now = compute_regime(_price_histories.get(pair, []))
                                         alert = {
                                             "type": "adx_bypass_entry",
-                                            "pair": pair, "price": current_price,
-                                            "rsi": round(rsi, 2), "regime": regime_now,
+                                            "pair": pair,
+                                            "price": current_price,
+                                            "rsi": round(rsi, 2),
+                                            "regime": regime_now,
                                             "bypass_cycles": _adx_bypass_cycles[pair],
                                             "ts": datetime.now(timezone.utc).isoformat(),
                                         }
                                         alert_file = STATE_DIR / "pending_adx_bypass.json"
                                         with open(alert_file, "w") as af:
                                             json.dump(alert, af)
-                                        print(f"[ALERT:ADBYPASS] {pair} | Price: {current_price:.5f} | RSI: {rsi:.1f} | Regime: {regime_now} | Bypass: {_adx_bypass_cycles[pair]}c", flush=True)
+                                        print(
+                                            f"[ALERT:ADBYPASS] {pair} | Price: {current_price:.5f} | RSI: {rsi:.1f} | Regime: {regime_now} | Bypass: {_adx_bypass_cycles[pair]}c",
+                                            flush=True,
+                                        )
                                         await send_discord_alert(
                                             f"⚡ **ADX BYPASS TRIGGERED: {pair} entering on RSI+regime only**\n"
                                             f"Entry price: {current_price:.5f} | RSI: {rsi:.1f} | Regime: {regime_now} | Bypass: {_adx_bypass_cycles[pair]}c"
@@ -13524,18 +16174,28 @@ async def run_loop(run_once=False):
                                     except Exception as e:
                                         print(f"[ALERT WRITE ERROR] {e}", flush=True)
                                 else:
-                                    print(f"[{pair}] SKIP: ADX {adx:.1f} < {adx_threshold} — market ranging, no trend ({_adx_bypass_cycles[pair]}c)", flush=True)
+                                    print(
+                                        f"[{pair}] SKIP: ADX {adx:.1f} < {adx_threshold} — market ranging, no trend ({_adx_bypass_cycles[pair]}c)",
+                                        flush=True,
+                                    )
                                     regime = compute_regime(_price_histories.get(pair, []))
-                                    log_skip(pair, "adx_below_threshold", rsi, current_price, regime, adx)
+                                    log_skip(
+                                        pair, "adx_below_threshold", rsi, current_price, regime, adx
+                                    )
                                     continue
                             else:
                                 _adx_bypass_cycles[pair] = 0
                             # Volume confirmation
                             vol_threshold_pct = pair_strategy.get("vol_threshold_pct", 0.15)
                             avg_vol = compute_avg_volume(_volume_histories.get(pair, []))
-                            vol_threshold = avg_vol * vol_threshold_pct if avg_vol is not None else 0
+                            vol_threshold = (
+                                avg_vol * vol_threshold_pct if avg_vol is not None else 0
+                            )
                             if avg_vol is not None and range_vol < vol_threshold:
-                                print(f"[{pair}] SKIP: RangeVol {range_vol:.2f} < {vol_threshold_pct*100:.0f}% of avg {vol_threshold:.2f} — no momentum", flush=True)
+                                print(
+                                    f"[{pair}] SKIP: RangeVol {range_vol:.2f} < {vol_threshold_pct * 100:.0f}% of avg {vol_threshold:.2f} — no momentum",
+                                    flush=True,
+                                )
                                 regime = compute_regime(_price_histories.get(pair, []))
                                 log_skip(pair, "volume_below_avg", rsi, current_price, regime, adx)
                                 continue
@@ -13549,34 +16209,48 @@ async def run_loop(run_once=False):
                             min_quality = pair_strategy.get("minimum_entry_quality", 0)
                             # BUG FIX: avg_vol is None when insufficient data — default to
                             # False so quality score isn't inflated during early cycles.
-                            vol_above = avg_vol is not None and range_vol >= avg_vol * vol_threshold_pct
+                            vol_above = (
+                                avg_vol is not None and range_vol >= avg_vol * vol_threshold_pct
+                            )
                             adx_above = adx is not None and adx >= adx_threshold
                             entry_quality_preview = compute_entry_quality_score(
-                                rsi=rsi, threshold=sym_threshold, regime=regime,
-                                volume_above_avg=vol_above, adx_above=adx_above,
+                                rsi=rsi,
+                                threshold=sym_threshold,
+                                regime=regime,
+                                volume_above_avg=vol_above,
+                                adx_above=adx_above,
                                 fast_regime=compute_regime_fast(_price_histories[pair])[0],
                                 divergence=compute_rsi_divergence(_price_histories[pair]),
                                 session_bonus=session_bonus,
-                                daily_rsi_bonus=_get_daily_rsi_bonus(pair)
+                                daily_rsi_bonus=_get_daily_rsi_bonus(pair),
                             )
                             # Collect RSI for correlation check
                             pair_rsi_snapshot[pair] = rsi
                             pair_thresholds[pair] = sym_threshold
                             if entry_quality_preview < min_quality:
-                                print(f"[{pair}] SKIP: quality {entry_quality_preview}/10 < min {min_quality}/10", flush=True)
+                                print(
+                                    f"[{pair}] SKIP: quality {entry_quality_preview}/10 < min {min_quality}/10",
+                                    flush=True,
+                                )
                                 log_skip(pair, "quality_below_min", rsi, current_price, regime, adx)
                                 continue
                             # Economic calendar guard (Layer 19): block 10min before/after major events
                             econ_event, econ_name = _is_near_economic_event(pair=pair)
                             if econ_event:
-                                print(f"[{pair}] SKIP RSI: near economic event ({econ_name}) — blocking entry", flush=True)
+                                print(
+                                    f"[{pair}] SKIP RSI: near economic event ({econ_name}) — blocking entry",
+                                    flush=True,
+                                )
                                 log_skip(pair, "economic_event", rsi, current_price, regime, adx)
                                 continue
                             # Chart vision: hard block on avoid/downtrend, soft filter on sell
                             rsi_chart = _chart_state["contexts"].get(pair, "")
                             rsi_chart_lower = rsi_chart.lower()
                             if "avoid" in rsi_chart_lower or "downtrend" in rsi_chart_lower:
-                                print(f"[{pair}] CHART BLOCK: Gemini says avoid/downtrend — blocking RSI entry", flush=True)
+                                print(
+                                    f"[{pair}] CHART BLOCK: Gemini says avoid/downtrend — blocking RSI entry",
+                                    flush=True,
+                                )
                                 log_skip(pair, "chart_hard_block", rsi, current_price, regime, adx)
                                 continue
                             # ── Shadow chart-veto (LOG ONLY, does not block) ──
@@ -13586,18 +16260,45 @@ async def run_loop(run_once=False):
                             elif "should wait" in rsi_chart_lower:
                                 _rsi_veto = "should_wait"
                             if _rsi_veto:
-                                print(f"[{pair}] SHADOW VETO ({_rsi_veto}): would block RSI entry — logging", flush=True)
-                                log_skip(pair, f"chart_veto_shadow:{_rsi_veto}", rsi, current_price, regime, adx, cycle)
+                                print(
+                                    f"[{pair}] SHADOW VETO ({_rsi_veto}): would block RSI entry — logging",
+                                    flush=True,
+                                )
+                                log_skip(
+                                    pair,
+                                    f"chart_veto_shadow:{_rsi_veto}",
+                                    rsi,
+                                    current_price,
+                                    regime,
+                                    adx,
+                                    cycle,
+                                )
                             # Re-entry cooldown: skip if stopped out in last 30 cycles
-                            if pair in _stop_loss_blocklist and cycle - _stop_loss_blocklist.get(pair, 0) < 30:
+                            if (
+                                pair in _stop_loss_blocklist
+                                and cycle - _stop_loss_blocklist.get(pair, 0) < 30
+                            ):
                                 remaining = 30 - (cycle - _stop_loss_blocklist[pair])
-                                print(f"[{pair}] SKIP RSI: re-entry cooldown {remaining}/30 cycles", flush=True)
+                                print(
+                                    f"[{pair}] SKIP RSI: re-entry cooldown {remaining}/30 cycles",
+                                    flush=True,
+                                )
                                 log_skip(pair, "reentry_cooldown", rsi, current_price, regime, adx)
                                 continue
-                            rsi_chart_warns = ("sell" in rsi_chart_lower)
+                            rsi_chart_warns = "sell" in rsi_chart_lower
                             if rsi_chart_warns and entry_quality_preview < 5:
-                                print(f"[{pair}] SKIP: chart warns '{rsi_chart[:60]}...' + quality {entry_quality_preview}/10 < 5", flush=True)
-                                log_skip(pair, "chart_downtrend_quality_filter", rsi, current_price, regime, adx)
+                                print(
+                                    f"[{pair}] SKIP: chart warns '{rsi_chart[:60]}...' + quality {entry_quality_preview}/10 < 5",
+                                    flush=True,
+                                )
+                                log_skip(
+                                    pair,
+                                    "chart_downtrend_quality_filter",
+                                    rsi,
+                                    current_price,
+                                    regime,
+                                    adx,
+                                )
                                 continue
                             regime_label = regime
                             best_rsi = rsi
@@ -13616,7 +16317,9 @@ async def run_loop(run_once=False):
             now_ts = time.time()
             if now_ts - _chart_state["last_analysis_ts"] > CHART_ANALYSIS_INTERVAL:
                 try:
-                    _chart_state["contexts"] = await asyncio.to_thread(get_all_chart_contexts, pairs)
+                    _chart_state["contexts"] = await asyncio.to_thread(
+                        get_all_chart_contexts, pairs
+                    )
                     _chart_state["last_analysis_ts"] = now_ts
                     for sym, ctx in _chart_state["contexts"].items():
                         first_line = ctx.splitlines()[0] if ctx else "N/A"
@@ -13628,7 +16331,11 @@ async def run_loop(run_once=False):
             # ── Gap 1: GP ensemble entry trigger (no traditional signal, but discovered indicators say strong_bullish) ──
             if not best_pair:
                 try:
-                    from hermes_trading.backtest import check_discovered_signals, init_discovered_storage
+                    from hermes_trading.backtest import (
+                        check_discovered_signals,
+                        init_discovered_storage,
+                    )
+
                     init_discovered_storage()
                     gp_pairs = []
                     for pair in pairs:
@@ -13645,40 +16352,76 @@ async def run_loop(run_once=False):
                             gp_bad = _gp_consecutive_bad.get(pair, 0)
                             # ── GP Intelligence: fingerprint + lockout + allocation ──
                             gpi = _get_gp_intel()
-                            gp_score = gpi.gp_entry_score(pair, compute_regime(hist_p), adx_val,
-                                                          0.0, _get_session(datetime.now(timezone.utc).hour), rsi_val) if gpi else 0.0
+                            gp_score = (
+                                gpi.gp_entry_score(
+                                    pair,
+                                    compute_regime(hist_p),
+                                    adx_val,
+                                    0.0,
+                                    _get_session(datetime.now(timezone.utc).hour),
+                                    rsi_val,
+                                )
+                                if gpi
+                                else 0.0
+                            )
                             regime = compute_regime(hist_p)
                             session = _get_session(datetime.now(timezone.utc).hour)
                             # ── Cortex: condition-aware routing (P5) ──
                             try:
                                 from hermes_trading.decision_cortex import best_entry_type
-                                _bet = best_entry_type(pair, regime, adx_val, 0.0, session, min_data=3)
+
+                                _bet = best_entry_type(
+                                    pair, regime, adx_val, 0.0, session, min_data=3
+                                )
                                 if _bet == "mean_reversion" and gp_score > -0.3:
                                     gp_score = -0.3  # Suppress GP when MR is proven better
                                 elif _bet == "gp_ensemble":
-                                    gp_score = max(gp_score, 0.2)  # Boost GP when it's proven better
+                                    gp_score = max(
+                                        gp_score, 0.2
+                                    )  # Boost GP when it's proven better
                             except Exception:
                                 pass
-                            if (det.get("consensus") == "strong_bullish" and n >= 2
-                                    and rsi_val < 65
-                                    and det.get("total_weight", 0) >= 0.5
-                                    and (adx_val is None or adx_val >= 20)
-                                    and gp_bad < 3
-                                    and gp_score >= 0.0):
+                            if (
+                                det.get("consensus") == "strong_bullish"
+                                and n >= 2
+                                and rsi_val < 65
+                                and det.get("total_weight", 0) >= 0.5
+                                and (adx_val is None or adx_val >= 20)
+                                and gp_bad < 3
+                                and gp_score >= 0.0
+                            ):
                                 # ── Exile check: filter out exiled indicators ──
                                 try:
                                     from hermes_trading.decision_cortex import is_indicator_exiled
+
                                     inds = det.get("indicators", [])
-                                    active_inds = [i for i in inds if not is_indicator_exiled(i.get("name", i.get("expr", "?")))]
-                                    active_exprs = [i.get("expr_str", i.get("expr", ""))[:40] for i in active_inds]
+                                    active_inds = [
+                                        i
+                                        for i in inds
+                                        if not is_indicator_exiled(
+                                            i.get("name", i.get("expr", "?"))
+                                        )
+                                    ]
+                                    active_exprs = [
+                                        i.get("expr_str", i.get("expr", ""))[:40]
+                                        for i in active_inds
+                                    ]
                                     exiled = len(inds) - len(active_inds)
                                     if exiled:
-                                        print(f"[GP-EXILE] {pair}: {exiled} indicators exiled, {len(active_inds)}/{len(inds)} active", flush=True)
+                                        print(
+                                            f"[GP-EXILE] {pair}: {exiled} indicators exiled, {len(active_inds)}/{len(inds)} active",
+                                            flush=True,
+                                        )
                                     # ── Policy suppression check (Level 9) ──
                                     try:
                                         from hermes_trading.policy_engine import get_policy
+
                                         _pol = get_policy()
-                                        if _pol.get("suppressions", {}).get(pair, {}).get("gp_ensemble"):
+                                        if (
+                                            _pol.get("suppressions", {})
+                                            .get(pair, {})
+                                            .get("gp_ensemble")
+                                        ):
                                             # Skip — policy has suppressed GP entries on this pair
                                             continue
                                     except Exception:
@@ -13689,8 +16432,15 @@ async def run_loop(run_once=False):
                                     gp_pairs.append((pair, sig, det.get("total_weight", 0)))
                                 # Log the candidate for intelligence tracking
                                 if gpi and det.get("indicators"):
-                                    gpi.log_entry(pair, det["indicators"], regime, adx_val,
-                                                  0.0, session, rsi_val)
+                                    gpi.log_entry(
+                                        pair,
+                                        det["indicators"],
+                                        regime,
+                                        adx_val,
+                                        0.0,
+                                        session,
+                                        rsi_val,
+                                    )
                     if gp_pairs:
                         gp_pairs.sort(key=lambda x: x[1], reverse=True)
                         gp_pair = gp_pairs[0][0]
@@ -13702,8 +16452,15 @@ async def run_loop(run_once=False):
                         best_chart_context = ""
                         best_adx = compute_adx(_price_histories.get(gp_pair, []))
                         best_entry_quality = 7
-                        best_fast_regime = compute_regime_fast(_price_histories.get(gp_pair, []))[0] if _price_histories.get(gp_pair) else "NEUTRAL"
-                        print(f"[GP-ENTRY] {gp_pair}: ensemble signal ({gp_pairs[0][1]:+.2f}), entering via GP discovery", flush=True)
+                        best_fast_regime = (
+                            compute_regime_fast(_price_histories.get(gp_pair, []))[0]
+                            if _price_histories.get(gp_pair)
+                            else "NEUTRAL"
+                        )
+                        print(
+                            f"[GP-ENTRY] {gp_pair}: ensemble signal ({gp_pairs[0][1]:+.2f}), entering via GP discovery",
+                            flush=True,
+                        )
                 except Exception:
                     pass
 
@@ -13711,11 +16468,13 @@ async def run_loop(run_once=False):
             if not best_pair:
                 try:
                     from hermes_trading.decision_cortex import summary as cortex_summary
+
                     cs = cortex_summary()
                     if cs.get("entries_total", 0) == 0:
                         # Use policy engine's probe interval (accelerated if needed)
                         try:
                             from hermes_trading.policy_engine import get_policy
+
                             probe_int = get_policy().get("probe_interval", 50)
                         except Exception:
                             probe_int = 50
@@ -13725,7 +16484,8 @@ async def run_loop(run_once=False):
                                 if pair in _open_trades or pair in _stop_loss_blocklist:
                                     continue
                                 hist_p = _price_histories.get(pair, [])
-                                if len(hist_p) < 100: continue
+                                if len(hist_p) < 100:
+                                    continue
                                 sig, n, det = check_discovered_signals(pair, hist_p)
                                 if det.get("consensus") in ("bullish", "strong_bullish") and n >= 2:
                                     best_pair = pair
@@ -13735,7 +16495,10 @@ async def run_loop(run_once=False):
                                 best_rsi = compute_rsi(hist_p)
                                 best_adx = compute_adx(hist_p)
                                 best_entry_quality = 7
-                                print(f"[GP-PROBE] {pair}: probe entry at 25% size to collect cortex data", flush=True)
+                                print(
+                                    f"[GP-PROBE] {pair}: probe entry at 25% size to collect cortex data",
+                                    flush=True,
+                                )
                                 break
                 except Exception:
                     pass
@@ -13748,7 +16511,11 @@ async def run_loop(run_once=False):
 
                 # ── Gap 3: Portfolio-level correlation — reduce size if multiple pairs bullish ──
                 try:
-                    from hermes_trading.backtest import check_discovered_signals, init_discovered_storage
+                    from hermes_trading.backtest import (
+                        check_discovered_signals,
+                        init_discovered_storage,
+                    )
+
                     init_discovered_storage()
                     _portfolio_bullish = 0
                     for p in pairs:
@@ -13761,8 +16528,11 @@ async def run_loop(run_once=False):
                                 _portfolio_bullish += 1
                     if _portfolio_bullish >= 2:
                         adj_size = round(base_size * (1.0 - _portfolio_bullish * 0.15), 4)
-                        size_label = f"{base_size}→{adj_size} (portfolio correlation -{_portfolio_bullish*15}%)"
-                        print(f"[PORTFOLIO] {best_pair}: {_portfolio_bullish} other pairs bullish, reducing size {base_size}→{adj_size}", flush=True)
+                        size_label = f"{base_size}→{adj_size} (portfolio correlation -{_portfolio_bullish * 15}%)"
+                        print(
+                            f"[PORTFOLIO] {best_pair}: {_portfolio_bullish} other pairs bullish, reducing size {base_size}→{adj_size}",
+                            flush=True,
+                        )
                 except Exception:
                     pass
 
@@ -13770,31 +16540,41 @@ async def run_loop(run_once=False):
                 # GP ensemble entries bypass this — they use discovered indicators, not RSI
                 oversold_count, total_pairs = 0, 0  # defaults (used in entry logging below)
                 if stype == "rsi_momentum":
-                    oversold_count, total_pairs, confluence = check_correlation(pairs, pair_rsi_snapshot, pair_thresholds)
+                    oversold_count, total_pairs, confluence = check_correlation(
+                        pairs, pair_rsi_snapshot, pair_thresholds
+                    )
                     if not confluence:
-                        print(f"[CORR] SKIP: only {oversold_count}/{total_pairs} pairs oversold — waiting for confluence", flush=True)
+                        print(
+                            f"[CORR] SKIP: only {oversold_count}/{total_pairs} pairs oversold — waiting for confluence",
+                            flush=True,
+                        )
                         continue
 
                 if stype == "gp_ensemble":
                     # GP entries: use MR-style sizing (reduced until proven)
                     all_pair_trades = load_trades()
-                    pair_closed_count = len([t for t in all_pair_trades if t.get("asset") == best_pair])
+                    pair_closed_count = len(
+                        [t for t in all_pair_trades if t.get("asset") == best_pair]
+                    )
                     # Probe entries (first GP entry when cortex has no data) at 25%
                     if pair_closed_count == 0:
                         try:
                             from hermes_trading.decision_cortex import summary as cs
+
                             if cs().get("entries_total", 0) == 0:
                                 adj_size = round(base_size * 0.25, 4)
                                 size_label = f"{base_size}→{adj_size} (GP probe 25%)"
                         except Exception:
                             pass
-                    if 'adj_size' not in locals():
+                    if "adj_size" not in locals():
                         if pair_closed_count < 10:
                             adj_size = round(base_size * 0.5, 4)
                             size_label = f"{base_size}→{adj_size} (GP ensemble 50% until 10 trades, currently {pair_closed_count})"
                         else:
                             adj_size = base_size
-                            size_label = f"{base_size} (GP ensemble full, {pair_closed_count} trades)"
+                            size_label = (
+                                f"{base_size} (GP ensemble full, {pair_closed_count} trades)"
+                            )
                     if best_regime == "NEUTRAL":
                         adj_size = round(adj_size * 0.6, 4)
                         size_label += f" | NEUTRAL -40%"
@@ -13803,7 +16583,9 @@ async def run_loop(run_once=False):
                     # ── Position size for standard entries (RSI momentum and MR) ──
                     if stype == "mean_reversion":
                         all_pair_trades = load_trades()
-                        pair_closed_count = len([t for t in all_pair_trades if t.get("asset") == best_pair])
+                        pair_closed_count = len(
+                            [t for t in all_pair_trades if t.get("asset") == best_pair]
+                        )
                         if pair_closed_count < 25:
                             adj_size = round(base_size * 0.5, 4)
                             size_label = f"{base_size}→{adj_size} (MR 50% until 25 trades, currently {pair_closed_count})"
@@ -13826,14 +16608,24 @@ async def run_loop(run_once=False):
                     if vol_max is not None and atr_pct > vol_max:
                         adj_size = round(adj_size * 0.5, 4)
                         size_label += f" | HV({atr_pct:.3f}%>{vol_max}%) -50%"
-                        print(f"[VOLATILITY] {best_pair}: ATR%={atr_pct:.3f}% > max={vol_max}% — halving size", flush=True)
+                        print(
+                            f"[VOLATILITY] {best_pair}: ATR%={atr_pct:.3f}% > max={vol_max}% — halving size",
+                            flush=True,
+                        )
                     elif vol_min is not None and atr_pct < vol_min:
                         size_label += f" | LV({atr_pct:.3f}%<{vol_min}%) tight"
-                        print(f"[VOLATILITY] {best_pair}: ATR%={atr_pct:.3f}% < min={vol_min}% — low vol, tightening quality", flush=True)
+                        print(
+                            f"[VOLATILITY] {best_pair}: ATR%={atr_pct:.3f}% < min={vol_min}% — low vol, tightening quality",
+                            flush=True,
+                        )
 
                 # ── Stop loss: ATR-based with optional floor ──
                 # Reuse atr_val from volatility calculation above to avoid double compute
-                entry_atr = atr_val if atr_val is not None else compute_atr(_price_histories.get(best_pair, []))
+                entry_atr = (
+                    atr_val
+                    if atr_val is not None
+                    else compute_atr(_price_histories.get(best_pair, []))
+                )
                 atr_mult = entry_strategy.get("atr_multiplier", 1.5)
                 fixed_stop = best_price * (1 - entry_strategy["stop_loss_pct"] / 100)
                 use_atr_floor = entry_strategy.get("use_atr_floor", False)
@@ -13845,27 +16637,47 @@ async def run_loop(run_once=False):
                         atr_stop = min(atr_stop, best_price * (1 - atr_stop_min_pct / 100))
                         # max() = tighter stop (higher price for a long) — YAML stop_loss_pct is the CEILING
                         entry_stop = max(atr_stop, fixed_stop)
-                        atr_label = f"ATR_floor({entry_atr:.5f})×{atr_mult} floor={atr_stop_min_pct}%"
+                        atr_label = (
+                            f"ATR_floor({entry_atr:.5f})×{atr_mult} floor={atr_stop_min_pct}%"
+                        )
                     else:
                         entry_stop = max(atr_stop, fixed_stop)
-                        atr_label = f"ATR({entry_atr:.5f})×{atr_mult}" if atr_stop >= fixed_stop else f"ATR too tight, using fixed {entry_strategy['stop_loss_pct']}%"
+                        atr_label = (
+                            f"ATR({entry_atr:.5f})×{atr_mult}"
+                            if atr_stop >= fixed_stop
+                            else f"ATR too tight, using fixed {entry_strategy['stop_loss_pct']}%"
+                        )
                 else:
                     entry_stop = fixed_stop
                     atr_label = f"fixed {entry_strategy['stop_loss_pct']}%"
-                print(f"[{best_pair}] Stop: ATR_floor={use_atr_floor} final={entry_stop:.5f} ({((best_price-entry_stop)/best_price*100):.3f}%)", flush=True)
+                print(
+                    f"[{best_pair}] Stop: ATR_floor={use_atr_floor} final={entry_stop:.5f} ({((best_price - entry_stop) / best_price * 100):.3f}%)",
+                    flush=True,
+                )
 
-                chart_summary = f" | Chart: {best_chart_context.splitlines()[0]}" if best_chart_context else ""
+                chart_summary = (
+                    f" | Chart: {best_chart_context.splitlines()[0]}" if best_chart_context else ""
+                )
                 adx_summary = " | ADX BYPASS" if best_adx_bypass else ""
                 stype_summary = f" | Type: {stype}"
 
                 if stype == "mean_reversion":
                     # MR entry log
-                    bb_result = compute_bollinger(_price_histories.get(best_pair, []), period=20, num_std=entry_strategy.get("bb_std_dev", 1.5))
+                    bb_result = compute_bollinger(
+                        _price_histories.get(best_pair, []),
+                        period=20,
+                        num_std=entry_strategy.get("bb_std_dev", 1.5),
+                    )
                     bb_info = ""
                     if bb_result:
                         bb_middle, bb_upper, bb_lower, bb_bw = bb_result
-                        bb_info = f" | BB: lower={bb_lower:.5f} mid={bb_middle:.5f} upper={bb_upper:.5f}"
-                    print(f"[ENTRY] {best_pair} — MR BUY @ {best_price:.5f} | RSI {best_rsi:.1f} | Stop: {entry_stop:.5f} ({atr_label}) | Size: {size_label}{bb_info}{chart_summary}{stype_summary}", flush=True)
+                        bb_info = (
+                            f" | BB: lower={bb_lower:.5f} mid={bb_middle:.5f} upper={bb_upper:.5f}"
+                        )
+                    print(
+                        f"[ENTRY] {best_pair} — MR BUY @ {best_price:.5f} | RSI {best_rsi:.1f} | Stop: {entry_stop:.5f} ({atr_label}) | Size: {size_label}{bb_info}{chart_summary}{stype_summary}",
+                        flush=True,
+                    )
                     await send_discord_alert(
                         f"🟢 **NEW ENTRY: {best_pair} (Mean Reversion)**\n"
                         f"Price: {best_price:.5f} | RSI: {best_rsi:.1f}\n"
@@ -13873,7 +16685,10 @@ async def run_loop(run_once=False):
                         f"Stop: {entry_stop:.5f} ({atr_label})"
                     )
                 elif stype == "gp_ensemble":
-                    print(f"[ENTRY] {best_pair} — GP ENSEMBLE BUY @ {best_price:.5f} | Stop: {entry_stop:.5f} ({atr_label}) | Size: {size_label}{chart_summary}", flush=True)
+                    print(
+                        f"[ENTRY] {best_pair} — GP ENSEMBLE BUY @ {best_price:.5f} | Stop: {entry_stop:.5f} ({atr_label}) | Size: {size_label}{chart_summary}",
+                        flush=True,
+                    )
                     await send_discord_alert(
                         f"🧬 **GP ENSEMBLE ENTRY: {best_pair}**\n"
                         f"Price: {best_price:.5f} | Regime: {best_regime}\n"
@@ -13884,7 +16699,10 @@ async def run_loop(run_once=False):
                 else:
                     quality_summary = f" | Quality: {best_entry_quality}/10"
                     corr_info = f" | Corr: {oversold_count}/{total_pairs}" if oversold_count else ""
-                    print(f"[ENTRY] {best_pair} — RSI {best_rsi:.1f} < {entry_strategy['entry']['threshold']} — BUYING @ {best_price:.5f} | Stop: {entry_stop:.5f} ({atr_label}) | Regime: {best_regime} | Size: {size_label}{adx_summary}{chart_summary}{quality_summary}{corr_info}{stype_summary}", flush=True)
+                    print(
+                        f"[ENTRY] {best_pair} — RSI {best_rsi:.1f} < {entry_strategy['entry']['threshold']} — BUYING @ {best_price:.5f} | Stop: {entry_stop:.5f} ({atr_label}) | Regime: {best_regime} | Size: {size_label}{adx_summary}{chart_summary}{quality_summary}{corr_info}{stype_summary}",
+                        flush=True,
+                    )
                     await send_discord_alert(
                         f"🟢 **NEW ENTRY: {best_pair} (RSI Momentum)**\n"
                         f"Price: {best_price:.5f} | RSI: {best_rsi:.1f} | Regime: {best_regime}\n"
@@ -13894,15 +16712,15 @@ async def run_loop(run_once=False):
 
                 # ── LEVEL 6: Spread guard before entry ──
                 spread_skip, spread_reason = _check_spread(
-                    best_pair, best_price,
+                    best_pair,
+                    best_price,
                     entry_strategy.get("stop_loss_pct", 0.5),
-                    vol_max_pct=entry_strategy.get("vol_max_pct", 2.0)
+                    vol_max_pct=entry_strategy.get("vol_max_pct", 2.0),
                 )
                 if spread_skip:
                     print(f"[SAFETY] {best_pair}: SPREAD GUARD — {spread_reason}", flush=True)
                     await send_discord_alert(
-                        f"📏 **SPREAD GUARD: {best_pair}**\n"
-                        f"{spread_reason} — skipping entry"
+                        f"📏 **SPREAD GUARD: {best_pair}**\n{spread_reason} — skipping entry"
                     )
                     log_skip(best_pair, "spread_guard", best_rsi, best_price, best_regime)
                     # Reset best_pair so the rest of entry logic is skipped
@@ -13911,19 +16729,31 @@ async def run_loop(run_once=False):
 
                 # ── LEVEL 6: Check discovered indicators before entry ──
                 try:
-                    from hermes_trading.backtest import check_discovered_signals, init_discovered_storage
+                    from hermes_trading.backtest import (
+                        check_discovered_signals,
+                        init_discovered_storage,
+                    )
+
                     init_discovered_storage()
                     hist = _price_histories.get(best_pair, [])
                     if len(hist) >= 100:
-                        signal_strength, num_active, details = check_discovered_signals(best_pair, hist)
+                        signal_strength, num_active, details = check_discovered_signals(
+                            best_pair, hist
+                        )
                         # Log detailed ensemble info
                         if num_active > 0:
-                            print(f"[DISCOVER] {best_pair}: signal={signal_strength:+.2f}({details['consensus']}) "
-                                  f"active={num_active} degraded={details['degraded']} shared={details['shared']} "
-                                  f"regime={details['current_regime']} vol={details['current_volatility']}", flush=True)
+                            print(
+                                f"[DISCOVER] {best_pair}: signal={signal_strength:+.2f}({details['consensus']}) "
+                                f"active={num_active} degraded={details['degraded']} shared={details['shared']} "
+                                f"regime={details['current_regime']} vol={details['current_volatility']}",
+                                flush=True,
+                            )
                         # Block entry if ensemble is bearish or strongly conflicted
                         if num_active > 0 and signal_strength < -0.3:
-                            print(f"[DISCOVER] {best_pair}: bearish ensemble ({details['consensus']}) — skipping entry", flush=True)
+                            print(
+                                f"[DISCOVER] {best_pair}: bearish ensemble ({details['consensus']}) — skipping entry",
+                                flush=True,
+                            )
                             await send_discord_alert(
                                 f"⛔ **DISCOVERED INDICATOR BLOCKED: {best_pair}**\\n"
                                 f"Signal: {signal_strength:+.2f} ({details['consensus']}) | Active: {num_active}\\n"
@@ -13932,7 +16762,10 @@ async def run_loop(run_once=False):
                             )
                             continue
                         elif num_active > 0:
-                            print(f"[DISCOVER] {best_pair}: signal {signal_strength:+.2f} ({details['consensus']}) — allowing entry", flush=True)
+                            print(
+                                f"[DISCOVER] {best_pair}: signal {signal_strength:+.2f} ({details['consensus']}) — allowing entry",
+                                flush=True,
+                            )
                 except Exception:
                     pass  # Discovered check is advisory — never block on errors
 
@@ -13952,19 +16785,28 @@ async def run_loop(run_once=False):
                     "_partial_taken": False,
                     "_regime": best_regime,
                     "entry_rsi": round(best_rsi, 2),
-                    "entry_adx": round(best_adx, 1) if 'best_adx' in locals() else "N/A",
+                    "entry_adx": round(best_adx, 1) if "best_adx" in locals() else "N/A",
                     "entry_regime": best_regime,
                     "chart_context": best_chart_context if best_chart_context else "unavailable",
-                    "entry_quality_score": best_entry_quality if 'best_entry_quality' in locals() else "N/A",
+                    "entry_quality_score": best_entry_quality
+                    if "best_entry_quality" in locals()
+                    else "N/A",
                     "strategy_type": stype,
-                    "fast_regime": best_fast_regime if 'best_fast_regime' in locals() else "N/A",
+                    "fast_regime": best_fast_regime if "best_fast_regime" in locals() else "N/A",
                 }
                 # ── Decision Cortex: record trade entry ──
                 try:
                     from hermes_trading.decision_cortex import record_entry
-                    record_entry(best_pair, stype, entry_strategy.get("version", "?"),
-                                 regime=best_regime, session=_get_session(datetime.now(timezone.utc).hour),
-                                 rsi=best_rsi, adx=best_adx)
+
+                    record_entry(
+                        best_pair,
+                        stype,
+                        entry_strategy.get("version", "?"),
+                        regime=best_regime,
+                        session=_get_session(datetime.now(timezone.utc).hour),
+                        rsi=best_rsi,
+                        adx=best_adx,
+                    )
                 except Exception:
                     pass
             elif not _open_trades:
@@ -13982,11 +16824,18 @@ async def run_loop(run_once=False):
                 # Count ALL closed trades for this pair (any version) for trigger
                 pair_total_closed = len([t for t in trades if t.get("asset") == pair])
                 # Count trades on current version for the reflection engine
-                pair_trades = [t for t in trades if t.get("strategy_version") == pair_version and t.get("asset") == pair]
+                pair_trades = [
+                    t
+                    for t in trades
+                    if t.get("strategy_version") == pair_version and t.get("asset") == pair
+                ]
                 pair_closed_count = len(pair_trades)
                 # Per-pair fast-early reflection: first 30 closed trades for THIS pair → every 3, then every 5
                 reflection_every = 3 if pair_total_closed < 30 else global_reflection_every
-                print(f"[REFLECT] {pair}: {pair_total_closed} total closed ({pair_closed_count} on v{pair_version}) | reflection_every={reflection_every}", flush=True)
+                print(
+                    f"[REFLECT] {pair}: {pair_total_closed} total closed ({pair_closed_count} on v{pair_version}) | reflection_every={reflection_every}",
+                    flush=True,
+                )
 
                 # Fire based on TOTAL closed trades (not version-filtered), so reflection
                 # keeps firing after version bumps. Latch uses (pair, total_count) to prevent repeats.
@@ -13997,7 +16846,11 @@ async def run_loop(run_once=False):
                         chart_ctx_short = chart_ctx[:300] if chart_ctx else ""
                         # Load skipped signals for this pair
                         all_skipped = load_skipped()
-                        pair_skipped = [s for s in all_skipped if s.get("pair") == pair and s.get("missed_pnl") is not None]
+                        pair_skipped = [
+                            s
+                            for s in all_skipped
+                            if s.get("pair") == pair and s.get("missed_pnl") is not None
+                        ]
                         skipped_json = json.dumps(pair_skipped[-20:]) if pair_skipped else "[]"
                         # Extract crisis features for reflection context
                         crisis_json = "[]"
@@ -14010,13 +16863,34 @@ async def run_loop(run_once=False):
                                     crisis_json = json.dumps(cf)
                             except Exception:
                                 pass
-                        print(f"[REFLECT] {pair}: {pair_total_closed} total ({pair_closed_count} on v{pair_version}) — running reflection...", flush=True)
+                        print(
+                            f"[REFLECT] {pair}: {pair_total_closed} total ({pair_closed_count} on v{pair_version}) — running reflection...",
+                            flush=True,
+                        )
                         try:
                             result = subprocess.run(
-                                ["python", "-m", "hermes_trading.reflect", "--fallback", "--pair", pair, "--chart-context", chart_ctx_short, "--skipped", skipped_json, "--crisis-data", crisis_json],
-                                capture_output=True, text=True, timeout=120
+                                [
+                                    "python",
+                                    "-m",
+                                    "hermes_trading.reflect",
+                                    "--fallback",
+                                    "--pair",
+                                    pair,
+                                    "--chart-context",
+                                    chart_ctx_short,
+                                    "--skipped",
+                                    skipped_json,
+                                    "--crisis-data",
+                                    crisis_json,
+                                ],
+                                capture_output=True,
+                                text=True,
+                                timeout=120,
                             )
-                            print(f"[REFLECT OUTPUT] {result.stdout[-500:]}{result.stderr[-500:]}", flush=True)
+                            print(
+                                f"[REFLECT OUTPUT] {result.stdout[-500:]}{result.stderr[-500:]}",
+                                flush=True,
+                            )
                             _mark_reflection_done(pair, pair_total_closed)
                             # Send reflection summary to #reflections channel
                             refl_msg = (
@@ -14029,7 +16903,10 @@ async def run_loop(run_once=False):
                         except Exception as e:
                             print(f"[REFLECT ERROR] {e}", flush=True)
                     else:
-                        print(f"[REFLECT] {pair}: Already done for v{pair_version} at total={pair_total_closed}. Skipping.", flush=True)
+                        print(
+                            f"[REFLECT] {pair}: Already done for v{pair_version} at total={pair_total_closed}. Skipping.",
+                            flush=True,
+                        )
 
             consecutive_failures = 0
             active = ", ".join(_open_trades.keys()) if _open_trades else "watching"
@@ -14039,14 +16916,30 @@ async def run_loop(run_once=False):
                 ts = _last_candle_ts.get(pair)
                 if ts:
                     try:
-                        age_h = (now_utc - datetime.fromisoformat(ts.replace("Z", "+00:00"))).total_seconds() / 3600
+                        age_h = (
+                            now_utc - datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                        ).total_seconds() / 3600
                         if age_h < 24:
                             _market_closed = False
                             break
                     except Exception:
                         pass
             regime_info = {pair: compute_regime(_price_histories.get(pair, [])) for pair in pairs}
-            heartbeat_data = {"ts": datetime.now(timezone.utc).isoformat(), "status": active, "cycle": cycle, "consecutive_failures": consecutive_failures, "last_price": best_price, "health": "ok" if consecutive_failures < MAX_CONSECUTIVE_FAILURES else "circuit_open", "regimes": regime_info, "chart_contexts": {pair: _chart_state["contexts"].get(pair, "")[:200] for pair in pairs}, "market_closed": _market_closed}
+            heartbeat_data = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "status": active,
+                "cycle": cycle,
+                "consecutive_failures": consecutive_failures,
+                "last_price": best_price,
+                "health": "ok"
+                if consecutive_failures < MAX_CONSECUTIVE_FAILURES
+                else "circuit_open",
+                "regimes": regime_info,
+                "chart_contexts": {
+                    pair: _chart_state["contexts"].get(pair, "")[:200] for pair in pairs
+                },
+                "market_closed": _market_closed,
+            }
             with open(HEARTBEAT_FILE, "w") as f:
                 json.dump(heartbeat_data, f, indent=2)
 
@@ -14059,6 +16952,7 @@ async def run_loop(run_once=False):
             # ── Autonomous Policy Engine (Level 9) — runs every 10 cycles ──
             try:
                 from hermes_trading.policy_engine import evaluate as pe_evaluate
+
                 pe_evaluate(cycle, pairs, strategies, cycle_age=cycle)
             except Exception:
                 pass
@@ -14096,6 +16990,7 @@ Hypothesis tracking:
   - Every reflection writes to hypotheses.jsonl
   - After NEXT 5 trades, hypothesis is scored: did the change help?
 """
+
 import argparse
 import json
 import os
@@ -14108,6 +17003,7 @@ import yaml
 
 try:
     import httpx
+
     HAS_HTTPX = True
 except ImportError:
     HAS_HTTPX = False
@@ -14122,7 +17018,9 @@ HISTORY_DIR = STATE_DIR / "history"
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-2.5-pro"
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+GEMINI_URL = (
+    f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+)
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL = "deepseek-r1-distill-llama-70b"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -14134,66 +17032,75 @@ LLM_RATE_LIMIT_SEC = 5
 skip_hypothesis_count = {}
 CIRCUIT_MAX_DD = -5.0  # -5% total PnL triggers circuit breaker
 CIRCUIT_MAX_CONSEC = 5  # 5 consecutive losses triggers circuit breaker
-MAX_PAUSE_HOURS = 48    # auto-unpause a paused pair after this many hours (half-size re-entry)
+MAX_PAUSE_HOURS = 48  # auto-unpause a paused pair after this many hours (half-size re-entry)
 COOLDOWN_SKIPS = 5  # Skip this many reflection cycles after no-change
 COOLDOWN_DECAY_CYCLES = 50  # Reset cooldown after N cycles without a skip
 LLM_OVERALL_TIMEOUT = 60  # Max seconds for all LLM calls combined
 EVOLVE_DEPLOY_SCORE = 60  # Deploy evolved strategy if current score below this
 DEAD_ZONE_CONSEC = 5  # Trigger GP discovery after N consecutive no-issue returns
 
+
 def estimate_cycle():
     try:
-        hb = STATE_DIR / 'heartbeat.json'
+        hb = STATE_DIR / "heartbeat.json"
         if hb.exists():
-            return int(json.loads(hb.read_text()).get('cycle', 0))
-    except: return 0
+            return int(json.loads(hb.read_text()).get("cycle", 0))
+    except:
+        return 0
 
 
 def run_safety_checks(symbol, trades, goal):
     """Run all safety checks before reflection. Returns dict with actions."""
     result = {}
-    
+
     # 1. Data quality
     if len(trades) < 3:
-        result['data_bad'] = True
+        result["data_bad"] = True
         return result
-    
+
     recent = trades[-20:] if len(trades) >= 20 else trades
-    
+
     # 2. Drawdown circuit breaker
-    total_pnl = sum(t.get('pnl_pct', 0) for t in trades)
+    total_pnl = sum(t.get("pnl_pct", 0) for t in trades)
     if total_pnl < CIRCUIT_MAX_DD:
-        result['circuit_break'] = True
-        result['reason'] = f'Total PnL {total_pnl:.2f}% below {CIRCUIT_MAX_DD}% threshold'
+        result["circuit_break"] = True
+        result["reason"] = f"Total PnL {total_pnl:.2f}% below {CIRCUIT_MAX_DD}% threshold"
         return result
-    
+
     # 3. Consecutive loss circuit breaker
-    recent_pnls = [t.get('pnl_pct', 0) for t in recent]
+    recent_pnls = [t.get("pnl_pct", 0) for t in recent]
     consec = 0
     for p in reversed(recent_pnls):
-        if p <= 0: consec += 1
-        else: break
+        if p <= 0:
+            consec += 1
+        else:
+            break
     if consec >= CIRCUIT_MAX_CONSEC:
-        result['circuit_break'] = True
-        result['reason'] = f'{consec} consecutive losses (max {CIRCUIT_MAX_CONSEC})'
+        result["circuit_break"] = True
+        result["reason"] = f"{consec} consecutive losses (max {CIRCUIT_MAX_CONSEC})"
         return result
-    
+
     # 4. Strategy decay / rolling trend
     if len(trades) >= 15:
         old = trades[:-10] if len(trades) >= 10 else trades
         new = trades[-10:]
-        old_avg = sum(t.get('pnl_pct', 0) for t in old) / max(len(old), 1)
-        new_avg = sum(t.get('pnl_pct', 0) for t in new) / max(len(new), 1)
+        old_avg = sum(t.get("pnl_pct", 0) for t in old) / max(len(old), 1)
+        new_avg = sum(t.get("pnl_pct", 0) for t in new) / max(len(new), 1)
         if new_avg < old_avg - 0.2 and len(new) >= 5:
-            result['decaying'] = True
-            result['old_avg'] = old_avg
-            result['new_avg'] = new_avg
-    
+            result["decaying"] = True
+            result["old_avg"] = old_avg
+            result["new_avg"] = new_avg
 
     # 6. Regime shift detection — flag for early reflection if market changed
     if len(trades) >= 10:
-        recent_regimes = [t.get('entry_regime', '?') for t in trades[-10:] if t.get('entry_regime', '?') != '?']
-        older_regimes = [t.get('entry_regime', '?') for t in trades[:-10] if t.get('entry_regime', '?') != '?'] if len(trades) >= 20 else []
+        recent_regimes = [
+            t.get("entry_regime", "?") for t in trades[-10:] if t.get("entry_regime", "?") != "?"
+        ]
+        older_regimes = (
+            [t.get("entry_regime", "?") for t in trades[:-10] if t.get("entry_regime", "?") != "?"]
+            if len(trades) >= 20
+            else []
+        )
         if older_regimes and recent_regimes:
             recent_counts = {r: recent_regimes.count(r) for r in set(recent_regimes)}
             older_counts = {r: older_regimes.count(r) for r in set(older_regimes)}
@@ -14201,52 +17108,63 @@ def run_safety_checks(symbol, trades, goal):
             recent_majority = max(recent_counts, key=recent_counts.get)
             older_majority = max(older_counts, key=older_counts.get)
             if recent_majority != older_majority and recent_counts.get(recent_majority, 0) >= 5:
-                result['regime_shift'] = True
-                result['reason'] = f'Regime shift: {older_majority} -> {recent_majority}'
+                result["regime_shift"] = True
+                result["reason"] = f"Regime shift: {older_majority} -> {recent_majority}"
     # 5. Reflection fatigue / cooldown (with decay + trade reset)
     try:
-        cf = STATE_DIR / '.cooldown.json'
+        cf = STATE_DIR / ".cooldown.json"
         if cf.exists():
             data = json.loads(cf.read_text())
             pair_data = data.get(symbol, {})
-            skips = pair_data.get('skips', 0)
+            skips = pair_data.get("skips", 0)
             if skips >= COOLDOWN_SKIPS:
                 # Check for new trades since cooldown — reset if new data arrived
-                recent = [t for t in trades if t.get('asset') == symbol and t.get('entry_ts','') > pair_data.get('last_ts','')]
+                recent = [
+                    t
+                    for t in trades
+                    if t.get("asset") == symbol
+                    and t.get("entry_ts", "") > pair_data.get("last_ts", "")
+                ]
                 if len(recent) >= 2:
                     del data[symbol]
                     cf.write_text(json.dumps(data))
-                    print(f"[COOLDOWN] {symbol}: Reset — {len(recent)} new trades since cooldown", flush=True)
+                    print(
+                        f"[COOLDOWN] {symbol}: Reset — {len(recent)} new trades since cooldown",
+                        flush=True,
+                    )
                 else:
-                    result['cooling'] = True
-                    result['reason'] = f'Skipped {skips} times without change'
+                    result["cooling"] = True
+                    result["reason"] = f"Skipped {skips} times without change"
                     return result
     except:
         pass
-    
+
     return result
 
 
 def restore_strategy_backup(symbol):
     """Restore strategy from backup if YAML is corrupted."""
-    yaml_path = STATE_DIR / 'strategies' / f'{symbol}.yaml'
-    bak_path = yaml_path.with_suffix('.yaml.bak')
+    yaml_path = STATE_DIR / "strategies" / f"{symbol}.yaml"
+    bak_path = yaml_path.with_suffix(".yaml.bak")
     if bak_path.exists():
         import shutil
+
         shutil.copy(str(bak_path), str(yaml_path))
-        print(f'[SAFETY] Restored {symbol} from backup', flush=True)
+        print(f"[SAFETY] Restored {symbol} from backup", flush=True)
     else:
-        print(f'[SAFETY] No backup found for {symbol}', flush=True)
+        print(f"[SAFETY] No backup found for {symbol}", flush=True)
 
 
 def load_yaml(path):
     with open(path) as f:
         return yaml.safe_load(f)
 
+
 def save_yaml(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         yaml.dump(data, f, default_flow_style=False)
+
 
 # ── Quarantine: trades contaminated by known bugs, excluded from stats ──
 # XAG/USD entries on 2026-07-10/11 were priced off XAU/USD due to bug fixed in
@@ -14290,8 +17208,10 @@ def load_trades(exclude_contaminated=False):
         return kept
     return trades
 
+
 def strategy_filename(symbol):
     return symbol.replace("/", "_").replace("-", "_") + ".yaml"
+
 
 STRATEGY_PARAM_RANGES = {
     "stop_loss_pct": (0.5, 10.0),
@@ -14301,6 +17221,7 @@ STRATEGY_PARAM_RANGES = {
     "time_exit_cycles": (60, 2880),
     "entry.threshold": (5, 95),
 }
+
 
 def validate_strategy_params(strategy, raise_on_fail=True):
     """Hard gate: validate ALL strategy params are within safe ranges.
@@ -14342,6 +17263,7 @@ def load_strategy(symbol):
         return data
     raise FileNotFoundError(f"No strategy for {symbol}")
 
+
 def save_strategy(symbol, strategy):
     per_pair = STRATEGY_DIR / strategy_filename(symbol)
     # Validate before saving — refuse to write bad values
@@ -14353,15 +17275,19 @@ def save_strategy(symbol, strategy):
             old_ver = old_data.get("version", "00")
             # Backup to .bak
             import shutil
-            shutil.copy(str(per_pair), str(per_pair.with_suffix('.yaml.bak')))
+
+            shutil.copy(str(per_pair), str(per_pair.with_suffix(".yaml.bak")))
             # Archive version history
             history_dir = STATE_DIR / "history"
             history_dir.mkdir(exist_ok=True)
-            history_file = history_dir / f"{strategy_filename(symbol).replace('.yaml', '')}_v{old_ver}.yaml"
+            history_file = (
+                history_dir / f"{strategy_filename(symbol).replace('.yaml', '')}_v{old_ver}.yaml"
+            )
             save_yaml(history_file, old_data)
         except Exception:
             pass
     save_yaml(per_pair, strategy)
+
 
 def load_hypotheses():
     if not HYPOTHESES_FILE.exists():
@@ -14380,7 +17306,8 @@ def score_trades(trades, goal):
     if not trades:
         return None
     pnls = [float(t.get("pnl_pct", 0)) for t in trades if t.get("pnl_pct") is not None]
-    if not pnls: return None
+    if not pnls:
+        return None
     total_return = sum(pnls)
     avg_pnl = statistics.mean(pnls) if pnls else 0
     worst_dd = min(pnls) if pnls else 0
@@ -14412,13 +17339,20 @@ def score_trades(trades, goal):
     # A reasonable stop (1.5-2.5%) is a safety feature, not a bug.
     score = max(0, min(100, score))
     return {
-        "total_return": round(total_return, 4), "avg_pnl": round(avg_pnl, 4),
-        "worst_dd": round(worst_dd, 4), "best_pnl": round(best_pnl, 4),
-        "win_rate": round(win_rate, 4), "sharpe": round(sharpe, 4),
-        "trade_count": len(trades), "exit_reasons": exit_reasons,
-        "time_exit_pct": round(te_pct, 4), "stop_loss_pct": round(sl_pct, 4),
-        "target_pct": round(pt_pct, 4), "score": round(score, 2),
-        "target_return": target_return, "max_dd_limit": max_dd_limit,
+        "total_return": round(total_return, 4),
+        "avg_pnl": round(avg_pnl, 4),
+        "worst_dd": round(worst_dd, 4),
+        "best_pnl": round(best_pnl, 4),
+        "win_rate": round(win_rate, 4),
+        "sharpe": round(sharpe, 4),
+        "trade_count": len(trades),
+        "exit_reasons": exit_reasons,
+        "time_exit_pct": round(te_pct, 4),
+        "stop_loss_pct": round(sl_pct, 4),
+        "target_pct": round(pt_pct, 4),
+        "score": round(score, 2),
+        "target_return": target_return,
+        "max_dd_limit": max_dd_limit,
         "min_sharpe": min_sharpe,
     }
 
@@ -14440,17 +17374,26 @@ def layer1_rule_based(symbol, trades, goal, strategy, all_trades=None):
     # ── Fix #21: Per-entry-type stop and time-exit rates ──
     mr_trades = [t for t in recent if t.get("strategy_type") == "mean_reversion"]
     gp_trades = [t for t in recent if t.get("strategy_type") == "gp_ensemble"]
-    mr_sl = len([t for t in mr_trades if t.get("exit_reason") == "stop_loss"]) / max(len(mr_trades), 1)
-    gp_sl = len([t for t in gp_trades if t.get("exit_reason") == "stop_loss"]) / max(len(gp_trades), 1)
+    mr_sl = len([t for t in mr_trades if t.get("exit_reason") == "stop_loss"]) / max(
+        len(mr_trades), 1
+    )
+    gp_sl = len([t for t in gp_trades if t.get("exit_reason") == "stop_loss"]) / max(
+        len(gp_trades), 1
+    )
 
     # Score guard: skip changes on high-performing versions (v-specific)
     s = score_trades(recent, goal)
-    if s and s['score'] >= 55:  # Fix #34: Lowered from 65 for version-specific data
+    if s and s["score"] >= 55:  # Fix #34: Lowered from 65 for version-specific data
         return None, None, None, f"Score {s['score']}/100 >= 55 — no changes.", "high"
 
     # ── Fix #6: Cortex check with middle-ground ──
     try:
-        from hermes_trading.decision_cortex import entry_type_wr, entry_type_pnl, get_exiled_indicators
+        from hermes_trading.decision_cortex import (
+            entry_type_wr,
+            entry_type_pnl,
+            get_exiled_indicators,
+        )
+
         mr_wr = entry_type_wr(symbol, "mean_reversion", min_trades=3)
         gp_wr = entry_type_wr(symbol, "gp_ensemble", min_trades=3)
         mr_pnl = entry_type_pnl(symbol, "mean_reversion") if mr_wr else 0
@@ -14458,79 +17401,132 @@ def layer1_rule_based(symbol, trades, goal, strategy, all_trades=None):
         exiles = get_exiled_indicators()
         # Case A: MR is clearly better than GP → block changes
         if mr_wr is not None and gp_wr is not None and mr_wr >= 0.5 and gp_wr < 0.3:
-            return None, None, None, (
-                f"CORTEX: MR {mr_wr:.0%}WR ({mr_pnl:+.2f}%) vs GP {gp_wr:.0%}WR ({gp_pnl:+.2f}%). "
-                f"GP entries are problem — not strategy params."
-            ), "high"
+            return (
+                None,
+                None,
+                None,
+                (
+                    f"CORTEX: MR {mr_wr:.0%}WR ({mr_pnl:+.2f}%) vs GP {gp_wr:.0%}WR ({gp_pnl:+.2f}%). "
+                    f"GP entries are problem — not strategy params."
+                ),
+                "high",
+            )
         # Case B: Both bad → suggest tightening
         if mr_wr is not None and gp_wr is not None and mr_wr < 0.35 and gp_wr < 0.35:
-            return None, None, None, (
-                f"CORTEX: Both MR ({mr_wr:.0%}WR) and GP ({gp_wr:.0%}WR) underperforming. "
-                f"Strategy review needed — not a param tweak."
-            ), "high"
+            return (
+                None,
+                None,
+                None,
+                (
+                    f"CORTEX: Both MR ({mr_wr:.0%}WR) and GP ({gp_wr:.0%}WR) underperforming. "
+                    f"Strategy review needed — not a param tweak."
+                ),
+                "high",
+            )
         # Case C: MR fine but GP slightly bad → proceed with caution
         if mr_wr is not None and mr_wr >= 0.5 and gp_wr is not None and gp_wr < 0.5:
             # Don't block, but add a warning to the reason
             pass  # Proceed to rules
         if exiles and gp_wr is not None and gp_wr < 0.3:
-            return None, None, None, (
-                f"CORTEX: {len(exiles)} indicators exiled. Exile handling this — no param changes."
-            ), "high"
+            return (
+                None,
+                None,
+                None,
+                (
+                    f"CORTEX: {len(exiles)} indicators exiled. Exile handling this — no param changes."
+                ),
+                "high",
+            )
     except Exception:
         pass
 
     # Range guards
     def _safe_stop_pct(val):
-        try: v = float(val)
-        except: return 2.0
+        try:
+            v = float(val)
+        except:
+            return 2.0
         return v if 0.5 <= v <= 10.0 else 2.0
 
     def _safe_target_pct(val):
-        try: v = float(val)
-        except: return 3.0
+        try:
+            v = float(val)
+        except:
+            return 3.0
         return v if 0.5 <= v <= 20.0 else 3.0
 
     if te_ratio > 0.4:
         old = _safe_target_pct(strategy.get("profit_target_pct", 3.0))
         new = round(old + 0.3, 2)
-        return "profit_target_pct", old, new, (
-            f"{len(time_exits)}/{len(recent)} time-exited ({te_ratio:.0%}). Raising target {old} -> {new}."
-        ), "high"
+        return (
+            "profit_target_pct",
+            old,
+            new,
+            (
+                f"{len(time_exits)}/{len(recent)} time-exited ({te_ratio:.0%}). Raising target {old} -> {new}."
+            ),
+            "high",
+        )
     if sl_ratio > 0.5:
         old = _safe_stop_pct(strategy.get("stop_loss_pct", 2.0))
         new = round(old + 0.3, 2)
-        return "stop_loss_pct", old, new, (
-            f"{len(stop_losses)}/{len(recent)} stopped ({sl_ratio:.0%}). Widening {old} -> {new}."
-        ), "high"
+        return (
+            "stop_loss_pct",
+            old,
+            new,
+            (
+                f"{len(stop_losses)}/{len(recent)} stopped ({sl_ratio:.0%}). Widening {old} -> {new}."
+            ),
+            "high",
+        )
 
     # ── Fix #21: Per-type checks ──
     if gp_sl > 0.7 and len(gp_trades) >= 5:
-        return None, None, None, (
-            f"GP entries: {gp_sl:.0%} stop-loss rate ({len(gp_trades)}t). "
-            f"GP is the issue — suppressing via policy."
-        ), "high"
+        return (
+            None,
+            None,
+            None,
+            (
+                f"GP entries: {gp_sl:.0%} stop-loss rate ({len(gp_trades)}t). "
+                f"GP is the issue — suppressing via policy."
+            ),
+            "high",
+        )
 
     if total_return < target:
         old = strategy["entry"]["threshold"]
         new = max(25, old - 3)
-        return "entry.threshold", old, new, (
-            f"Return {total_return:.2f}% < target {target:.2f}%. Loosening RSI {old} -> {new}."
-        ), "medium"
+        return (
+            "entry.threshold",
+            old,
+            new,
+            (f"Return {total_return:.2f}% < target {target:.2f}%. Loosening RSI {old} -> {new}."),
+            "medium",
+        )
     if abs(drawdown) > max_dd:
         old = _safe_stop_pct(strategy["stop_loss_pct"])
         new = max(0.5, round(old - 0.3, 2))
-        return "stop_loss_pct", old, new, (
-            f"DD {abs(drawdown):.2f}% > limit {max_dd:.2f}%. Tightening {old} -> {new}."
-        ), "medium"
+        return (
+            "stop_loss_pct",
+            old,
+            new,
+            (f"DD {abs(drawdown):.2f}% > limit {max_dd:.2f}%. Tightening {old} -> {new}."),
+            "medium",
+        )
 
     # ── Fix #7: Dead zone catch-all ──
-    wr = s['win_rate'] if s else 0
+    wr = s["win_rate"] if s else 0
     if (wr < 0.3 or (total_return < -0.5 and len(recent) >= 8)) and len(recent) >= 10:
-        return "entry.threshold", strategy.get("entry", {}).get("threshold", 40), max(25,
-            strategy.get("entry", {}).get("threshold", 40) - 5), (
-            f"WR {wr:.0%} over {len(recent)} trades — below 30% threshold. "
-            f"Loosening entry criteria."
-        ), "medium"
+        return (
+            "entry.threshold",
+            strategy.get("entry", {}).get("threshold", 40),
+            max(25, strategy.get("entry", {}).get("threshold", 40) - 5),
+            (
+                f"WR {wr:.0%} over {len(recent)} trades — below 30% threshold. "
+                f"Loosening entry criteria."
+            ),
+            "medium",
+        )
 
     return None, None, None, "No clear issue detected by rules.", "low"
 
@@ -14586,7 +17582,10 @@ def call_deepseek(prompt):
             "temperature": 0.3,
             "max_tokens": 500,
         }
-        headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
+        headers = {
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            "Content-Type": "application/json",
+        }
         resp = httpx.post(DEEPSEEK_URL, json=payload, headers=headers, timeout=30)
         resp.raise_for_status()
         data = resp.json()
@@ -14598,7 +17597,7 @@ def call_deepseek(prompt):
 def call_llm_consensus(prompt):
     """
     Call all 3 LLMs in sequence, collect responses, and use consensus.
-    
+
     Returns: (param, old_val, new_val, reasoning, confidence, consensus_info)
     where consensus_info describes which models agreed.
     """
@@ -14607,38 +17606,48 @@ def call_llm_consensus(prompt):
         "Gemini": call_gemini(prompt),
         "Groq": call_groq(prompt),
     }
-    
+
     suggestions = []  # [(model_name, param, old_val, new_val, reasoning)]
     errors = []
-    
+
     for name, response in models.items():
         if response is None or response.startswith(f"{name} error"):
             errors.append(f"{name}: {'unavailable' if response is None else response}")
             continue
-        
+
         param, old_val, new_val, reasoning = parse_gemini_response(response)
         if param is not None:
             suggestions.append((name, param, old_val, new_val, reasoning))
         else:
             errors.append(f"{name}: no change ({reasoning})")
-    
-    print(f"[CONSENSUS] {len(suggestions)}/{sum(1 for m in models if m[1] is not None)} models suggested changes", flush=True)
-    
+
+    print(
+        f"[CONSENSUS] {len(suggestions)}/{sum(1 for m in models if m[1] is not None)} models suggested changes",
+        flush=True,
+    )
+
     if not suggestions:
         # No model saw a need for change
-        return None, None, None, f"All models agreed: no change needed. {'; '.join(errors[:2])}", "high", {"agreement": "none", "models": 0}
-    
+        return (
+            None,
+            None,
+            None,
+            f"All models agreed: no change needed. {'; '.join(errors[:2])}",
+            "high",
+            {"agreement": "none", "models": 0},
+        )
+
     # Count votes per param
     param_votes = {}
     for name, param, old_val, new_val, reasoning in suggestions:
         param_votes.setdefault(param, []).append((name, old_val, new_val, reasoning))
-    
+
     # Find the param with the most votes
     best_param = max(param_votes, key=lambda p: len(param_votes[p]))
     votes = param_votes[best_param]
     agreement = len(votes)
     total_responding = len(suggestions) + len(errors)
-    
+
     if agreement >= 2:
         # 2+ models agree on the same param — strong consensus
         vals = [(v[1], v[2]) for v in votes if v[1] is not None]
@@ -14648,18 +17657,34 @@ def call_llm_consensus(prompt):
             new_vals = [float(v[1]) for v in vals if v[1] is not None]
             old_val = statistics.mean(old_vals) if old_vals else vals[0][0]
             new_val = statistics.mean(new_vals) if new_vals else vals[0][1]
-            
+
             models_str = ", ".join(v[0] for v in votes)
             reasoning = f"[{agreement}-model consensus] " + votes[0][3][:100]
             print(f"[CONSENSUS] AGREED: {best_param} from {models_str}", flush=True)
-            
+
             # High confidence if all responding models agree, medium otherwise
             conf = "high" if agreement == total_responding else "medium"
-            return best_param, old_val, new_val, reasoning, conf, {"agreement": "param", "models": agreement, "sources": models_str}
-    
+            return (
+                best_param,
+                old_val,
+                new_val,
+                reasoning,
+                conf,
+                {"agreement": "param", "models": agreement, "sources": models_str},
+            )
+
     # No param-level consensus — use backtest to decide
-    print(f"[CONSENSUS] NO AGREEMENT — {agreement} on {best_param}, testing suggestions", flush=True)
-    return None, None, None, f"No model consensus. Testing {best_param} from {votes[0][0]} via backtest.", "medium", {"agreement": "none", "models": agreement}
+    print(
+        f"[CONSENSUS] NO AGREEMENT — {agreement} on {best_param}, testing suggestions", flush=True
+    )
+    return (
+        None,
+        None,
+        None,
+        f"No model consensus. Testing {best_param} from {votes[0][0]} via backtest.",
+        "medium",
+        {"agreement": "none", "models": agreement},
+    )
 
 
 def parse_gemini_response(text):
@@ -14670,9 +17695,16 @@ def parse_gemini_response(text):
     result = {}
     for line in lines:
         line = line.strip()
-        for prefix in ["PARAM:", "OLD_VALUE:", "NEW_VALUE:", "REASONING:", "CONFIDENCE:", "CONSENSUS_CHECK:"]:
+        for prefix in [
+            "PARAM:",
+            "OLD_VALUE:",
+            "NEW_VALUE:",
+            "REASONING:",
+            "CONFIDENCE:",
+            "CONSENSUS_CHECK:",
+        ]:
             if line.startswith(prefix):
-                result[prefix.rstrip(":")] = line[len(prefix):].strip()
+                result[prefix.rstrip(":")] = line[len(prefix) :].strip()
     param = result.get("PARAM", result.get("param", "none"))
     if param.lower() == "none":
         return None, None, None, result.get("reasoning", "No changes recommended.")
@@ -14687,7 +17719,17 @@ def parse_gemini_response(text):
     return param, old_val, new_val, reasoning
 
 
-def layer2_gemini(symbol, trades, goal, strategy, score, chart_context="", skipped_json="[]", crisis_data="[]", force_strategy_review=False):
+def layer2_gemini(
+    symbol,
+    trades,
+    goal,
+    strategy,
+    score,
+    chart_context="",
+    skipped_json="[]",
+    crisis_data="[]",
+    force_strategy_review=False,
+):
     """Layer 2: Gemini-powered analysis. Returns (var, old, new, reason, confidence).
     If force_strategy_review=True, the prompt is modified to emphasize strategy type evaluation
     and the response is forced toward strategy_type changes."""
@@ -14712,6 +17754,7 @@ def layer2_gemini(symbol, trades, goal, strategy, score, chart_context="", skipp
             if isinstance(cf, list) and len(cf) > 1:
                 try:
                     from hermes_trading.crisis_learning import get_crisis_recommendation
+
                     rec = get_crisis_recommendation(cf)
                     if rec:
                         crisis_context = (
@@ -14728,7 +17771,12 @@ def layer2_gemini(symbol, trades, goal, strategy, score, chart_context="", skipp
     # ── Cortex context: entry-type breakdown for this pair ──
     cortex_context = ""
     try:
-        from hermes_trading.decision_cortex import entry_type_wr, entry_type_pnl, get_exiled_indicators
+        from hermes_trading.decision_cortex import (
+            entry_type_wr,
+            entry_type_pnl,
+            get_exiled_indicators,
+        )
+
         for et in ["mean_reversion", "rsi_momentum", "gp_ensemble"]:
             wr = entry_type_wr(symbol, et, min_trades=3)
             pnl = entry_type_pnl(symbol, et)
@@ -14736,7 +17784,9 @@ def layer2_gemini(symbol, trades, goal, strategy, score, chart_context="", skipp
                 cortex_context += f"  {et}: {wr:.0%} WR ({pnl:+.2f}% PnL)\n"
         exiles = get_exiled_indicators()
         if exiles:
-            cortex_context += f"  Exiled indicators: {len(exiles)} permanently banned from GP entry voting\n"
+            cortex_context += (
+                f"  Exiled indicators: {len(exiles)} permanently banned from GP entry voting\n"
+            )
     except Exception:
         pass
     if cortex_context:
@@ -14756,7 +17806,9 @@ def layer2_gemini(symbol, trades, goal, strategy, score, chart_context="", skipp
         avg = statistics.mean(vs["pnls"]) if vs["pnls"] else 0
         wr = sum(1 for p in vs["pnls"] if p > 0) / len(vs["pnls"]) if vs["pnls"] else 0
         total = sum(vs["pnls"])
-        version_lines.append(f"  v{v:>4}: {len(vs['trades']):>3} trades | WR={wr:.0%} | avg={avg:+.4f}% | total={total:+.4f}%")
+        version_lines.append(
+            f"  v{v:>4}: {len(vs['trades']):>3} trades | WR={wr:.0%} | avg={avg:+.4f}% | total={total:+.4f}%"
+        )
     versions_text = "\n".join(version_lines)
 
     # ── Session analysis (uses stored entry_session field when available) ──
@@ -14770,10 +17822,14 @@ def layer2_gemini(symbol, trades, goal, strategy, score, chart_context="", skipp
                 h = int(ts[11:13]) if len(ts) >= 13 and "T" in ts else 0
             except (ValueError, IndexError):
                 h = 0
-            if 8 <= h < 17: session = "LDN"
-            elif 13 <= h < 21: session = "NY"
-            elif 0 <= h < 8: session = "ASIA"
-            else: session = "OTHER"
+            if 8 <= h < 17:
+                session = "LDN"
+            elif 13 <= h < 21:
+                session = "NY"
+            elif 0 <= h < 8:
+                session = "ASIA"
+            else:
+                session = "OTHER"
         if session not in session_stats:
             session_stats[session] = {"trades": 0, "pnls": []}
         session_stats[session]["trades"] += 1
@@ -14784,19 +17840,23 @@ def layer2_gemini(symbol, trades, goal, strategy, score, chart_context="", skipp
         if ss and ss["trades"] > 0:
             avg = statistics.mean(ss["pnls"]) if ss["pnls"] else 0
             wr = sum(1 for p in ss["pnls"] if p > 0) / len(ss["pnls"]) if ss["pnls"] else 0
-            session_lines.append(f"  {s:>5}: {ss['trades']:>3} trades | WR={wr:.0%} | avg={avg:+.4f}%")
+            session_lines.append(
+                f"  {s:>5}: {ss['trades']:>3} trades | WR={wr:.0%} | avg={avg:+.4f}%"
+            )
     session_analysis = "\n".join(session_lines) if session_lines else "  Insufficient data."
 
     # ── Day-of-week breakdown ──
     day_stats = {}
     for t in trades:
         day = t.get("entry_day", "")
-        if not day: continue
-        if day not in day_stats: day_stats[day] = {"trades": 0, "pnls": []}
+        if not day:
+            continue
+        if day not in day_stats:
+            day_stats[day] = {"trades": 0, "pnls": []}
         day_stats[day]["trades"] += 1
         day_stats[day]["pnls"].append(t.get("pnl_pct", 0))
     day_lines = []
-    for d in ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]:
+    for d in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]:
         ds = day_stats.get(d)
         if ds and ds["trades"] > 0:
             avg = statistics.mean(ds["pnls"]) if ds["pnls"] else 0
@@ -14807,7 +17867,11 @@ def layer2_gemini(symbol, trades, goal, strategy, score, chart_context="", skipp
     # ── Regime-change analysis ──
     flips = [t for t in trades if t.get("regime_changes", 0) > 0]
     flip_count = len(flips)
-    flip_text = f"  {flip_count}/{len(trades)} trades experienced regime changes during hold" if trades else ""
+    flip_text = (
+        f"  {flip_count}/{len(trades)} trades experienced regime changes during hold"
+        if trades
+        else ""
+    )
 
     # ── Luck-vs-skill (alpha) analysis ──
     alphas = [t.get("alpha_pct", 0) for t in trades if t.get("alpha_pct") is not None]
@@ -14833,11 +17897,13 @@ def layer2_gemini(symbol, trades, goal, strategy, score, chart_context="", skipp
         if rs and rs["trades"] > 0:
             avg = statistics.mean(rs["pnls"]) if rs["pnls"] else 0
             wr = sum(1 for p in rs["pnls"] if p > 0) / len(rs["pnls"]) if rs["pnls"] else 0
-            regime_lines.append(f"  {r:>8}: {len(rs['trades']):>3} trades | WR={wr:.0%} | avg={avg:+.4f}%")
+            regime_lines.append(
+                f"  {r:>8}: {len(rs['trades']):>3} trades | WR={wr:.0%} | avg={avg:+.4f}%"
+            )
     regime_text = "\n".join(regime_lines) if regime_lines else "  Insufficient data."
 
     # ── Forced strategy review text (pre-computed to avoid nested f-strings) ──
-    if force_strategy_review and score and score.get('trade_count', 0) >= 5:
+    if force_strategy_review and score and score.get("trade_count", 0) >= 5:
         force_strategy_text = (
             f"\n[FORCED STRATEGY REVIEW] This pair has {score['trade_count']} trades"
             f" with negative PnL ({score['total_return']}%)"
@@ -14854,32 +17920,32 @@ def layer2_gemini(symbol, trades, goal, strategy, score, chart_context="", skipp
 
     prompt = f"""You are a senior quantitative strategist at a proprietary trading firm. Your job is to preserve capital first, generate profit second.
 
-ASSET: {symbol} | VERSION: {strategy.get('version', '?')}
-PORTFOLIO CONTEXT: This pair has a score of {score['score']}/100 (guard threshold: 55). {"This pair is STRONG — approach with extreme caution." if score['score'] >= 55 else "This pair needs improvement — but one wrong change destroys weeks of progress."}
+ASSET: {symbol} | VERSION: {strategy.get("version", "?")}
+PORTFOLIO CONTEXT: This pair has a score of {score["score"]}/100 (guard threshold: 55). {"This pair is STRONG — approach with extreme caution." if score["score"] >= 55 else "This pair needs improvement — but one wrong change destroys weeks of progress."}
 
 === CURRENT STRATEGY (params you can adjust) ===
-  stop_loss_pct:       {strategy.get('stop_loss_pct','?')}
-  profit_target_pct:   {strategy.get('profit_target_pct','?')}
-  entry.threshold:     {strategy.get('entry',{}).get('threshold','?')}
-  trailing_stop_pct:   {strategy.get('trailing_stop_pct','?')}
-  time_exit_cycles:    {strategy.get('time_exit_cycles','?')}
-  position_size_r:     {strategy.get('position_size_r','?')}
+  stop_loss_pct:       {strategy.get("stop_loss_pct", "?")}
+  profit_target_pct:   {strategy.get("profit_target_pct", "?")}
+  entry.threshold:     {strategy.get("entry", {}).get("threshold", "?")}
+  trailing_stop_pct:   {strategy.get("trailing_stop_pct", "?")}
+  time_exit_cycles:    {strategy.get("time_exit_cycles", "?")}
+  position_size_r:     {strategy.get("position_size_r", "?")}
 
 === PERFORMANCE OVERVIEW ===
-  Total PnL:   {score['total_return']}% (target: {score['target_return']}%) | Avg PnL: {score['avg_pnl']}%
-  Win rate:    {score['win_rate']:.0%} | Sharpe: {score['sharpe']} | Worst DD: {score['worst_dd']}%
-  Exit breakdown: stop_loss={score['exit_reasons'].get('stop_loss', 0)} | profit_target={score['exit_reasons'].get('profit_target', 0)} | time_exit={score['exit_reasons'].get('time_exit', 0)} | trailing_stop={score['exit_reasons'].get('trailing_stop', 0)}
+  Total PnL:   {score["total_return"]}% (target: {score["target_return"]}%) | Avg PnL: {score["avg_pnl"]}%
+  Win rate:    {score["win_rate"]:.0%} | Sharpe: {score["sharpe"]} | Worst DD: {score["worst_dd"]}%
+  Exit breakdown: stop_loss={score["exit_reasons"].get("stop_loss", 0)} | profit_target={score["exit_reasons"].get("profit_target", 0)} | time_exit={score["exit_reasons"].get("time_exit", 0)} | trailing_stop={score["exit_reasons"].get("trailing_stop", 0)}
 
 === STRATEGY TYPE ===
-  Current: {strategy.get('strategy_type', 'mean_reversion')}
+  Current: {strategy.get("strategy_type", "mean_reversion")}
   Valid types: mean_reversion, rsi_momentum
 {force_strategy_text}
 LAST {len(trade_lines)} TRADES:
 {trades_text}
 
 === PATTERN ANALYSIS ===
-Exit breakdown: {score['exit_reasons'].get('stop_loss', 0)} stops, {score['exit_reasons'].get('profit_target', 0)} targets, {score['exit_reasons'].get('time_exit', 0)} timeouts
-Time-exit rate: {score['time_exit_pct']:.0%} (above 30% means target is too ambitious)
+Exit breakdown: {score["exit_reasons"].get("stop_loss", 0)} stops, {score["exit_reasons"].get("profit_target", 0)} targets, {score["exit_reasons"].get("time_exit", 0)} timeouts
+Time-exit rate: {score["time_exit_pct"]:.0%} (above 30% means target is too ambitious)
 Session breakdown: {session_analysis}
 Day-of-week: {day_text}
 Entry regime: {regime_text}
@@ -14930,8 +17996,15 @@ CONSENSUS_CHECK: <what would the other models miss about this pair?>
     param, old_val, new_val, reasoning, confidence, consensus_info = response
     if param is None:
         return None, None, None, reasoning, "high"
-    valid = {"entry.threshold", "strategy_type", "stop_loss_pct", "profit_target_pct",
-             "trailing_stop_pct", "time_exit_cycles", "position_size_r"}
+    valid = {
+        "entry.threshold",
+        "strategy_type",
+        "stop_loss_pct",
+        "profit_target_pct",
+        "trailing_stop_pct",
+        "time_exit_cycles",
+        "position_size_r",
+    }
     if param not in valid:
         return None, None, None, f"Invalid param '{param}': {reasoning}", "low"
     if old_val is None:
@@ -14954,7 +18027,7 @@ CONSENSUS_CHECK: <what would the other models miss about this pair?>
 def check_historical_hypotheses(symbol, param, old_val, new_val):
     """
     Check if this exact param change was tried before on this pair.
-    
+
     Returns: {
         'blocked': bool,
         'reason': str,
@@ -14992,13 +18065,13 @@ def check_historical_hypotheses(symbol, param, old_val, new_val):
             if outcome.get("helped"):
                 return {
                     "blocked": False,
-                    "reason": f"Same change helped before (avg PnL {outcome.get('avg_pnl_after',0):+.4f}%, WR {outcome.get('win_rate_after',0)*100:.0f}% after {outcome.get('subsequent_trades',0)} trades)",
+                    "reason": f"Same change helped before (avg PnL {outcome.get('avg_pnl_after', 0):+.4f}%, WR {outcome.get('win_rate_after', 0) * 100:.0f}% after {outcome.get('subsequent_trades', 0)} trades)",
                     "previous_outcome": outcome,
                 }
             else:
                 return {
                     "blocked": True,
-                    "reason": f"Same change was tried before and HURT (avg PnL {outcome.get('avg_pnl_after',0):+.4f}%, WR {outcome.get('win_rate_after',0)*100:.0f}% after {outcome.get('subsequent_trades',0)} trades)",
+                    "reason": f"Same change was tried before and HURT (avg PnL {outcome.get('avg_pnl_after', 0):+.4f}%, WR {outcome.get('win_rate_after', 0) * 100:.0f}% after {outcome.get('subsequent_trades', 0)} trades)",
                     "previous_outcome": outcome,
                 }
     return {"blocked": False, "reason": "", "previous_outcome": None}
@@ -15010,23 +18083,33 @@ def strategy_to_blocks(strategy):
     if strategy.get("strategy_type") not in ("mean_reversion", "rsi_momentum"):
         return None
     entry_type = strategy.get("strategy_type", "mean_reversion")
-    threshold = strategy.get("entry", {}).get("threshold") or strategy.get("entry", {}).get("mr_entry_rsi", 40)
+    threshold = strategy.get("entry", {}).get("threshold") or strategy.get("entry", {}).get(
+        "mr_entry_rsi", 40
+    )
     bb_std = strategy.get("entry", {}).get("bb_std_dev", 2.0)
     sl = strategy.get("stop_loss_pct", 1.5)
     tg = strategy.get("profit_target_pct", 3.0)
     tr = strategy.get("trailing_stop_pct", 0.5)
     te = strategy.get("time_exit_cycles", 360)
-    
+
     if entry_type == "mean_reversion":
         blocks = ["bb_lower_touch", "rsi_below"]
         return {
-            "entry": {"blocks": blocks, "logic": "and", "params": {"rsi_threshold": threshold, "bb_std": bb_std}},
+            "entry": {
+                "blocks": blocks,
+                "logic": "and",
+                "params": {"rsi_threshold": threshold, "bb_std": bb_std},
+            },
             "exit": {"stop_pct": sl, "target_pct": tg, "trail_pct": tr, "time_exit": te},
             "filters": {},
         }
     elif entry_type == "rsi_momentum":
         return {
-            "entry": {"blocks": ["rsi_below"], "logic": "and", "params": {"rsi_threshold": threshold}},
+            "entry": {
+                "blocks": ["rsi_below"],
+                "logic": "and",
+                "params": {"rsi_threshold": threshold},
+            },
             "exit": {"stop_pct": sl, "target_pct": tg, "trail_pct": tr, "time_exit": te},
             "filters": {},
         }
@@ -15037,6 +18120,7 @@ def fetch_backtest_prices(symbol):
     """Fetch price data for backtesting the evolution engine."""
     import yfinance as yf
     from hermes_trading.backtest import TIMEFRAME_MAP, _SYMBOLS
+
     # Use correct yfinance ticker: EURUSD=X, not EUR=USD
     yf_symbol = _SYMBOLS.get(symbol, None)
     if not yf_symbol:
@@ -15050,7 +18134,8 @@ def fetch_backtest_prices(symbol):
     period = "12mo" if mult > 1 else "6mo"
     try:
         df = yf.download(yf_symbol, period=period, interval=interval, progress=False)
-        if df.empty: return None
+        if df.empty:
+            return None
         prices = [float(x) for x in df["Close"].values.flatten() if str(x) != "nan"]
         return prices if len(prices) >= 30 else None
     except:
@@ -15061,12 +18146,14 @@ STRATEGY_KB_FILE = STATE_DIR / "strategy_knowledge.jsonl"
 
 
 def load_strategy_knowledge():
-    if not STRATEGY_KB_FILE.exists(): return []
+    if not STRATEGY_KB_FILE.exists():
+        return []
     entries = []
     with open(STRATEGY_KB_FILE) as f:
         for line in f:
             line = line.strip()
-            if line: entries.append(json.loads(line))
+            if line:
+                entries.append(json.loads(line))
     return entries
 
 
@@ -15079,12 +18166,21 @@ def check_strategy_knowledge(pair, strategy_type, entry_signature):
     """Check if a strategy type or entry combination has been tried on this pair before."""
     entries = load_strategy_knowledge()
     for e in entries:
-        if e.get("pair") != pair: continue
+        if e.get("pair") != pair:
+            continue
         if e.get("strategy_type") == strategy_type:
             if e.get("outcome", {}).get("helped"):
-                return {"blocked": False, "recommend": True, "message": f"Strategy type '{strategy_type}' WORKED on {pair} before (avg PnL {e['outcome'].get('avg_pnl_after',0):+.2f}%)"}
+                return {
+                    "blocked": False,
+                    "recommend": True,
+                    "message": f"Strategy type '{strategy_type}' WORKED on {pair} before (avg PnL {e['outcome'].get('avg_pnl_after', 0):+.2f}%)",
+                }
             else:
-                return {"blocked": True, "recommend": False, "message": f"Strategy type '{strategy_type}' FAILED on {pair} before (avg PnL {e['outcome'].get('avg_pnl_after',0):+.2f}%)"}
+                return {
+                    "blocked": True,
+                    "recommend": False,
+                    "message": f"Strategy type '{strategy_type}' FAILED on {pair} before (avg PnL {e['outcome'].get('avg_pnl_after', 0):+.2f}%)",
+                }
     return {"blocked": False, "recommend": None, "message": ""}
 
 
@@ -15101,8 +18197,13 @@ def log_backtest_result(pair, param, old_val, new_val, verdict, detail=""):
         "ts": datetime.now(timezone.utc).isoformat(),
         "source": "backtest",
         "detail": detail[:200],
-        "outcome": {"helped": verdict, "avg_pnl_after": 0, "win_rate_after": 0, "subsequent_trades": 0,
-                     "note": "backtest verdict recorded at validation time"},
+        "outcome": {
+            "helped": verdict,
+            "avg_pnl_after": 0,
+            "win_rate_after": 0,
+            "subsequent_trades": 0,
+            "note": "backtest verdict recorded at validation time",
+        },
     }
     try:
         save_strategy_knowledge(entry)
@@ -15135,11 +18236,17 @@ def check_knowledge_base_for_change(pair, param, old_val, new_val):
             outcome = e.get("outcome", {})
             note = e.get("detail", "")
             if e.get("verdict") == "rejected":
-                return {"blocked": True, "reason": f"KB blocked: same change was rejected before ({note})",
-                        "helped": False}
+                return {
+                    "blocked": True,
+                    "reason": f"KB blocked: same change was rejected before ({note})",
+                    "helped": False,
+                }
             elif outcome.get("helped"):
-                return {"blocked": False, "reason": f"Knowledge base: same change was beneficial before ({note})",
-                        "helped": True}
+                return {
+                    "blocked": False,
+                    "reason": f"Knowledge base: same change was beneficial before ({note})",
+                    "helped": True,
+                }
     return {"blocked": False, "reason": "", "helped": None}
 
 
@@ -15203,12 +18310,16 @@ def validate_proposal(param, old_val, new_val, trades, prices=None):
                 new_thresh = int(new_val)
                 # Reject if loosening too aggressively (>10 points at once)
                 if new_thresh < old_thresh - 10:
-                    print(f"[BACKTEST] Entry.threshold change too aggressive ({old_thresh}→{new_thresh}), requiring validation", flush=True)
+                    print(
+                        f"[BACKTEST] Entry.threshold change too aggressive ({old_thresh}→{new_thresh}), requiring validation",
+                        flush=True,
+                    )
                     # Continue to validation below instead of returning True
                     pass
                 else:
                     return True
-            except: return True
+            except:
+                return True
         # ── Fix #18: Max position size gate ──
         if param == "position_size_r":
             try:
@@ -15217,7 +18328,8 @@ def validate_proposal(param, old_val, new_val, trades, prices=None):
                     print(f"[BACKTEST] Position size {new_size} > 0.5 max, rejecting", flush=True)
                     return False
                 return True
-            except: return True
+            except:
+                return True
         return True
 
     recent = [t for t in trades if t.get("exit_reason")][-10:]
@@ -15233,31 +18345,66 @@ def validate_proposal(param, old_val, new_val, trades, prices=None):
     if pair:
         hist_check = check_historical_hypotheses(pair, param, str(old_val), str(new_val))
         if hist_check["blocked"]:
-            print(f"[BACKTEST] Historical hypothesis BLOCKED for {pair}: {hist_check['reason']}", flush=True)
+            print(
+                f"[BACKTEST] Historical hypothesis BLOCKED for {pair}: {hist_check['reason']}",
+                flush=True,
+            )
             return False
         if hist_check["previous_outcome"] and not hist_check["blocked"]:
-            print(f"[BACKTEST] Historical hypothesis CONFIRMED for {pair}: {hist_check['reason']}", flush=True)
+            print(
+                f"[BACKTEST] Historical hypothesis CONFIRMED for {pair}: {hist_check['reason']}",
+                flush=True,
+            )
         # Also check strategy knowledge base (permanent memory)
         kb_check = check_knowledge_base_for_change(pair, param, str(old_val), str(new_val))
         if kb_check["blocked"]:
             print(f"[BACKTEST] Knowledge base BLOCKED for {pair}: {kb_check['reason']}", flush=True)
             return False
         if kb_check["helped"]:
-            print(f"[BACKTEST] Knowledge base CONFIRMED for {pair}: {kb_check['reason']}", flush=True)
+            print(
+                f"[BACKTEST] Knowledge base CONFIRMED for {pair}: {kb_check['reason']}", flush=True
+            )
 
     # ── Phase 0: 6-month historical backtest using yfinance ──
-    if pair and param in ("stop_loss_pct", "profit_target_pct", "trailing_stop_pct", "time_exit_cycles"):
+    if pair and param in (
+        "stop_loss_pct",
+        "profit_target_pct",
+        "trailing_stop_pct",
+        "time_exit_cycles",
+    ):
         try:
             from hermes_trading.backtest import backtest_with_history
+
             strategy = load_strategy(pair)
-            hist_result = backtest_with_history(pair, param, old_val, new_val, strategy,
-                candles_dir=str(STATE_DIR / "candles") if (STATE_DIR / "candles").exists() else None)
+            hist_result = backtest_with_history(
+                pair,
+                param,
+                old_val,
+                new_val,
+                strategy,
+                candles_dir=str(STATE_DIR / "candles")
+                if (STATE_DIR / "candles").exists()
+                else None,
+            )
             if not hist_result.get("approved", True):
-                print(f"[BACKTEST] Historical validation REJECTED for {pair}: {hist_result['reason']}", flush=True)
-                log_backtest_result(pair, param, old_val, new_val, False, f"Phase 0 yfinance rejected: {hist_result['reason']}")
+                print(
+                    f"[BACKTEST] Historical validation REJECTED for {pair}: {hist_result['reason']}",
+                    flush=True,
+                )
+                log_backtest_result(
+                    pair,
+                    param,
+                    old_val,
+                    new_val,
+                    False,
+                    f"Phase 0 yfinance rejected: {hist_result['reason']}",
+                )
                 return False
             if hist_result.get("entries", 0) > 0:
-                print(f"[BACKTEST] Historical validation PASSED for {pair}: {hist_result['reason']}", flush=True)
+                print(
+                    f"[BACKTEST] Historical validation PASSED for {pair}: {hist_result['reason']}",
+                    flush=True,
+                )
         except Exception as e:
             print(f"[BACKTEST] Historical engine error (falling through): {e}", flush=True)
 
@@ -15267,7 +18414,9 @@ def validate_proposal(param, old_val, new_val, trades, prices=None):
         pair = t.get("pair") or t.get("asset", "")
         trade_id = t.get("id", "")
         if trade_id:
-            candle_file = HISTORY_DIR.parent / "candles" / f"{pair.replace('/', '_')}_{trade_id}.json"
+            candle_file = (
+                HISTORY_DIR.parent / "candles" / f"{pair.replace('/', '_')}_{trade_id}.json"
+            )
             if candle_file.exists():
                 bt_trades.append(t)
 
@@ -15278,10 +18427,18 @@ def validate_proposal(param, old_val, new_val, trades, prices=None):
             # Build old and new params
             strategy = load_strategy(pair)
             old_params = {
-                "stop_loss_pct": float(old_val) if param == "stop_loss_pct" else float(strategy.get("stop_loss_pct", 2.0)),
-                "profit_target_pct": float(old_val) if param == "profit_target_pct" else float(strategy.get("profit_target_pct", 5.0)),
-                "trailing_stop_pct": float(old_val) if param == "trailing_stop_pct" else float(strategy.get("trailing_stop_pct", 0.5)),
-                "time_exit_cycles": int(old_val) if param == "time_exit_cycles" else int(strategy.get("time_exit_cycles", 360)),
+                "stop_loss_pct": float(old_val)
+                if param == "stop_loss_pct"
+                else float(strategy.get("stop_loss_pct", 2.0)),
+                "profit_target_pct": float(old_val)
+                if param == "profit_target_pct"
+                else float(strategy.get("profit_target_pct", 5.0)),
+                "trailing_stop_pct": float(old_val)
+                if param == "trailing_stop_pct"
+                else float(strategy.get("trailing_stop_pct", 0.5)),
+                "time_exit_cycles": int(old_val)
+                if param == "time_exit_cycles"
+                else int(strategy.get("time_exit_cycles", 360)),
             }
             new_params = dict(old_params)
             if param == "stop_loss_pct":
@@ -15293,27 +18450,35 @@ def validate_proposal(param, old_val, new_val, trades, prices=None):
             elif param == "time_exit_cycles":
                 new_params["time_exit_cycles"] = int(new_val)
 
-            result = batch_backtest(bt_trades, HISTORY_DIR.parent / "candles", old_params, new_params)
+            result = batch_backtest(
+                bt_trades, HISTORY_DIR.parent / "candles", old_params, new_params
+            )
             if result["results"]:
                 s = result["stats"]
                 conf = result.get("confidence", 0.5)
-                print(f"[BACKTEST] {param}: {old_val} -> {new_val} "
-                      f"(trades={s['total']}, improved={s['improvements']}, worsened={s['worsenings']}, "
-                      f"avg_pnl_change={s['avg_pnl_change']:+.4f}%, confidence={conf:.2f})", flush=True)
+                print(
+                    f"[BACKTEST] {param}: {old_val} -> {new_val} "
+                    f"(trades={s['total']}, improved={s['improvements']}, worsened={s['worsenings']}, "
+                    f"avg_pnl_change={s['avg_pnl_change']:+.4f}%, confidence={conf:.2f})",
+                    flush=True,
+                )
                 # Log regime breakdown
                 regime_bd = result.get("regime_breakdown", {})
                 if regime_bd:
                     regime_str = ", ".join(
-                        f"{r}: {bd['trades']}t({bd.get('avg_pnl_change',0):+.2f}%)"
+                        f"{r}: {bd['trades']}t({bd.get('avg_pnl_change', 0):+.2f}%)"
                         for r, bd in sorted(regime_bd.items())
                     )
                     print(f"[BACKTEST] Regimes: {regime_str}", flush=True)
                 # Log alpha analysis
                 alpha = result.get("alpha_analysis", {})
                 if alpha:
-                    print(f"[BACKTEST] Alpha: skill={alpha.get('avg_skill',0):+.4f}% "
-                          f"luck={alpha.get('avg_luck',0):+.4f}% "
-                          f"skilled_ratio={alpha.get('skilled_ratio',0)*100:.0f}%", flush=True)
+                    print(
+                        f"[BACKTEST] Alpha: skill={alpha.get('avg_skill', 0):+.4f}% "
+                        f"luck={alpha.get('avg_luck', 0):+.4f}% "
+                        f"skilled_ratio={alpha.get('skilled_ratio', 0) * 100:.0f}%",
+                        flush=True,
+                    )
                 # Approve only if result is approved AND either confidence is good
                 # OR Phase 2 still has a chance to help (for low-confidence passes)
                 if result["approved"]:
@@ -15322,41 +18487,81 @@ def validate_proposal(param, old_val, new_val, trades, prices=None):
                         # ── Phase 1.5: Crisis stress check ──
                         try:
                             from hermes_trading.backtest import crisis_backtest, _SYMBOLS
+
                             if pair in _SYMBOLS:
                                 import yfinance as yf
+
                                 symbol = _SYMBOLS[pair]
                                 yf_interval = "1wk" if TIMEFRAME_MAP.get(pair, 1) > 1 else "1d"
                                 yf_period = "12mo" if TIMEFRAME_MAP.get(pair, 1) > 1 else "6mo"
-                                df = yf.download(symbol, period=yf_period, interval=yf_interval, progress=False)
+                                df = yf.download(
+                                    symbol, period=yf_period, interval=yf_interval, progress=False
+                                )
                                 if not df.empty:
-                                    crisis_prices = [float(x) for x in df["Close"].values.flatten() if str(x) != "nan"]
+                                    crisis_prices = [
+                                        float(x)
+                                        for x in df["Close"].values.flatten()
+                                        if str(x) != "nan"
+                                    ]
                                     if len(crisis_prices) >= 50:
                                         strategy = load_strategy(pair)
                                         s_type = strategy.get("strategy_type", "mean_reversion")
-                                        s_thresh = float(strategy.get("entry", {}).get("threshold") or
-                                                         strategy.get("entry", {}).get("mr_entry_rsi") or 40)
+                                        s_thresh = float(
+                                            strategy.get("entry", {}).get("threshold")
+                                            or strategy.get("entry", {}).get("mr_entry_rsi")
+                                            or 40
+                                        )
                                         crisis_result = crisis_backtest(
-                                            crisis_prices, old_params, new_params,
-                                            s_type, s_thresh, pair
+                                            crisis_prices,
+                                            old_params,
+                                            new_params,
+                                            s_type,
+                                            s_thresh,
+                                            pair,
                                         )
                                         if not crisis_result.get("approved", True):
-                                            print(f"[BACKTEST] Crisis stress FAILED: {crisis_result.get('reason', '')}", flush=True)
-                                            log_backtest_result(pair, param, old_val, new_val, False, f"Crisis failed: {crisis_result.get('reason','')}")
+                                            print(
+                                                f"[BACKTEST] Crisis stress FAILED: {crisis_result.get('reason', '')}",
+                                                flush=True,
+                                            )
+                                            log_backtest_result(
+                                                pair,
+                                                param,
+                                                old_val,
+                                                new_val,
+                                                False,
+                                                f"Crisis failed: {crisis_result.get('reason', '')}",
+                                            )
                                             return False
                                         crisis_summary = crisis_result.get("summary", {})
-                                        print(f"[BACKTEST] Crisis stress PASSED: "
-                                              f"{crisis_summary.get('worsened',0)}/{crisis_summary.get('total',0)} "
-                                              f"windows worsened", flush=True)
+                                        print(
+                                            f"[BACKTEST] Crisis stress PASSED: "
+                                            f"{crisis_summary.get('worsened', 0)}/{crisis_summary.get('total', 0)} "
+                                            f"windows worsened",
+                                            flush=True,
+                                        )
                         except Exception as crisis_e:
                             print(f"[BACKTEST] Crisis check skipped: {crisis_e}", flush=True)
-                        log_backtest_result(pair, param, old_val, new_val, True, f"Phase 1+approved (conf={conf:.2f})")
+                        log_backtest_result(
+                            pair,
+                            param,
+                            old_val,
+                            new_val,
+                            True,
+                            f"Phase 1+approved (conf={conf:.2f})",
+                        )
                         return True
                     else:
                         # Low confidence but approved — note it and let Phase 2 try
-                        print(f"[BACKTEST] Approved but low confidence ({conf:.2f}) — deferring to Phase 2", flush=True)
+                        print(
+                            f"[BACKTEST] Approved but low confidence ({conf:.2f}) — deferring to Phase 2",
+                            flush=True,
+                        )
                 else:
                     print(f"[BACKTEST] REJECTED (conf={conf:.2f})", flush=True)
-                    log_backtest_result(pair, param, old_val, new_val, False, f"Phase 1 rejected (conf={conf:.2f})")
+                    log_backtest_result(
+                        pair, param, old_val, new_val, False, f"Phase 1 rejected (conf={conf:.2f})"
+                    )
                     return False
         except Exception as e:
             print(f"[BACKTEST] Engine error (falling back): {e}", flush=True)
@@ -15439,13 +18644,16 @@ def validate_proposal(param, old_val, new_val, trades, prices=None):
         print(f"[BACKTEST] Validating strategy_type change: {old_val} -> {new_val}", flush=True)
         try:
             from hermes_trading.backtest import backtest_with_history
+
             strategy = load_strategy(pair)
             # Compare the current strategy type vs proposed using historical data
             old_type = str(old_val) if old_val else strategy.get("strategy_type", "mean_reversion")
             new_type = str(new_val) if new_val else old_type
             if new_type not in ("mean_reversion", "rsi_momentum"):
                 print(f"[BACKTEST] Invalid strategy_type: {new_type}", flush=True)
-                log_backtest_result(pair, param, old_val, new_val, False, f"Invalid type: {new_type}")
+                log_backtest_result(
+                    pair, param, old_val, new_val, False, f"Invalid type: {new_type}"
+                )
                 return False
             # Store the proposed type in strategy temporarily for backtest_with_history to use
             trial_strategy = dict(strategy)
@@ -15454,58 +18662,135 @@ def validate_proposal(param, old_val, new_val, trades, prices=None):
             test_param = "stop_loss_pct"
             test_old = strategy.get("stop_loss_pct", 1.5)
             test_new = strategy.get("stop_loss_pct", 1.5)
-            hist_result = backtest_with_history(pair, test_param, test_old, test_new,
+            hist_result = backtest_with_history(
+                pair,
+                test_param,
+                test_old,
+                test_new,
                 strategy=trial_strategy,
-                candles_dir=str(STATE_DIR / "candles") if (STATE_DIR / "candles").exists() else None)
+                candles_dir=str(STATE_DIR / "candles")
+                if (STATE_DIR / "candles").exists()
+                else None,
+            )
             # Check if the new strategy type would produce entries
             if hist_result.get("entries", 0) > 0:
-                print(f"[BACKTEST] Strategy type '{new_type}' validated: {hist_result['reason']}", flush=True)
-                log_backtest_result(pair, param, old_val, new_val, True, f"Strategy type validated: {hist_result.get('reason','')}")
+                print(
+                    f"[BACKTEST] Strategy type '{new_type}' validated: {hist_result['reason']}",
+                    flush=True,
+                )
+                log_backtest_result(
+                    pair,
+                    param,
+                    old_val,
+                    new_val,
+                    True,
+                    f"Strategy type validated: {hist_result.get('reason', '')}",
+                )
                 return True
             else:
-                print(f"[BACKTEST] Strategy type '{new_type}' produced no entries in history — rejecting", flush=True)
-                log_backtest_result(pair, param, old_val, new_val, False, f"Strategy type '{new_type}' had zero entries")
+                print(
+                    f"[BACKTEST] Strategy type '{new_type}' produced no entries in history — rejecting",
+                    flush=True,
+                )
+                log_backtest_result(
+                    pair,
+                    param,
+                    old_val,
+                    new_val,
+                    False,
+                    f"Strategy type '{new_type}' had zero entries",
+                )
                 return False
         except Exception as st_e:
             print(f"[BACKTEST] Strategy type validation error: {st_e} — accepting", flush=True)
-            log_backtest_result(pair, param, old_val, new_val, True, f"Strategy type accepted (fallback)")
+            log_backtest_result(
+                pair, param, old_val, new_val, True, f"Strategy type accepted (fallback)"
+            )
             return True
 
     score = benefit - harm
     verdict = score >= -1  # Allow small negative (close calls)
     if not verdict:
-        print(f"[REFLECT] VALIDATION REJECTED {param}: {old_val} -> {new_val} (score={score}, benefit={benefit}, harm={harm})", flush=True)
-        log_backtest_result(pair, param, old_val, new_val, False, f"Phase 2 heuristic rejected (score={score})")
+        print(
+            f"[REFLECT] VALIDATION REJECTED {param}: {old_val} -> {new_val} (score={score}, benefit={benefit}, harm={harm})",
+            flush=True,
+        )
+        log_backtest_result(
+            pair, param, old_val, new_val, False, f"Phase 2 heuristic rejected (score={score})"
+        )
     else:
-        print(f"[REFLECT] VALIDATION PASSED {param}: {old_val} -> {new_val} (score={score})", flush=True)
+        print(
+            f"[REFLECT] VALIDATION PASSED {param}: {old_val} -> {new_val} (score={score})",
+            flush=True,
+        )
         # Low-confidence consensus deferral: if Phase 2 score is close to boundary, call LLM
         if score < 0:
-            print(f"[REFLECT] CONSENSUS DEFER: Phase 2 marginal (score={score}), calling LLM...", flush=True)
+            print(
+                f"[REFLECT] CONSENSUS DEFER: Phase 2 marginal (score={score}), calling LLM...",
+                flush=True,
+            )
             llm_result = _llm_validate_backtest(
-                pair, param, old_val, new_val, trades=recent,
-                regime_bd=None, alpha_info=None, score=score
+                pair,
+                param,
+                old_val,
+                new_val,
+                trades=recent,
+                regime_bd=None,
+                alpha_info=None,
+                score=score,
             )
             if llm_result["approved"] is True:
-                print(f"[LLM-BACKTEST] Override: APPROVED ({llm_result['reasoning'][:100]})", flush=True)
-                log_backtest_result(pair, param, old_val, new_val, True,
-                                    f"LLM override approved: {llm_result['reasoning'][:100]}")
+                print(
+                    f"[LLM-BACKTEST] Override: APPROVED ({llm_result['reasoning'][:100]})",
+                    flush=True,
+                )
+                log_backtest_result(
+                    pair,
+                    param,
+                    old_val,
+                    new_val,
+                    True,
+                    f"LLM override approved: {llm_result['reasoning'][:100]}",
+                )
                 return True
             elif llm_result["approved"] is False:
-                print(f"[LLM-BACKTEST] Override: REJECTED ({llm_result['reasoning'][:100]})", flush=True)
-                log_backtest_result(pair, param, old_val, new_val, False,
-                                    f"LLM override rejected: {llm_result['reasoning'][:100]}")
+                print(
+                    f"[LLM-BACKTEST] Override: REJECTED ({llm_result['reasoning'][:100]})",
+                    flush=True,
+                )
+                log_backtest_result(
+                    pair,
+                    param,
+                    old_val,
+                    new_val,
+                    False,
+                    f"LLM override rejected: {llm_result['reasoning'][:100]}",
+                )
                 return False
             else:
                 # LLM unavailable — fall back to the original marginal pass
-                print(f"[LLM-BACKTEST] Unavailable ({llm_result['reasoning']}), using heuristic", flush=True)
-                log_backtest_result(pair, param, old_val, new_val, True,
-                                    f"Phase 2 marginal (score={score}) — LLM unavailable")
+                print(
+                    f"[LLM-BACKTEST] Unavailable ({llm_result['reasoning']}), using heuristic",
+                    flush=True,
+                )
+                log_backtest_result(
+                    pair,
+                    param,
+                    old_val,
+                    new_val,
+                    True,
+                    f"Phase 2 marginal (score={score}) — LLM unavailable",
+                )
         else:
-            log_backtest_result(pair, param, old_val, new_val, True, f"Phase 2 approved (score={score})")
+            log_backtest_result(
+                pair, param, old_val, new_val, True, f"Phase 2 approved (score={score})"
+            )
     return verdict
 
 
-def _llm_validate_backtest(pair, param, old_val, new_val, trades, regime_bd=None, alpha_info=None, score=None):
+def _llm_validate_backtest(
+    pair, param, old_val, new_val, trades, regime_bd=None, alpha_info=None, score=None
+):
     """Call LLM (DeepSeek → Gemini → Groq) to resolve a marginal backtest verdict.
     Builds a compact prompt with trade data, regime context, and alpha signals.
     Returns {'approved': bool, 'reasoning': str} or {'approved': None, 'reasoning': 'unavailable'}.
@@ -15529,18 +18814,20 @@ def _llm_validate_backtest(pair, param, old_val, new_val, trades, regime_bd=None
     if regime_bd:
         parts = []
         for r, bd in sorted(regime_bd.items()):
-            parts.append(f"{r}: {bd['trades']}t avg{bd.get('avg_pnl_change',0):+.3f}%")
+            parts.append(f"{r}: {bd['trades']}t avg{bd.get('avg_pnl_change', 0):+.3f}%")
         regime_text = "Regimes: " + ", ".join(parts)
 
     # Alpha info
     alpha_text = ""
     if alpha_info:
-        alpha_text = (f"Alpha: skill={alpha_info.get('avg_skill',0):+.3f}% "
-                      f"luck={alpha_info.get('avg_luck',0):+.3f}%")
+        alpha_text = (
+            f"Alpha: skill={alpha_info.get('avg_skill', 0):+.3f}% "
+            f"luck={alpha_info.get('avg_luck', 0):+.3f}%"
+        )
 
     prompt = f"""You are a senior quantitative strategist at a proprietary trading firm.
 
-A backtest engine has evaluated a proposed parameter change and the result is MARGINAL (score={score or '?'}). 
+A backtest engine has evaluated a proposed parameter change and the result is MARGINAL (score={score or "?"}). 
 The mechanical heuristic cannot decide clearly. You must make the final call.
 
 CHANGE: {pair} {param}: {old_val} -> {new_val}
@@ -15585,11 +18872,11 @@ REJECT: <2 sentence reasoning>"""
     text_upper = text.upper().strip()
 
     if text_upper.startswith("APPROVE"):
-        reasoning = text[len("APPROVE:"):].strip() if ":" in text else text
+        reasoning = text[len("APPROVE:") :].strip() if ":" in text else text
         print(f"[LLM-BACKTEST] {model_name} APPROVED: {reasoning[:150]}", flush=True)
         return {"approved": True, "reasoning": f"{model_name}: {reasoning[:200]}"}
     elif text_upper.startswith("REJECT"):
-        reasoning = text[len("REJECT:"):].strip() if ":" in text else text
+        reasoning = text[len("REJECT:") :].strip() if ":" in text else text
         print(f"[LLM-BACKTEST] {model_name} REJECTED: {reasoning[:150]}", flush=True)
         return {"approved": False, "reasoning": f"{model_name}: {reasoning[:200]}"}
     else:
@@ -15620,7 +18907,9 @@ def auto_revert(symbol, trades, strategy):
         latches = {}
 
     # Load previous version's archived strategy
-    archive_file = HISTORY_DIR / f"{strategy_filename(symbol).replace('.yaml', '')}_v{prev_ver}.yaml"
+    archive_file = (
+        HISTORY_DIR / f"{strategy_filename(symbol).replace('.yaml', '')}_v{prev_ver}.yaml"
+    )
     if not archive_file.exists():
         return strategy, "skip"
 
@@ -15630,8 +18919,12 @@ def auto_revert(symbol, trades, strategy):
         return strategy, "skip"
 
     # Count trades on current and previous version
-    current_trades = [t for t in trades if t.get("strategy_version") == version and t.get("exit_reason")]
-    prev_trades = [t for t in trades if t.get("strategy_version") == prev_ver and t.get("exit_reason")]
+    current_trades = [
+        t for t in trades if t.get("strategy_version") == version and t.get("exit_reason")
+    ]
+    prev_trades = [
+        t for t in trades if t.get("strategy_version") == prev_ver and t.get("exit_reason")
+    ]
 
     # Freshness: need at least 5 trades. 24h requirement removed for critical drops.
     if len(current_trades) < 5:
@@ -15641,11 +18934,19 @@ def auto_revert(symbol, trades, strategy):
     cur_wr_total = sum(1 for t in current_trades if t.get("pnl_pct", 0) > 0) / len(current_trades)
     is_critical = cur_pnl_total < -0.5 and cur_wr_total < 0.25
     try:
-        timestamps = [t.get("entry_ts", t.get("ts", "")) for t in current_trades if t.get("entry_ts", t.get("ts", ""))]
+        timestamps = [
+            t.get("entry_ts", t.get("ts", ""))
+            for t in current_trades
+            if t.get("entry_ts", t.get("ts", ""))
+        ]
         if timestamps:
             first = min(timestamps)
-            fmt = "%Y-%m-%dT%H:%M:%S"[:len(first)]
-            first_dt = datetime.strptime(first[:19], fmt) if len(first) >= 19 else datetime(2026,1,1,tzinfo=timezone.utc)
+            fmt = "%Y-%m-%dT%H:%M:%S"[: len(first)]
+            first_dt = (
+                datetime.strptime(first[:19], fmt)
+                if len(first) >= 19
+                else datetime(2026, 1, 1, tzinfo=timezone.utc)
+            )
             hours_since = (datetime.now(timezone.utc) - first_dt).total_seconds() / 3600
             if not is_critical and hours_since < 24:
                 return strategy, "skip"
@@ -15669,21 +18970,27 @@ def auto_revert(symbol, trades, strategy):
     cur_overall_pnl = cur_pnl_total
     prev_overall_pnl = sum(t.get("pnl_pct", 0) for t in prev_trades)
     cur_overall_wr = cur_wr_total
-    prev_overall_wr = sum(1 for t in prev_trades if t.get("pnl_pct", 0) > 0) / max(len(prev_trades), 1)
+    prev_overall_wr = sum(1 for t in prev_trades if t.get("pnl_pct", 0) > 0) / max(
+        len(prev_trades), 1
+    )
 
     # Revert if: first-N underperforms OR overall underperforms significantly
-    underperforms = (cur_pnl < prev_pnl - 0.15 and cur_wr < prev_wr) or \
-                    (cur_overall_pnl < prev_overall_pnl - 0.3 and cur_overall_wr < prev_overall_wr)
+    underperforms = (cur_pnl < prev_pnl - 0.15 and cur_wr < prev_wr) or (
+        cur_overall_pnl < prev_overall_pnl - 0.3 and cur_overall_wr < prev_overall_wr
+    )
     if underperforms:
-        print(f"[REVERT] {symbol}: v{version} underperforms v{prev_ver} "
-              f"(PnL: {cur_pnl:.4f}% vs {prev_pnl:.4f}%, WR: {cur_wr:.0%} vs {prev_wr:.0%}). Reverting...", flush=True)
+        print(
+            f"[REVERT] {symbol}: v{version} underperforms v{prev_ver} "
+            f"(PnL: {cur_pnl:.4f}% vs {prev_pnl:.4f}%, WR: {cur_wr:.0%} vs {prev_wr:.0%}). Reverting...",
+            flush=True,
+        )
         try:
             # Save current strategy as archive before reverting
             save_strategy(symbol, strategy)
             # Restore previous version
             archive_data = load_yaml(archive_file)
             save_strategy(symbol, archive_data)
-            
+
             # ── Multi-version cascading revert ──
             # If v-1 was also bad (already reverted from v-2), keep rolling back
             try:
@@ -15691,7 +18998,7 @@ def auto_revert(symbol, trades, strategy):
                 revert_latch_file.write_text(json.dumps(latches))
             except Exception as _re:
                 print(f"[REVERT] Latch file write error: {_re}", flush=True)
-            
+
             # Reload and check if v-1 itself was a revert (was it also underperforming?)
             restored = load_strategy(symbol)
             restored_ver = restored.get("version", "00")
@@ -15701,18 +19008,27 @@ def auto_revert(symbol, trades, strategy):
                     if latches.get(symbol) == restored_ver:
                         # v-1 was already reverted from v-2 — keep rolling back
                         prev_prev_ver = f"{int(restored_ver) - 1:02d}"
-                        prev_prev_file = HISTORY_DIR / f"{strategy_filename(symbol).replace('.yaml', '')}_v{prev_prev_ver}.yaml"
+                        prev_prev_file = (
+                            HISTORY_DIR
+                            / f"{strategy_filename(symbol).replace('.yaml', '')}_v{prev_prev_ver}.yaml"
+                        )
                         if prev_prev_file.exists():
                             prev_prev = load_yaml(prev_prev_file)
                             save_strategy(symbol, prev_prev)
-                            print(f"[REVERT] {symbol}: Cascading revert to v{prev_prev_ver} (v{restored_ver} was also bad)", flush=True)
+                            print(
+                                f"[REVERT] {symbol}: Cascading revert to v{prev_prev_ver} (v{restored_ver} was also bad)",
+                                flush=True,
+                            )
                             return load_strategy(symbol), "reverted"
                 except Exception as _re:
                     print(f"[REVERT] Cascading revert error: {_re}", flush=True)
-            
+
             latches[symbol] = version
             revert_latch_file.write_text(json.dumps(latches))
-            print(f"[REVERT] {symbol}: v{version} reverted to v{prev_ver} ({archive_file.name})", flush=True)
+            print(
+                f"[REVERT] {symbol}: v{version} reverted to v{prev_ver} ({archive_file.name})",
+                flush=True,
+            )
             # Reload the restored strategy
             return load_strategy(symbol), "reverted"
         except Exception as e:
@@ -15733,12 +19049,15 @@ def _log_regime_action(symbol, ver_from, ver_to, action_type, detail, reason):
     try:
         entry = {
             "ts": datetime.now(timezone.utc).isoformat(),
-            "symbol": symbol, "pair": symbol,
-            "version_from": ver_from, "version_to": ver_to,
+            "symbol": symbol,
+            "pair": symbol,
+            "version_from": ver_from,
+            "version_to": ver_to,
             "action": action_type,
             "reasoning": f"{detail} | {reason}",
             "layer": "safety",
-            "score_before": 0, "trades_reviewed": 0,
+            "score_before": 0,
+            "trades_reviewed": 0,
         }
         with open(JOURNAL_FILE, "a") as f:
             f.write(json.dumps(entry) + "\n")
@@ -15764,7 +19083,9 @@ def maybe_auto_unpause(symbol, strategy):
         pair_trades = [t for t in trades if t.get("symbol") == symbol or t.get("pair") == symbol]
         recent = pair_trades[-20:] if len(pair_trades) >= 20 else pair_trades
         recent_pnl = sum(t.get("pnl_pct", 0) for t in recent)
-        recent_wr = (sum(1 for t in recent if t.get("pnl_pct", 0) > 0) / len(recent)) if recent else 0.0
+        recent_wr = (
+            (sum(1 for t in recent if t.get("pnl_pct", 0) > 0) / len(recent)) if recent else 0.0
+        )
 
         paused_at = strategy.get("paused_at")
         aged_out = False
@@ -15775,7 +19096,9 @@ def maybe_auto_unpause(symbol, strategy):
         else:
             try:
                 pa = datetime.fromisoformat(paused_at.replace("Z", "+00:00"))
-                aged_out = (datetime.now(timezone.utc) - pa).total_seconds() > MAX_PAUSE_HOURS * 3600
+                aged_out = (
+                    datetime.now(timezone.utc) - pa
+                ).total_seconds() > MAX_PAUSE_HOURS * 3600
             except Exception:
                 aged_out = True
 
@@ -15785,7 +19108,11 @@ def maybe_auto_unpause(symbol, strategy):
             if aged_out:
                 strategy["paused_reatry_half_size"] = True
             save_strategy(symbol, strategy)
-            reason = "recent streak recovered" if not aged_out else f"max-pause {MAX_PAUSE_HOURS}h elapsed (half-size re-entry)"
+            reason = (
+                "recent streak recovered"
+                if not aged_out
+                else f"max-pause {MAX_PAUSE_HOURS}h elapsed (half-size re-entry)"
+            )
             print(f"[SAFETY] {symbol}: auto-unpaused — {reason}.", flush=True)
             return True
     except Exception as e:
@@ -15798,40 +19125,46 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
     # Safety check layer
     try:
         safe_result = run_safety_checks(symbol, trades, goal)
-        if safe_result.get('circuit_break'):
+        if safe_result.get("circuit_break"):
             print(f"[SAFETY] {symbol}: CIRCUIT BREAKER - {safe_result['reason']}", flush=True)
             strat = load_strategy(symbol)
-            strat['paused'] = True
-            strat['paused_at'] = datetime.now(timezone.utc).isoformat()
+            strat["paused"] = True
+            strat["paused_at"] = datetime.now(timezone.utc).isoformat()
             save_strategy(symbol, strat)
             return
         # ── Fix #27: Auto-unpause after circuit clears ──
         try:
             strat = load_strategy(symbol)
-            if strat.get('paused'):
-                total_pnl = sum(t.get('pnl_pct', 0) for t in trades)
+            if strat.get("paused"):
+                total_pnl = sum(t.get("pnl_pct", 0) for t in trades)
                 recent = trades[-5:]
-                recent_wr = sum(1 for t in recent if t.get('pnl_pct', 0) > 0) / max(len(recent), 1)
-                paused_at = strat.get('paused_at', '')
+                recent_wr = sum(1 for t in recent if t.get("pnl_pct", 0) > 0) / max(len(recent), 1)
+                paused_at = strat.get("paused_at", "")
                 if total_pnl > -2.0 and recent_wr > 0.4:
-                    strat['paused'] = False
-                    strat.pop('paused_at', None)
+                    strat["paused"] = False
+                    strat.pop("paused_at", None)
                     save_strategy(symbol, strat)
-                    print(f"[SAFETY] {symbol}: Circuit cleared — PnL {total_pnl:+.2f}%, WR {recent_wr:.0%}. Unpausing.", flush=True)
+                    print(
+                        f"[SAFETY] {symbol}: Circuit cleared — PnL {total_pnl:+.2f}%, WR {recent_wr:.0%}. Unpausing.",
+                        flush=True,
+                    )
         except Exception:
             pass
-        if safe_result.get('data_bad'):
+        if safe_result.get("data_bad"):
             print(f"[SAFETY] {symbol}: Poor data quality - skipping", flush=True)
             return
-        if safe_result.get('yaml_bad'):
+        if safe_result.get("yaml_bad"):
             print(f"[SAFETY] {symbol}: YAML corrupted, restoring backup", flush=True)
             restore_strategy_backup(symbol)
             return
-        if safe_result.get('cooling'):
+        if safe_result.get("cooling"):
             print(f"[SAFETY] {symbol}: Cooldown active ({safe_result['reason']})", flush=True)
             return
-        if safe_result.get('regime_shift'):
-            print(f"[SAFETY] {symbol}: {safe_result['reason']} — tightening stops for regime", flush=True)
+        if safe_result.get("regime_shift"):
+            print(
+                f"[SAFETY] {symbol}: {safe_result['reason']} — tightening stops for regime",
+                flush=True,
+            )
             strategy = load_strategy(symbol)
             old_ver = strategy.get("version", "00")
             orig_stop = strategy.get("_orig_stop_loss_pct", strategy.get("stop_loss_pct", 2.0))
@@ -15845,12 +19178,21 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
             new_version = f"{int(old_ver) + 1:02d}"
             strategy["version"] = new_version
             save_strategy(symbol, strategy)
-            _log_regime_action(symbol, old_ver, new_version, "regime_shift",
-                              f"stop {old_stop}→{new_stop}, size {old_size}→{new_size}", safe_result['reason'])
+            _log_regime_action(
+                symbol,
+                old_ver,
+                new_version,
+                "regime_shift",
+                f"stop {old_stop}→{new_stop}, size {old_size}→{new_size}",
+                safe_result["reason"],
+            )
             print(f"[SAFETY] v{new_version} stop→{new_stop} size→{new_size}", flush=True)
             return
-        if safe_result.get('decaying'):
-            print(f"[SAFETY] {symbol}: Decay {safe_result['old_avg']:+.2f}%→{safe_result['new_avg']:+.2f}%", flush=True)
+        if safe_result.get("decaying"):
+            print(
+                f"[SAFETY] {symbol}: Decay {safe_result['old_avg']:+.2f}%→{safe_result['new_avg']:+.2f}%",
+                flush=True,
+            )
             strategy = load_strategy(symbol)
             old_ver = strategy.get("version", "00")
             orig_stop = strategy.get("_orig_stop_loss_pct", strategy.get("stop_loss_pct", 2.0))
@@ -15861,13 +19203,19 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
             new_version = f"{int(old_ver) + 1:02d}"
             strategy["version"] = new_version
             save_strategy(symbol, strategy)
-            _log_regime_action(symbol, old_ver, new_version, "decay",
-                              f"stop {old_stop}→{new_stop}", f"avg {safe_result['old_avg']:+.2f}→{safe_result['new_avg']:+.2f}")
+            _log_regime_action(
+                symbol,
+                old_ver,
+                new_version,
+                "decay",
+                f"stop {old_stop}→{new_stop}",
+                f"avg {safe_result['old_avg']:+.2f}→{safe_result['new_avg']:+.2f}",
+            )
             print(f"[SAFETY] v{new_version} stop→{new_stop} (decay)", flush=True)
             return
     except Exception as e:
         print(f"[SAFETY] Error: {e}", flush=True)
-    
+
     strategy = load_strategy(symbol)
     old_version = strategy["version"]
 
@@ -15875,14 +19223,24 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
     strategy, revert_action = auto_revert(symbol, trades, strategy)
     if revert_action == "reverted":
         old_version = strategy["version"]
-        print(f"[REFLECT] {symbol}: Auto-reverted to v{old_version}. Skipping reflection this cycle.", flush=True)
+        print(
+            f"[REFLECT] {symbol}: Auto-reverted to v{old_version}. Skipping reflection this cycle.",
+            flush=True,
+        )
         hypothesis = {
-            "ts": datetime.now(timezone.utc).isoformat(), "mode": "auto_revert",
-            "symbol": symbol, "pair": symbol,
-            "version_from": old_version, "version_to": old_version,
-            "variable": "auto_revert", "old_value": None, "new_value": None,
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "mode": "auto_revert",
+            "symbol": symbol,
+            "pair": symbol,
+            "version_from": old_version,
+            "version_to": old_version,
+            "variable": "auto_revert",
+            "old_value": None,
+            "new_value": None,
             "reasoning": "Auto-reverted — previous version outperformed",
-            "layer": "auto_revert", "trades_reviewed": 0, "score_before": 0,
+            "layer": "auto_revert",
+            "trades_reviewed": 0,
+            "score_before": 0,
             "scored": True,
         }
         with open(HYPOTHESES_FILE, "a") as f:
@@ -15892,21 +19250,26 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
     # ── X3 Cross-engine: Check policy engine for active suppressions ──
     try:
         from hermes_trading.policy_engine import get_policy
+
         pol = get_policy()
         suppressed = pol.get("suppressions", {}).get(symbol, {})
         if suppressed.get("gp_ensemble"):
-            print(f"[REFLECT] {symbol}: Policy suppresses GP entries — skipping GP-related adjustments.", flush=True)
+            print(
+                f"[REFLECT] {symbol}: Policy suppresses GP entries — skipping GP-related adjustments.",
+                flush=True,
+            )
     except Exception:
         suppressed = {}
 
-    version_trades = [
-        t for t in trades
-        if t.get("asset") == symbol
-    ]
+    version_trades = [t for t in trades if t.get("asset") == symbol]
     # Quarantine: never feed contaminated (bugged) trades into reflection/score.
     version_trades = [t for t in version_trades if not is_contaminated(t)]
     # ── Fix #3/#17: Fallback when strategy_version is missing ──
-    version_filtered = [t for t in version_trades if t.get("strategy_version") == old_version and t.get("exit_reason")]
+    version_filtered = [
+        t
+        for t in version_trades
+        if t.get("strategy_version") == old_version and t.get("exit_reason")
+    ]
     # If no trades have strategy_version, use all trades that have exit_reason
     all_exited = [t for t in version_trades if t.get("exit_reason")]
     if not version_filtered:
@@ -15915,17 +19278,23 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
             return
         if not any(t.get("strategy_version") for t in all_exited):
             version_filtered = all_exited
-            print(f"[REFLECT] {symbol}: no strategy_version in trades — using all {len(version_filtered)} closed trades", flush=True)
-    
+            print(
+                f"[REFLECT] {symbol}: no strategy_version in trades — using all {len(version_filtered)} closed trades",
+                flush=True,
+            )
+
     version_trades = version_filtered
     if not version_trades:
         print(f"[REFLECT] No trades for {symbol} on v{old_version}. Skipping.", flush=True)
         return
 
     score = score_trades(version_trades, goal)
-    print(f"[REFLECT] {symbol} v{old_version}: score={score['score']}/100 "
-          f"ret={score['total_return']}% wr={score['win_rate']:.0%} "
-          f"sharpe={score['sharpe']} trades={score['trade_count']}", flush=True)
+    print(
+        f"[REFLECT] {symbol} v{old_version}: score={score['score']}/100 "
+        f"ret={score['total_return']}% wr={score['win_rate']:.0%} "
+        f"sharpe={score['sharpe']} trades={score['trade_count']}",
+        flush=True,
+    )
 
     update_hypothesis_scores(symbol)
 
@@ -15939,8 +19308,11 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
         total_wr = sum(1 for t in all_pair_trades if t.get("pnl_pct", 0) > 0) / len(all_pair_trades)
         if total_pnl < 0 and total_wr < 0.40:
             force_strategy_review = True
-            print(f"[REFLECT] {symbol}: SELF-DIAGNOSIS — {len(all_pair_trades)} trades, "
-                  f"PnL={total_pnl:.2f}%, WR={total_wr:.0%} — forcing strategy type review", flush=True)
+            print(
+                f"[REFLECT] {symbol}: SELF-DIAGNOSIS — {len(all_pair_trades)} trades, "
+                f"PnL={total_pnl:.2f}%, WR={total_wr:.0%} — forcing strategy type review",
+                flush=True,
+            )
 
     # Layer 1
     l1_var, l1_old, l1_new, l1_reason, l1_conf = layer1_rule_based(
@@ -15952,40 +19324,76 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
     # ── Fix #12: Defer all high-confidence Layer 1 changes to LLM for review ──
     if l1_var is not None and l1_conf == "high":
         if l1_var in ("stop_loss_pct", "profit_target_pct", "entry.threshold"):
-            print(f"[REFLECT] L1 says {l1_var}={l1_new} at high confidence. "
-                  f"Deferring to LLM for review.", flush=True)
+            print(
+                f"[REFLECT] L1 says {l1_var}={l1_new} at high confidence. "
+                f"Deferring to LLM for review.",
+                flush=True,
+            )
             l1_conf = "medium"
 
-    if force_strategy_review and (GEMINI_API_KEY or GROQ_API_KEY or DEEPSEEK_API_KEY) and len(version_trades) >= 5:
+    if (
+        force_strategy_review
+        and (GEMINI_API_KEY or GROQ_API_KEY or DEEPSEEK_API_KEY)
+        and len(version_trades) >= 5
+    ):
         # ── Fix #11: Lower LLM_MIN_TRADES to 5 for forced review ──
         print(f"[REFLECT] {symbol}: FORCED STRATEGY REVIEW — skipping L1, calling LLM", flush=True)
         time.sleep(LLM_RATE_LIMIT_SEC)
         l2_var, l2_old, l2_new, l2_reason, l2_conf = layer2_gemini(
-            symbol, version_trades, goal, strategy, score, chart_context, skipped_json, crisis_data,
-            force_strategy_review=True
+            symbol,
+            version_trades,
+            goal,
+            strategy,
+            score,
+            chart_context,
+            skipped_json,
+            crisis_data,
+            force_strategy_review=True,
         )
         print(f"[REFLECT] L2 (strategy review, {l2_conf}): {l2_reason}", flush=True)
         if l2_var is not None:
             chosen_var, chosen_old, chosen_new, chosen_reason, chosen_layer = (
-                l2_var, l2_old, l2_new, l2_reason, "layer2_strategy_review"
+                l2_var,
+                l2_old,
+                l2_new,
+                l2_reason,
+                "layer2_strategy_review",
             )
         else:
             chosen_var = None
             chosen_reason = f"Forced review: L2 returned no change ({l2_reason})"
             chosen_layer = "strategy_review"
 
-    elif l1_conf in ("medium",) and (GEMINI_API_KEY or GROQ_API_KEY or DEEPSEEK_API_KEY) and len(version_trades) >= 5:
+    elif (
+        l1_conf in ("medium",)
+        and (GEMINI_API_KEY or GROQ_API_KEY or DEEPSEEK_API_KEY)
+        and len(version_trades) >= 5
+    ):
         # ── Fix #10: Call LLM on low-confidence results (was: only medium) ──
-        print(f"[REFLECT] L1 uncertain ({l1_conf}), calling LLM ({len(version_trades)} trades)...", flush=True)
+        print(
+            f"[REFLECT] L1 uncertain ({l1_conf}), calling LLM ({len(version_trades)} trades)...",
+            flush=True,
+        )
         time.sleep(LLM_RATE_LIMIT_SEC)
         l2_var, l2_old, l2_new, l2_reason, l2_conf = layer2_gemini(
-            symbol, version_trades, goal, strategy, score, chart_context, skipped_json, crisis_data,
-            force_strategy_review=False
+            symbol,
+            version_trades,
+            goal,
+            strategy,
+            score,
+            chart_context,
+            skipped_json,
+            crisis_data,
+            force_strategy_review=False,
         )
         print(f"[REFLECT] L2 ({l2_conf}): {l2_reason}", flush=True)
         if l2_var is not None:
             chosen_var, chosen_old, chosen_new, chosen_reason, chosen_layer = (
-                l2_var, l2_old, l2_new, l2_reason, "layer2_llm"
+                l2_var,
+                l2_old,
+                l2_new,
+                l2_reason,
+                "layer2_llm",
             )
         else:
             chosen_var = None
@@ -15994,7 +19402,11 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
 
     elif l1_conf == "high" and not (GEMINI_API_KEY or GROQ_API_KEY or DEEPSEEK_API_KEY):
         chosen_var, chosen_old, chosen_new, chosen_reason, chosen_layer = (
-            l1_var, l1_old, l1_new, l1_reason, "layer1"
+            l1_var,
+            l1_old,
+            l1_new,
+            l1_reason,
+            "layer1",
         )
     else:
         chosen_var = None
@@ -16002,19 +19414,19 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
         chosen_layer = "layer1_only"
         # ── Update cooldown counter ──
         try:
-            cf = STATE_DIR / '.cooldown.json'
+            cf = STATE_DIR / ".cooldown.json"
             data = {}
             if cf.exists():
                 data = json.loads(cf.read_text())
             pair_data = data.get(symbol, {})
-            pair_data['skips'] = pair_data.get('skips', 0) + 1
-            pair_data['last_ts'] = datetime.now(timezone.utc).isoformat()
+            pair_data["skips"] = pair_data.get("skips", 0) + 1
+            pair_data["last_ts"] = datetime.now(timezone.utc).isoformat()
             data[symbol] = pair_data
             cf.write_text(json.dumps(data))
         except Exception:
             pass
         # ── Fix #14: Track dead zone for GP discovery trigger ──
-        if l1_reason.startswith("No clear issue") and score.get('win_rate', 0) < 0.3:
+        if l1_reason.startswith("No clear issue") and score.get("win_rate", 0) < 0.3:
             skip_hypothesis_count[symbol] = skip_hypothesis_count.get(symbol, 0) + 1
 
     if chosen_var is not None:
@@ -16037,7 +19449,10 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
             # RR guard: if stop was already wider, bring it in-line
             current_stop = strategy.get("stop_loss_pct", 1.0)
             if current_stop > chosen_new / 2:
-                print(f"[REFLECT] RR GUARD: stop {current_stop}% > target/2 ({chosen_new/2}%). Clamping stop.", flush=True)
+                print(
+                    f"[REFLECT] RR GUARD: stop {current_stop}% > target/2 ({chosen_new / 2}%). Clamping stop.",
+                    flush=True,
+                )
                 strategy["stop_loss_pct"] = round(chosen_new / 2, 2)
         elif chosen_var == "position_size_r" and chosen_new is not None:
             chosen_new = max(0.05, min(1.0, round(float(chosen_new), 4)))
@@ -16046,93 +19461,192 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
         elif chosen_var == "strategy_type" and chosen_new is not None:
             valid_types = {"mean_reversion", "rsi_momentum"}
             if str(chosen_new).strip() not in valid_types:
-                print(f"[REFLECT] Invalid strategy_type '{chosen_new}'. Valid: {valid_types}", flush=True)
+                print(
+                    f"[REFLECT] Invalid strategy_type '{chosen_new}'. Valid: {valid_types}",
+                    flush=True,
+                )
                 return False, strategy, skipped
 
         # ── MULTI-STEP VALIDATION: simulate change against recent trades ──
         if not validate_proposal(chosen_var, chosen_old, chosen_new, version_trades):
-            print(f"[REFLECT] VALIDATION: {chosen_var} {chosen_old} -> {chosen_new} REJECTED — skipping", flush=True)
+            print(
+                f"[REFLECT] VALIDATION: {chosen_var} {chosen_old} -> {chosen_new} REJECTED — skipping",
+                flush=True,
+            )
             chosen_reason = f"VALIDATION REJECTED: {chosen_reason}"
             chosen_var = None  # Prevent write, hypothesis will record as skipped
-            
+
             # ── Trigger strategy evolution when validation rejects ──
             if skip_hypothesis_count.get(symbol, 0) >= 2:
                 try:
                     from hermes_trading.backtest import evolve_strategy, simulate_custom_strategy
+
                     strategy_def = strategy_to_blocks(strategy)
                     prices = fetch_backtest_prices(symbol)
                     if strategy_def and prices and len(prices) >= 50:
                         evolved = evolve_strategy(strategy_def, prices, n_variants=15, top_k=1)
                         if evolved and evolved[0]["score"] > 0.5:
                             best = evolved[0]
-                            print(f"[EVOLVE] {symbol}: evolved strategy found (PnL {best['pnl']:+.2f}% WR {best['wr']}%)", flush=True)
-                            update_strategy_knowledge(symbol, "custom", best["strategy_def"], {
-                                "avg_pnl_after": best["pnl"], "win_rate_after": best["wr"] / 100,
-                                "subsequent_trades": best["entries"], "helped": best["pnl"] > 0,
-                            })
+                            print(
+                                f"[EVOLVE] {symbol}: evolved strategy found (PnL {best['pnl']:+.2f}% WR {best['wr']}%)",
+                                flush=True,
+                            )
+                            update_strategy_knowledge(
+                                symbol,
+                                "custom",
+                                best["strategy_def"],
+                                {
+                                    "avg_pnl_after": best["pnl"],
+                                    "win_rate_after": best["wr"] / 100,
+                                    "subsequent_trades": best["entries"],
+                                    "helped": best["pnl"] > 0,
+                                },
+                            )
                             # ── Fix #20: Relaxed evolution deploy gate (score < EVOLVE_DEPLOY_SCORE instead of 50) ──
-                            if best['score'] > 0.6 and best['pnl'] > 0:
-                                current_score = score.get('score', 0) if isinstance(score, dict) else 0
+                            if best["score"] > 0.6 and best["pnl"] > 0:
+                                current_score = (
+                                    score.get("score", 0) if isinstance(score, dict) else 0
+                                )
                                 if current_score < EVOLVE_DEPLOY_SCORE:
-                                    print(f"[EVOLVE] {symbol}: score {current_score} < {EVOLVE_DEPLOY_SCORE}, deploying evolved strategy", flush=True)
+                                    print(
+                                        f"[EVOLVE] {symbol}: score {current_score} < {EVOLVE_DEPLOY_SCORE}, deploying evolved strategy",
+                                        flush=True,
+                                    )
                                     # Run through validation pipeline first
-                                evo_sl = best['strategy_def'].get('exit',{}).get('stop_pct', strategy.get('stop_loss_pct', 1.5))
-                                evo_tg = best['strategy_def'].get('exit',{}).get('target_pct', strategy.get('profit_target_pct', 3.0))
-                                evo_th = best['strategy_def'].get('entry',{}).get('params',{}).get('rsi_threshold', strategy.get('entry',{}).get('threshold', 40))
+                                evo_sl = (
+                                    best["strategy_def"]
+                                    .get("exit", {})
+                                    .get("stop_pct", strategy.get("stop_loss_pct", 1.5))
+                                )
+                                evo_tg = (
+                                    best["strategy_def"]
+                                    .get("exit", {})
+                                    .get("target_pct", strategy.get("profit_target_pct", 3.0))
+                                )
+                                evo_th = (
+                                    best["strategy_def"]
+                                    .get("entry", {})
+                                    .get("params", {})
+                                    .get(
+                                        "rsi_threshold",
+                                        strategy.get("entry", {}).get("threshold", 40),
+                                    )
+                                )
                                 evo_th = round(max(5, min(95, float(evo_th))), 1)
                                 evo_sl = round(max(0.5, min(10.0, float(evo_sl))), 2)
                                 evo_tg = round(max(0.5, min(20.0, float(evo_tg))), 2)
                                 if evo_sl > evo_tg / 2:
-                                    print(f"[EVOLVE] {symbol}: RR guard prevent deploy (stop {evo_sl} > target/2 {evo_tg/2})", flush=True)
+                                    print(
+                                        f"[EVOLVE] {symbol}: RR guard prevent deploy (stop {evo_sl} > target/2 {evo_tg / 2})",
+                                        flush=True,
+                                    )
                                 else:
                                     # Validate against recent trades
-                                    if validate_proposal('entry.threshold', strategy.get('entry',{}).get('threshold', 40), evo_th, version_trades):
-                                        strategy['entry']['threshold'] = evo_th
-                                        strategy['stop_loss_pct'] = evo_sl
-                                        strategy['profit_target_pct'] = evo_tg
+                                    if validate_proposal(
+                                        "entry.threshold",
+                                        strategy.get("entry", {}).get("threshold", 40),
+                                        evo_th,
+                                        version_trades,
+                                    ):
+                                        strategy["entry"]["threshold"] = evo_th
+                                        strategy["stop_loss_pct"] = evo_sl
+                                        strategy["profit_target_pct"] = evo_tg
                                         new_version = f"{int(old_version) + 1:02d}"
-                                        strategy['version'] = new_version
+                                        strategy["version"] = new_version
                                         save_strategy(symbol, strategy)
-                                        print(f"[EVOLVE] {symbol}: Deployed evolved strategy as v{new_version} (validated)", flush=True)
+                                        print(
+                                            f"[EVOLVE] {symbol}: Deployed evolved strategy as v{new_version} (validated)",
+                                            flush=True,
+                                        )
                                     else:
-                                        print(f"[EVOLVE] {symbol}: Evolved strategy rejected by validation", flush=True)
+                                        print(
+                                            f"[EVOLVE] {symbol}: Evolved strategy rejected by validation",
+                                            flush=True,
+                                        )
                 except Exception as e:
                     print(f"[EVOLVE] Engine error: {e}", flush=True)
                 # ── Fix #14: Trigger GP discovery on consecutive dead-zone returns ──
                 if skip_hypothesis_count.get(symbol, 0) >= DEAD_ZONE_CONSEC:
                     try:
-                        from hermes_trading.backtest import discover_indicator, register_discovered_indicator, init_discovered_storage, _expr_to_str
+                        from hermes_trading.backtest import (
+                            discover_indicator,
+                            register_discovered_indicator,
+                            init_discovered_storage,
+                            _expr_to_str,
+                        )
+
                         init_discovered_storage()
                         prices = fetch_backtest_prices(symbol)
                         if prices and len(prices) >= 400:
-                            print(f"[DISCOVER] {symbol}: {DEAD_ZONE_CONSEC} consecutive no-issues, launching GP discovery...", flush=True)
-                            results = discover_indicator(price_series=prices, population=80, generations=12, top_k=2)
+                            print(
+                                f"[DISCOVER] {symbol}: {DEAD_ZONE_CONSEC} consecutive no-issues, launching GP discovery...",
+                                flush=True,
+                            )
+                            results = discover_indicator(
+                                price_series=prices, population=80, generations=12, top_k=2
+                            )
                             if results:
                                 for expr, fitness, tp, wr in results:
-                                    registered = register_discovered_indicator(expr, fitness, pair=symbol,
-                                        fitness_details={"total_pnl": tp, "win_rate": wr, "discovered_at": str(datetime.now(timezone.utc))})
+                                    registered = register_discovered_indicator(
+                                        expr,
+                                        fitness,
+                                        pair=symbol,
+                                        fitness_details={
+                                            "total_pnl": tp,
+                                            "win_rate": wr,
+                                            "discovered_at": str(datetime.now(timezone.utc)),
+                                        },
+                                    )
                                     if registered:
-                                        print(f"[DISCOVER] {symbol}: New indicator! {_expr_to_str(expr)} (WR={wr:.0%}, PnL={tp:+.2f}%)", flush=True)
+                                        print(
+                                            f"[DISCOVER] {symbol}: New indicator! {_expr_to_str(expr)} (WR={wr:.0%}, PnL={tp:+.2f}%)",
+                                            flush=True,
+                                        )
                             skip_hypothesis_count[symbol] = 0
                     except Exception as d_err:
                         print(f"[DISCOVER] Error: {d_err}", flush=True)
                 # ── LEVEL 6: Symbolic discovery trigger when evolution fails 3+ times ──
                 if skip_hypothesis_count.get(symbol, 0) >= 4:
                     try:
-                        from hermes_trading.backtest import discover_indicator, register_discovered_indicator, init_discovered_storage, _expr_to_str
+                        from hermes_trading.backtest import (
+                            discover_indicator,
+                            register_discovered_indicator,
+                            init_discovered_storage,
+                            _expr_to_str,
+                        )
+
                         init_discovered_storage()
                         prices = fetch_backtest_prices(symbol)
                         if prices and len(prices) >= 400:
-                            print(f"[DISCOVER] {symbol}: evolution stuck, launching symbolic discovery...", flush=True)
-                            results = discover_indicator(price_series=prices, population=80, generations=12, top_k=2)
+                            print(
+                                f"[DISCOVER] {symbol}: evolution stuck, launching symbolic discovery...",
+                                flush=True,
+                            )
+                            results = discover_indicator(
+                                price_series=prices, population=80, generations=12, top_k=2
+                            )
                             if results:
                                 for expr, fitness, tp, wr in results:
-                                    registered = register_discovered_indicator(expr, fitness, pair=symbol,
-                                        fitness_details={"total_pnl": tp, "win_rate": wr, "discovered_at": str(datetime.now(timezone.utc))})
+                                    registered = register_discovered_indicator(
+                                        expr,
+                                        fitness,
+                                        pair=symbol,
+                                        fitness_details={
+                                            "total_pnl": tp,
+                                            "win_rate": wr,
+                                            "discovered_at": str(datetime.now(timezone.utc)),
+                                        },
+                                    )
                                     if registered:
-                                        print(f"[DISCOVER] {symbol}: New indicator discovered! {_expr_to_str(expr)} (WR={wr:.0%}, PnL={tp:+.2f}%)", flush=True)
+                                        print(
+                                            f"[DISCOVER] {symbol}: New indicator discovered! {_expr_to_str(expr)} (WR={wr:.0%}, PnL={tp:+.2f}%)",
+                                            flush=True,
+                                        )
                             else:
-                                print(f"[DISCOVER] {symbol}: No viable indicators found this cycle", flush=True)
+                                print(
+                                    f"[DISCOVER] {symbol}: No viable indicators found this cycle",
+                                    flush=True,
+                                )
                             # Reset skip count so it doesn't re-trigger every cycle
                             skip_hypothesis_count[symbol] = 0
                     except Exception as d_err:
@@ -16147,8 +19661,11 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
             new_version = f"{int(old_version) + 1:02d}"
             strategy["version"] = new_version
             save_strategy(symbol, strategy)
-            print(f"[REFLECT] {symbol}: v{old_version} -> v{new_version} | "
-                  f"{chosen_var}: {chosen_old} -> {chosen_new} | Layer: {chosen_layer}", flush=True)
+            print(
+                f"[REFLECT] {symbol}: v{old_version} -> v{new_version} | "
+                f"{chosen_var}: {chosen_old} -> {chosen_new} | Layer: {chosen_layer}",
+                flush=True,
+            )
             print(f"[REFLECT] Reasoning: {chosen_reason}", flush=True)
             # ── Post-write verification: confirm value actually reached disk ──
             try:
@@ -16157,9 +19674,15 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
                     disk_val = reloaded.get("entry", {}).get("threshold")
                 else:
                     disk_val = reloaded.get(chosen_var)
-                print(f"[REFLECT] Verified {symbol} {chosen_var} = {disk_val} on disk after update", flush=True)
+                print(
+                    f"[REFLECT] Verified {symbol} {chosen_var} = {disk_val} on disk after update",
+                    flush=True,
+                )
                 if disk_val is not None and disk_val != chosen_new:
-                    print(f"[REFLECT] WARNING: disk value {disk_val} != expected {chosen_new} — possible write race", flush=True)
+                    print(
+                        f"[REFLECT] WARNING: disk value {disk_val} != expected {chosen_new} — possible write race",
+                        flush=True,
+                    )
             except Exception as ve:
                 print(f"[REFLECT] Verify error: {ve}", flush=True)
         # ── Record hypothesis with sanitized values ──
@@ -16169,31 +19692,54 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
         if chosen_var in ("stop_loss_pct", "profit_target_pct", "trailing_stop_pct"):
             try:
                 if float(hypo_old) < 0.1 or float(hypo_new) < 0.1:
-                    print(f"[REFLECT] WARNING: {chosen_var} value suspiciously small: old={hypo_old} new={hypo_new} — flagging", flush=True)
+                    print(
+                        f"[REFLECT] WARNING: {chosen_var} value suspiciously small: old={hypo_old} new={hypo_new} — flagging",
+                        flush=True,
+                    )
             except (TypeError, ValueError):
                 pass
         hypothesis = {
-            "ts": datetime.now(timezone.utc).isoformat(), "mode": "combined",
-            "symbol": symbol, "pair": symbol, "bot_id": "hermes-forex",
-            "version_from": old_version, "version_to": new_version,
-            "variable": chosen_var, "old_value": chosen_old, "new_value": chosen_new,
-            "reasoning": chosen_reason, "layer": chosen_layer,
-            "trades_reviewed": len(version_trades), "score_before": score["score"],
-            "total_return_pct": score["total_return"], "win_rate": score["win_rate"],
-            "sharpe": score["sharpe"], "worst_drawdown_pct": score["worst_dd"],
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "mode": "combined",
+            "symbol": symbol,
+            "pair": symbol,
+            "bot_id": "hermes-forex",
+            "version_from": old_version,
+            "version_to": new_version,
+            "variable": chosen_var,
+            "old_value": chosen_old,
+            "new_value": chosen_new,
+            "reasoning": chosen_reason,
+            "layer": chosen_layer,
+            "trades_reviewed": len(version_trades),
+            "score_before": score["score"],
+            "total_return_pct": score["total_return"],
+            "win_rate": score["win_rate"],
+            "sharpe": score["sharpe"],
+            "worst_drawdown_pct": score["worst_dd"],
             "scored": False,
         }
     else:
         print(f"[REFLECT] {symbol}: No changes. {chosen_reason}", flush=True)
         hypothesis = {
-            "ts": datetime.now(timezone.utc).isoformat(), "mode": "combined",
-            "symbol": symbol, "pair": symbol, "bot_id": "hermes-forex",
-            "version_from": old_version, "version_to": old_version,
-            "variable": None, "old_value": None, "new_value": None,
-            "reasoning": chosen_reason, "layer": chosen_layer,
-            "trades_reviewed": len(version_trades), "score_before": score["score"],
-            "total_return_pct": score["total_return"], "win_rate": score["win_rate"],
-            "sharpe": score["sharpe"], "worst_drawdown_pct": score["worst_dd"],
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "mode": "combined",
+            "symbol": symbol,
+            "pair": symbol,
+            "bot_id": "hermes-forex",
+            "version_from": old_version,
+            "version_to": old_version,
+            "variable": None,
+            "old_value": None,
+            "new_value": None,
+            "reasoning": chosen_reason,
+            "layer": chosen_layer,
+            "trades_reviewed": len(version_trades),
+            "score_before": score["score"],
+            "total_return_pct": score["total_return"],
+            "win_rate": score["win_rate"],
+            "sharpe": score["sharpe"],
+            "worst_drawdown_pct": score["worst_dd"],
             "scored": True,
         }
 
@@ -16202,12 +19748,16 @@ def combined_reflect(symbol, trades, goal, chart_context="", skipped_json="[]", 
 
     journal_entry = {
         "ts": datetime.now(timezone.utc).isoformat(),
-        "symbol": symbol, "pair": symbol, "bot_id": "hermes-forex",
+        "symbol": symbol,
+        "pair": symbol,
+        "bot_id": "hermes-forex",
         "version_from": old_version,
         "version_to": hypothesis["version_to"],
         "action": chosen_var or "none",
-        "reasoning": chosen_reason, "layer": chosen_layer,
-        "score_before": score["score"], "trades_reviewed": len(version_trades),
+        "reasoning": chosen_reason,
+        "layer": chosen_layer,
+        "score_before": score["score"],
+        "trades_reviewed": len(version_trades),
     }
     with open(JOURNAL_FILE, "a") as f:
         f.write(json.dumps(journal_entry) + "\n")
@@ -16236,7 +19786,9 @@ def main():
     for symbol in symbols:
         print(f"[REFLECT] Processing {symbol}...", flush=True)
         if args.fallback:
-            combined_reflect(symbol, trades, goal, args.chart_context, args.skipped, args.crisis_data)
+            combined_reflect(
+                symbol, trades, goal, args.chart_context, args.skipped, args.crisis_data
+            )
 
 
 if __name__ == "__main__":
@@ -16285,35 +19837,61 @@ PRIMITIVES = {
 }
 
 WINDOW_OPS = {
-    "min_window": lambda arr, w: min(arr[-int(w):]) if len(arr) >= w else arr[-1],
-    "max_window": lambda arr, w: max(arr[-int(w):]) if len(arr) >= w else arr[-1],
-    "mean_window": lambda arr, w: statistics.mean(arr[-int(w):]) if len(arr) >= w else arr[-1],
-    "stdev_window": lambda arr, w: statistics.stdev(arr[-int(w):]) if len(arr) >= w and len(set(arr[-int(w):])) >= 2 else 0.0001,
-    "ema": lambda arr, w: _ema(arr[-int(w):]) if len(arr) >= w else arr[-1],
-    "roc": lambda arr, w: (arr[-1] / max(arr[-int(w)-1], 0.0001) - 1) * 100 if len(arr) > w else 0,
+    "min_window": lambda arr, w: min(arr[-int(w) :]) if len(arr) >= w else arr[-1],
+    "max_window": lambda arr, w: max(arr[-int(w) :]) if len(arr) >= w else arr[-1],
+    "mean_window": lambda arr, w: statistics.mean(arr[-int(w) :]) if len(arr) >= w else arr[-1],
+    "stdev_window": lambda arr, w: (
+        statistics.stdev(arr[-int(w) :])
+        if len(arr) >= w and len(set(arr[-int(w) :])) >= 2
+        else 0.0001
+    ),
+    "ema": lambda arr, w: _ema(arr[-int(w) :]) if len(arr) >= w else arr[-1],
+    "roc": lambda arr, w: (
+        (arr[-1] / max(arr[-int(w) - 1], 0.0001) - 1) * 100 if len(arr) > w else 0
+    ),
 }
 
 WINDOW_PERIODS = [5, 7, 10, 14, 20, 30, 50, 60, 90, 120]
 
+
 def _ema(values, smoothing=2):
     """Exponential moving average helper."""
-    if len(values) < 2: return values[-1] if values else 0
+    if len(values) < 2:
+        return values[-1] if values else 0
     k = smoothing / (len(values) + 1)
     ema = values[0]
     for v in values[1:]:
         ema = v * k + ema * (1 - k)
     return ema
 
+
 # Will be set from backtest.py's _FEATURE_KEYS at runtime
-TERMINALS = ["close", "volume", "dxy", "vix", "tnx", "spx", "oil", "copper", "gold", "btc", "fvx", "eem", "bonds", "hour", "day"]
+TERMINALS = [
+    "close",
+    "volume",
+    "dxy",
+    "vix",
+    "tnx",
+    "spx",
+    "oil",
+    "copper",
+    "gold",
+    "btc",
+    "fvx",
+    "eem",
+    "bonds",
+    "hour",
+    "day",
+]
 
 # ── Expression tree helpers ──
+
 
 def _random_tree(depth=0, max_depth=4):
     """Generate a random expression tree. Returns nested list: [op, arg1, arg2]."""
     if depth >= max_depth or (depth > 0 and random.random() < 0.3):
         return random.choice(TERMINALS)
-    
+
     # Choose between binary primitive, unary primitive, or window op
     if random.random() < 0.5:
         # Binary primitive
@@ -16352,35 +19930,54 @@ def _eval_tree(expr, data):
         return [0.0] * max(length, 1)
 
     op = expr[0]
-    
+
     if len(expr) == 3 and isinstance(expr[2], (int, float)):
         # Window op: [op, child, period]
         child_vals = _eval_tree(expr[1], data)
         period = int(expr[2])
         if op == "min_window":
-            return [min(child_vals[max(0, i-period+1):i+1]) if i >= period-1 else child_vals[i] for i in range(len(child_vals))]
+            return [
+                min(child_vals[max(0, i - period + 1) : i + 1])
+                if i >= period - 1
+                else child_vals[i]
+                for i in range(len(child_vals))
+            ]
         elif op == "max_window":
-            return [max(child_vals[max(0, i-period+1):i+1]) if i >= period-1 else child_vals[i] for i in range(len(child_vals))]
+            return [
+                max(child_vals[max(0, i - period + 1) : i + 1])
+                if i >= period - 1
+                else child_vals[i]
+                for i in range(len(child_vals))
+            ]
         elif op == "mean_window":
-            return [statistics.mean(child_vals[max(0, i-period+1):i+1]) if i >= period-1 else child_vals[i] for i in range(len(child_vals))]
+            return [
+                statistics.mean(child_vals[max(0, i - period + 1) : i + 1])
+                if i >= period - 1
+                else child_vals[i]
+                for i in range(len(child_vals))
+            ]
         elif op == "stdev_window":
             result = []
             for i in range(len(child_vals)):
-                window = child_vals[max(0, i-period+1):i+1]
+                window = child_vals[max(0, i - period + 1) : i + 1]
                 if len(window) >= 3 and len(set(window)) >= 2:
                     result.append(statistics.stdev(window))
                 else:
                     result.append(0.0001)
             return result
-    
+
     # Binary ops: [op, left, right]
     left = _eval_tree(expr[1], data)
-    right = _eval_tree(expr[2], data) if len(expr) > 2 and isinstance(expr[2], (list, str)) else [0.0] * len(left)
+    right = (
+        _eval_tree(expr[2], data)
+        if len(expr) > 2 and isinstance(expr[2], (list, str))
+        else [0.0] * len(left)
+    )
     if not isinstance(right, list):
         right = [float(right)] * len(left)
     min_len = min(len(left), len(right))
     left, right = left[:min_len], right[:min_len]
-    
+
     if op in ("add", "sub", "mul", "div", "ratio"):
         if op == "add":
             return [left[i] + (right[i] if i < len(right) else 0) for i in range(min_len)]
@@ -16389,14 +19986,17 @@ def _eval_tree(expr, data):
         elif op == "mul":
             return [left[i] * (right[i] if i < len(right) else 0) for i in range(min_len)]
         elif op in ("div", "ratio"):
-            return [left[i] / max(right[i] if i < len(right) else 0.0001, 0.0001) for i in range(min_len)]
+            return [
+                left[i] / max(right[i] if i < len(right) else 0.0001, 0.0001)
+                for i in range(min_len)
+            ]
     elif op == "log":
         return [math.log(max(left[i] if i < len(left) else 0.0001, 0.0001)) for i in range(min_len)]
     elif op == "neg":
         return [-(left[i] if i < len(left) else 0) for i in range(min_len)]
     elif op == "abs":
         return [abs(left[i] if i < len(left) else 0) for i in range(min_len)]
-    
+
     return [0.0] * length
 
 
@@ -16438,6 +20038,7 @@ def _replace_node(tree, target, replacement):
 def _crossover(e1, e2):
     """Swap random subtrees between two expressions."""
     import copy
+
     e1 = copy.deepcopy(e1)
     nodes1 = _get_nodes(e1)
     nodes2 = _get_nodes(e2)
@@ -16453,6 +20054,7 @@ def _mutate(expr):
     nodes = _get_nodes(expr)
     if nodes:
         import copy
+
         e = copy.deepcopy(expr)
         node = random.choice(nodes)
         _replace_node(e, node, _random_tree(depth=random.randint(0, 2)))
@@ -16469,6 +20071,7 @@ def _count_nodes(expr):
 
 # ── Fitness: correlation with next-candle price change ──
 
+
 def _compute_fitness(signal, prices, horizon=1):
     """Compute fitness as correlation between signal and FORWARD-horizon
     returns. horizon=1 => next-candle return (original behaviour). horizon=H
@@ -16479,11 +20082,10 @@ def _compute_fitness(signal, prices, horizon=1):
     Higher absolute correlation = better predictive power.
     Returns (correlation, forward_returns)."""
     # Forward-horizon returns: total pct move from i to i+horizon
-    forward = [((prices[i+horizon] / prices[i]) - 1) * 100
-               for i in range(len(prices) - horizon)]
+    forward = [((prices[i + horizon] / prices[i]) - 1) * 100 for i in range(len(prices) - horizon)]
 
     # Align signal to forward returns (signal must be same length or longer)
-    sig = signal[:len(forward)]
+    sig = signal[: len(forward)]
     if len(sig) < 10:
         return 0.0, forward
 
@@ -16516,7 +20118,7 @@ def _permutation_pvalue(signal, prices, horizon=1, n_perm=200, seed=0):
     real_corr, forward = _compute_fitness(signal, prices, horizon)
     if not forward or len(forward) < 20:
         return 1.0, real_corr, 0.0
-    sig = signal[:len(forward)]
+    sig = signal[: len(forward)]
     n = len(sig)
     mean_sig = sum(sig) / n
     den_s = math.sqrt(sum((sig[i] - mean_sig) ** 2 for i in range(n)))
@@ -16545,7 +20147,7 @@ def _compute_signal_stats(signal, prices):
     because both the dashboard frontend (win_rate*100 → %) and the ensemble
     weight (fitness*win_rate) expect 0-1, NOT a percent."""
     returns = [((prices[i + 1] / prices[i]) - 1) * 100 for i in range(len(prices) - 1)]
-    sig = signal[:len(returns) + 1]
+    sig = signal[: len(returns) + 1]
     if len(sig) < 11:
         return 0.0, 0.0
     wins = 0
@@ -16587,8 +20189,11 @@ def _evolve_population(data, population_size, generations, horizon):
         best_fitness = scores[0][0]
         if gen % 10 == 0 or gen == generations - 1:
             elapsed = time.time() - t0
-            print(f"[GP] Gen {gen}/{generations}: best fitness = {best_fitness:.4f} "
-                  f"| pop = {len(pop)} | elapsed = {elapsed:.1f}s", flush=True)
+            print(
+                f"[GP] Gen {gen}/{generations}: best fitness = {best_fitness:.4f} "
+                f"| pop = {len(pop)} | elapsed = {elapsed:.1f}s",
+                flush=True,
+            )
         keep = max(15, population_size // 10)
         survivors = [s[1] for s in scores[:keep]]
         new_pop = list(survivors)
@@ -16605,8 +20210,7 @@ def _evolve_population(data, population_size, generations, horizon):
     return pop
 
 
-def _discover_walkforward(data, population_size, generations, top_k,
-                          threshold, horizon, n_windows):
+def _discover_walkforward(data, population_size, generations, top_k, threshold, horizon, n_windows):
     """Walk-forward (expanding-window) GP discovery.
 
     Splits the series into n_windows contiguous folds. For each fold f, evolves
@@ -16624,8 +20228,11 @@ def _discover_walkforward(data, population_size, generations, top_k,
         train = {k: v[:cut] for k, v in data.items()}
         test = {k: v[cut:] for k, v in data.items()}
         if len(train["close"]) < 200 or len(test["close"]) < 50:
-            print(f"[GP] fold {f} too short (train={len(train['close'])} "
-                  f"test={len(test['close'])}), skipping", flush=True)
+            print(
+                f"[GP] fold {f} too short (train={len(train['close'])} "
+                f"test={len(test['close'])}), skipping",
+                flush=True,
+            )
             continue
         pop = _evolve_population(train, population_size, generations, horizon)
         seen = set()
@@ -16641,8 +20248,9 @@ def _discover_walkforward(data, population_size, generations, top_k,
                 corr, _ = _compute_fitness(sig, test["close"], horizon)
                 train_sig = _eval_tree(expr, train)
                 train_corr, _ = _compute_fitness(train_sig, train["close"], horizon)
-                rec = agg.setdefault(es, {"corrs": [], "train_corrs": [],
-                                          "nodes": _count_nodes(expr), "expr": expr})
+                rec = agg.setdefault(
+                    es, {"corrs": [], "train_corrs": [], "nodes": _count_nodes(expr), "expr": expr}
+                )
                 rec["corrs"].append(round(corr, 4))
                 rec["train_corrs"].append(round(train_corr, 4))
             except Exception:
@@ -16658,31 +20266,44 @@ def _discover_walkforward(data, population_size, generations, top_k,
             # (A) permutation null-test: reject if score is not better than
             # random label shuffles (p >= 0.05) — closes the "lucky noise"
             # gap that walk-forward alone cannot catch.
-            p_val, real_c, null_mean = _permutation_pvalue(
-                sig_full, prices, horizon, n_perm=200)
+            p_val, real_c, null_mean = _permutation_pvalue(sig_full, prices, horizon, n_perm=200)
             if p_val >= 0.05:
                 continue
             win_rate, pnl = _compute_signal_stats(sig_full, prices)
-            final.append({
-                "expr": rec["expr"], "expr_str": es, "name": es,
-                "oos_corr": round(mean_c, 4),
-                "train_corr": round(sum(rec["train_corrs"]) / len(rec["train_corrs"]), 4),
-                "oos_corr_min": round(min(rec["corrs"]), 4),
-                "wf_windows_clear": clear, "n_windows": n_folds,
-                "perm_pvalue": round(p_val, 4), "null_mean_corr": null_mean,
-                "nodes": rec["nodes"],
-                "fitness": round(mean_c - (sum(rec["train_corrs"]) / len(rec["train_corrs"])) * 0.3, 4),
-                "win_rate": win_rate, "total_pnl": pnl, "uses": 0,
-            })
+            final.append(
+                {
+                    "expr": rec["expr"],
+                    "expr_str": es,
+                    "name": es,
+                    "oos_corr": round(mean_c, 4),
+                    "train_corr": round(sum(rec["train_corrs"]) / len(rec["train_corrs"]), 4),
+                    "oos_corr_min": round(min(rec["corrs"]), 4),
+                    "wf_windows_clear": clear,
+                    "n_windows": n_folds,
+                    "perm_pvalue": round(p_val, 4),
+                    "null_mean_corr": null_mean,
+                    "nodes": rec["nodes"],
+                    "fitness": round(
+                        mean_c - (sum(rec["train_corrs"]) / len(rec["train_corrs"])) * 0.3, 4
+                    ),
+                    "win_rate": win_rate,
+                    "total_pnl": pnl,
+                    "uses": 0,
+                }
+            )
     final.sort(key=lambda x: x["fitness"], reverse=True)
     total_elapsed = time.time() - t0
-    print(f"[GP] Walk-forward complete in {total_elapsed:.1f}s ({n_folds} folds): "
-          f"found {len(final)} robust candidates (mean OOS>={threshold}, "
-          f"clear>={(n_folds + 1) // 2}/{n_folds} folds, perm p<0.05)", flush=True)
+    print(
+        f"[GP] Walk-forward complete in {total_elapsed:.1f}s ({n_folds} folds): "
+        f"found {len(final)} robust candidates (mean OOS>={threshold}, "
+        f"clear>={(n_folds + 1) // 2}/{n_folds} folds, perm p<0.05)",
+        flush=True,
+    )
     return final[:top_k]
 
 
 # ── The GP loop ──
+
 
 def discover_indicators_correlation(
     data,
@@ -16697,7 +20318,7 @@ def discover_indicators_correlation(
     fitness. horizon=1 => next-candle (original). horizon=H => cumulative
     move over next H candles (longer-horizon objective; clears the 0.15 bar
     on 1d data where next-candle cannot).
-    
+
     Args:
         data: dict with "close" key (and optionally volume, dxy, vix, tnx, etc.)
         population_size: number of random expressions per generation (default 200)
@@ -16707,13 +20328,16 @@ def discover_indicators_correlation(
         horizon: forward-return lookahead in candles (1 = next-candle)
         n_windows: walk-forward folds; >1 enables expanding-window validation
             (default 1 = legacy single 60/40 split)
-    
+
     Returns:
         list of (expr, fitness_score, correlation, details_dict)
     """
     prices = data.get("close", data) if isinstance(data, dict) else data
     if not isinstance(prices, list) or len(prices) < 200:
-        print(f"[GP] Need >= 200 candles, got {len(prices) if isinstance(prices, list) else 0}", flush=True)
+        print(
+            f"[GP] Need >= 200 candles, got {len(prices) if isinstance(prices, list) else 0}",
+            flush=True,
+        )
         return []
 
     # Ensure data is a dict
@@ -16726,8 +20350,8 @@ def discover_indicators_correlation(
     # ── WALK-FORWARD (expanding window) vs legacy single split ──
     if n_windows > 1:
         return _discover_walkforward(
-            data, population_size, generations, top_k,
-            correlation_threshold, horizon, n_windows)
+            data, population_size, generations, top_k, correlation_threshold, horizon, n_windows
+        )
 
     # Train/test split (60/40) — legacy single split
     split = int(len(prices) * 0.6)
@@ -16740,7 +20364,7 @@ def discover_indicators_correlation(
 
     # Initialise population
     pop = [_random_tree() for _ in range(population_size)]
-    
+
     for gen in range(generations):
         scores = []
         for expr in pop:
@@ -16759,11 +20383,14 @@ def discover_indicators_correlation(
 
         scores.sort(key=lambda x: x[0], reverse=True)
         best_fitness = scores[0][0]
-        
+
         if gen % 10 == 0 or gen == generations - 1:
             elapsed = time.time() - t0
-            print(f"[GP] Gen {gen}/{generations}: best fitness = {best_fitness:.4f} "
-                  f"| pop = {len(pop)} | elapsed = {elapsed:.1f}s", flush=True)
+            print(
+                f"[GP] Gen {gen}/{generations}: best fitness = {best_fitness:.4f} "
+                f"| pop = {len(pop)} | elapsed = {elapsed:.1f}s",
+                flush=True,
+            )
 
         # Selection: top 10% (or at least 15)
         keep = max(15, population_size // 10)
@@ -16800,29 +20427,34 @@ def discover_indicators_correlation(
             # Also compute on training to ensure not overfit
             train_sig = _eval_tree(expr, train)
             train_corr, _ = _compute_fitness(train_sig, train_prices, horizon)
-            
+
             if corr >= correlation_threshold:
                 win_rate, pnl = _compute_signal_stats(sig, test_prices)
-                final.append({
-                    "expr": expr,
-                    "expr_str": _expr_to_str(expr),
-                    "name": _expr_to_str(expr),
-                    "oos_corr": round(corr, 4),
-                    "train_corr": round(train_corr, 4),
-                    "nodes": _count_nodes(expr),
-                    "fitness": round(corr - train_corr * 0.3, 4),  # prefer OOS performance
-                    "win_rate": win_rate,
-                    "total_pnl": pnl,
-                    "uses": 0,
-                })
+                final.append(
+                    {
+                        "expr": expr,
+                        "expr_str": _expr_to_str(expr),
+                        "name": _expr_to_str(expr),
+                        "oos_corr": round(corr, 4),
+                        "train_corr": round(train_corr, 4),
+                        "nodes": _count_nodes(expr),
+                        "fitness": round(corr - train_corr * 0.3, 4),  # prefer OOS performance
+                        "win_rate": win_rate,
+                        "total_pnl": pnl,
+                        "uses": 0,
+                    }
+                )
         except Exception:
             pass
 
     final.sort(key=lambda x: x["fitness"], reverse=True)
-    
+
     total_elapsed = time.time() - t0
-    print(f"[GP] Complete in {total_elapsed:.1f}s: found {len(final)} candidates above "
-          f"OOS correlation {correlation_threshold}", flush=True)
+    print(
+        f"[GP] Complete in {total_elapsed:.1f}s: found {len(final)} candidates above "
+        f"OOS correlation {correlation_threshold}",
+        flush=True,
+    )
 
     return final[:top_k]
 
@@ -16830,7 +20462,7 @@ def discover_indicators_correlation(
 def run_genetic_discovery(pair, intervals=None):
     """Run the full genetic indicator discovery pipeline for a pair.
     Fetches data for multiple timeframes, runs GP, registers valid indicators.
-    
+
     Args:
         pair: currency pair (e.g., "EUR/USD")
         intervals: list of (interval, period) tuples, e.g. [("5m", "1mo"), ("1h", "1mo")]
@@ -16844,9 +20476,9 @@ def run_genetic_discovery(pair, intervals=None):
         intervals = [("1d", "2y", 60)]
     # Allow legacy (interval, period) tuples without a horizon (default 1)
     intervals = [(iv[0], iv[1], iv[2] if len(iv) > 2 else 1) for iv in intervals]
-    
+
     print(f"[GP] Running genetic discovery for {pair}...", flush=True)
-    
+
     try:
         import yfinance as yf
     except ImportError:
@@ -16861,6 +20493,7 @@ def run_genetic_discovery(pair, intervals=None):
     # infinite retry) on EVERY download, and fetch the 10 macro symbols
     # concurrently so the window can't blow the budget.
     from concurrent.futures import ThreadPoolExecutor, as_completed
+
     _YT = 25  # seconds — hard ceiling per yfinance HTTP request
     _WALL_CAP = 240  # seconds — hard ceiling for the ENTIRE discovery run
     _start = time.time()
@@ -16879,15 +20512,20 @@ def run_genetic_discovery(pair, intervals=None):
         # Hard wall-clock guard: never let a misbehaving yfinance (retries,
         # DNS stalls, backoff) blow the caller's 900s subprocess budget.
         if time.time() - _start > _WALL_CAP:
-            print(f"[GP] Wall-clock cap {_WALL_CAP}s reached for {pair} — "
-                  f"returning {len(all_results)} candidates found so far", flush=True)
+            print(
+                f"[GP] Wall-clock cap {_WALL_CAP}s reached for {pair} — "
+                f"returning {len(all_results)} candidates found so far",
+                flush=True,
+            )
             break
         key = f"{pair}:{interval}:{period}"
         if key in data_cache:
             data_arr = data_cache[key]
         else:
             try:
-                df = yf.download(symbol, period=period, interval=interval, progress=False, timeout=_YT)
+                df = yf.download(
+                    symbol, period=period, interval=interval, progress=False, timeout=_YT
+                )
                 if df.empty:
                     continue
                 closes = [float(x) for x in df["Close"].values.flatten() if str(x) != "nan"]
@@ -16895,24 +20533,40 @@ def run_genetic_discovery(pair, intervals=None):
                     continue
                 data_arr = {"close": closes}
                 if "Volume" in df.columns:
-                    data_arr["volume"] = [float(x) for x in df["Volume"].values.flatten() if str(x) != "nan"]
+                    data_arr["volume"] = [
+                        float(x) for x in df["Volume"].values.flatten() if str(x) != "nan"
+                    ]
                 else:
                     data_arr["volume"] = [1.0] * len(closes)
                 # Try macro data — fetched concurrently with a per-request cap
                 macro_map = {
-                    "dxy": "DX-Y.NYB", "vix": "^VIX", "tnx": "^TNX",
-                    "spx": "^GSPC", "oil": "CL=F", "gold": "GC=F",
-                    "btc": "BTC-USD", "fvx": "^FVX", "eem": "EEM",
+                    "dxy": "DX-Y.NYB",
+                    "vix": "^VIX",
+                    "tnx": "^TNX",
+                    "spx": "^GSPC",
+                    "oil": "CL=F",
+                    "gold": "GC=F",
+                    "btc": "BTC-USD",
+                    "fvx": "^FVX",
+                    "eem": "EEM",
                 }
+
                 def _fetch_macro(mkey, msym):
                     try:
-                        mdf = yf.download(msym, period=period, interval=interval, progress=False, timeout=_YT)
+                        mdf = yf.download(
+                            msym, period=period, interval=interval, progress=False, timeout=_YT
+                        )
                         if not mdf.empty:
-                            vals = [float(x) for x in mdf["Close"].values.flatten() if str(x) != "nan"]
-                            return mkey, (vals[:len(closes)] + [vals[-1]] * max(0, len(closes) - len(vals)))
+                            vals = [
+                                float(x) for x in mdf["Close"].values.flatten() if str(x) != "nan"
+                            ]
+                            return mkey, (
+                                vals[: len(closes)] + [vals[-1]] * max(0, len(closes) - len(vals))
+                            )
                     except Exception:
                         pass
                     return mkey, [0.0] * len(closes)
+
                 with ThreadPoolExecutor(max_workers=10) as ex:
                     for mkey, vals in ex.map(_fetch_macro, *zip(*macro_map.items())):
                         data_arr[mkey] = vals
@@ -16925,7 +20579,7 @@ def run_genetic_discovery(pair, intervals=None):
             except Exception as e:
                 print(f"[GP] {interval} fetch failed: {e}", flush=True)
                 continue
-        
+
         results = discover_indicators_correlation(
             data=data_arr,
             population_size=200,
@@ -16940,7 +20594,7 @@ def run_genetic_discovery(pair, intervals=None):
             r["horizon"] = horizon
             r["interval"] = interval
         all_results.extend(results)
-    
+
     # Deduplicate by expression string
     seen = set()
     unique = []
@@ -16949,7 +20603,7 @@ def run_genetic_discovery(pair, intervals=None):
         if es not in seen:
             seen.add(es)
             unique.append(r)
-    
+
     unique.sort(key=lambda x: x["fitness"], reverse=True)
     return unique[:5]
 
@@ -16975,7 +20629,11 @@ def register_genetic_indicator(indicator_info, pair, live=False):
         bool: True if saved successfully
     """
     try:
-        from hermes_trading.backtest import register_new_block, save_discovered_indicators, load_discovered_indicators
+        from hermes_trading.backtest import (
+            register_new_block,
+            save_discovered_indicators,
+            load_discovered_indicators,
+        )
 
         block_name = f"genetic_{int(time.time())}"
 
@@ -16998,8 +20656,11 @@ def register_genetic_indicator(indicator_info, pair, live=False):
             }
             registered = register_new_block(block_name, "entry", description, params)
         else:
-            print(f"[GP] SHADOW: not wiring '{indicator_info.get('expr_str')}' "
-                  f"into live entries (shadow mode)", flush=True)
+            print(
+                f"[GP] SHADOW: not wiring '{indicator_info.get('expr_str')}' "
+                f"into live entries (shadow mode)",
+                flush=True,
+            )
 
         # Always save to discovered indicators (feeds the dashboard tab)
         es_for_uses = indicator_info.get("expr_str") or _expr_to_str(indicator_info["expr"])
@@ -17010,7 +20671,9 @@ def register_genetic_indicator(indicator_info, pair, live=False):
             "name": indicator_info.get("name") or es_for_uses or "GP-evolved",
             "expr": es_for_uses,
             "expr_str": es_for_uses,
-            "_expr": indicator_info.get("expr"),  # raw tree for live evaluation (check_discovered_signals reads _expr)
+            "_expr": indicator_info.get(
+                "expr"
+            ),  # raw tree for live evaluation (check_discovered_signals reads _expr)
             "fitness": indicator_info.get("fitness", 0),
             "oos_corr": indicator_info.get("oos_corr", 0),
             "train_corr": indicator_info.get("train_corr", 0),
@@ -17030,15 +20693,18 @@ def register_genetic_indicator(indicator_info, pair, live=False):
         # seed/discovered records all survive. Drop any corrupt placeholders
         # (name=='?' or empty expr_str) and dedupe by expression string.
         existing = load_discovered_indicators(pair)
-        existing = [e for e in existing
-                    if e.get("name") and e.get("name") != "?"
-                    and e.get("expr_str")]
+        existing = [
+            e for e in existing if e.get("name") and e.get("name") != "?" and e.get("expr_str")
+        ]
         if not any(e.get("expr_str") == discovered_indicator["expr_str"] for e in existing):
             existing.append(discovered_indicator)
         save_discovered_indicators(pair, existing)
 
         if live and registered:
-            print(f"[GP] Registered '{block_name}' for {pair}: {indicator_info['expr_str']}", flush=True)
+            print(
+                f"[GP] Registered '{block_name}' for {pair}: {indicator_info['expr_str']}",
+                flush=True,
+            )
         elif live:
             print(f"[GP] Block '{block_name}' already exists (dedup)", flush=True)
 
@@ -17067,33 +20733,46 @@ def run_and_register(pair, live=False):
             print(f"[GP] Registration error for {pair}: {e}", flush=True)
     # Wording deliberately includes "registered"/"new indicators" tokens so
     # the loop's subprocess stdout parser still captures the count.
-    print(f"[GP] {pair}: registered {count}/{len(results)} new indicators "
-          f"(saved to discovered store, live={live})", flush=True)
+    print(
+        f"[GP] {pair}: registered {count}/{len(results)} new indicators "
+        f"(saved to discovered store, live={live})",
+        flush=True,
+    )
     return results
 
 
 # ── CLI entry point ──
 if __name__ == "__main__":
     import sys, json
+
     if len(sys.argv) >= 2 and sys.argv[1] in ("promote", "retire"):
         from hermes_trading.backtest import promote_indicator, retire_indicator
+
         action = sys.argv[1]
         pair = sys.argv[2] if len(sys.argv) > 2 else "XAU/USD"
         expr_str = sys.argv[3] if len(sys.argv) > 3 else None
         force = "--force" in sys.argv
         if not expr_str:
-            print(f"usage: python -m hermes_trading.genetic_discovery "
-                  f"{action} <pair> <expr_str> [--force]", flush=True)
+            print(
+                f"usage: python -m hermes_trading.genetic_discovery "
+                f"{action} <pair> <expr_str> [--force]",
+                flush=True,
+            )
             sys.exit(2)
-        ok, msg = (promote_indicator(pair, expr_str, force=force)
-                   if action == "promote" else retire_indicator(pair, expr_str))
+        ok, msg = (
+            promote_indicator(pair, expr_str, force=force)
+            if action == "promote"
+            else retire_indicator(pair, expr_str)
+        )
         print(msg, flush=True)
         sys.exit(0 if ok else 1)
     pair = sys.argv[1] if len(sys.argv) > 1 else "XAU/USD"
     print(f"Running genetic indicator discovery for {pair}...", flush=True)
     results = run_and_register(pair)
     for r in results:
-        print(f"  [{r.get('n', 0)}] {r['expr_str']}: OOS corr={r.get('oos_corr', 0):.4f}", flush=True)
+        print(
+            f"  [{r.get('n', 0)}] {r['expr_str']}: OOS corr={r.get('oos_corr', 0):.4f}", flush=True
+        )
 ```
 
 ### hermes-gold/hermes_trading/gp_intelligence.py
@@ -17198,9 +20877,13 @@ class GpIntelligence:
                     for name in entry.get("indicators", []):
                         self._update_indicator(name, entry.get("regime", "UNKNOWN"), outcome)
                     # Update matrix
-                    ck = self._condition_key(pair, entry.get("regime", "UNKNOWN"),
-                                             entry.get("adx"), entry.get("vol_pct"),
-                                             entry.get("session"))
+                    ck = self._condition_key(
+                        pair,
+                        entry.get("regime", "UNKNOWN"),
+                        entry.get("adx"),
+                        entry.get("vol_pct"),
+                        entry.get("session"),
+                    )
                     self._update_matrix(ck, "gp", pnl_pct, "gp_ensemble")
                     break
             except Exception:
@@ -17269,8 +20952,10 @@ class GpIntelligence:
 
     def _update_matrix(self, key, entry_type, pnl_pct, stype):
         if key not in self._matrix:
-            self._matrix[key] = {"gp": {"n": 0, "wins": 0, "pnl": 0},
-                                 "traditional": {"n": 0, "wins": 0, "pnl": 0}}
+            self._matrix[key] = {
+                "gp": {"n": 0, "wins": 0, "pnl": 0},
+                "traditional": {"n": 0, "wins": 0, "pnl": 0},
+            }
         m = self._matrix[key].setdefault(entry_type, {"n": 0, "wins": 0, "pnl": 0})
         m["n"] += 1
         m["wins"] += 1 if pnl_pct > 0 else 0
@@ -17304,24 +20989,38 @@ class GpIntelligence:
         if not self._entry_log.exists():
             return []
         try:
-            entries = [json.loads(l) for l in self._entry_log.read_text().strip().split("\n") if l.strip()]
+            entries = [
+                json.loads(l) for l in self._entry_log.read_text().strip().split("\n") if l.strip()
+            ]
         except Exception:
             return []
 
-        fp = {"pair": pair, "regime": regime, "adx": round(adx or 0, 1),
-              "vol_pct": round(vol_pct or 0, 4), "session": session, "rsi": round(rsi or 0, 1)}
+        fp = {
+            "pair": pair,
+            "regime": regime,
+            "adx": round(adx or 0, 1),
+            "vol_pct": round(vol_pct or 0, 4),
+            "session": session,
+            "rsi": round(rsi or 0, 1),
+        }
 
         scored = []
         for e in entries:
             if e.get("outcome") is None:
                 continue
             score = 0
-            if e.get("pair") == pair: score += 5
-            if e.get("regime") == fp["regime"]: score += 3
-            if abs((e.get("adx") or 0) - fp["adx"]) < 5: score += 2
-            if abs((e.get("vol_pct") or 0) - fp["vol_pct"]) < 0.02: score += 2
-            if e.get("session") == fp["session"]: score += 2
-            if abs((e.get("rsi") or 0) - fp["rsi"]) < 10: score += 1
+            if e.get("pair") == pair:
+                score += 5
+            if e.get("regime") == fp["regime"]:
+                score += 3
+            if abs((e.get("adx") or 0) - fp["adx"]) < 5:
+                score += 2
+            if abs((e.get("vol_pct") or 0) - fp["vol_pct"]) < 0.02:
+                score += 2
+            if e.get("session") == fp["session"]:
+                score += 2
+            if abs((e.get("rsi") or 0) - fp["rsi"]) < 10:
+                score += 1
             scored.append((score, e))
 
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -17557,6 +21256,7 @@ def get_crisis_recommendation(features):
 
 # ── Online Crisis Learning (Phase 2b) ──
 
+
 def _compute_crisis_signature_from_history(price_history, volume_history):
     """Build a crisis signature feature vector from recent price history.
     Samples at intervals to create the multi-timestep signature."""
@@ -17569,7 +21269,9 @@ def _compute_crisis_signature_from_history(price_history, volume_history):
         if abs(idx) >= len(price_history):
             continue
         chunk = price_history[idx:]
-        vol_chunk = volume_history[idx:] if volume_history and abs(idx) < len(volume_history) else None
+        vol_chunk = (
+            volume_history[idx:] if volume_history and abs(idx) < len(volume_history) else None
+        )
         features = _extract_crisis_features(chunk, vol_chunk)
         if features:
             signature.append(features)
@@ -17644,7 +21346,10 @@ def save_lived_crisis(pair, pnl_impact, price_history, volume_history):
         "ts": datetime.now(timezone.utc).isoformat(),
     }
     _save_crises(crises)
-    print(f"[CRISIS] Saved lived crisis: {crisis_id} ({'survived' if is_survived else 'danger'}, pnl={pnl_impact:.2f}%)", flush=True)
+    print(
+        f"[CRISIS] Saved lived crisis: {crisis_id} ({'survived' if is_survived else 'danger'}, pnl={pnl_impact:.2f}%)",
+        flush=True,
+    )
 
 
 def get_safety_status():
@@ -17666,6 +21371,7 @@ Gold/XAU price adapter — yfinance for gold futures (GC=F).
 Uses the same pattern as the forex bot's adapter.
 Falls back to ccxt for crypto pairs if needed.
 """
+
 import os, time
 from typing import Optional
 
@@ -17678,13 +21384,16 @@ _YF_MAP = {
     "XAU/GBP": "GC=F",
 }
 
+
 def _to_ticker(pair: str) -> str:
     return _YF_MAP.get(pair, pair.replace("/", "") + "=X")
+
 
 def _fetch_yfinance_candle(ticker: str) -> Optional[dict]:
     try:
         import yfinance as yf
         import warnings
+
         warnings.filterwarnings("ignore")
         df = yf.download(ticker, period="2d", interval="5m", progress=False)
         if df is None or len(df) == 0:
@@ -17715,6 +21424,7 @@ def _fetch_yfinance_candle(ticker: str) -> Optional[dict]:
         print(f"[PRICE/yfinance] {ticker} fetch error: {e}", flush=True)
         return None
 
+
 async def fetch(symbol: str = None) -> dict:
     """Fetch latest 5m candle for a symbol. Falls back to CRYPTO_PAIRS env var."""
     pair = symbol or os.environ.get("CRYPTO_PAIRS", "XAU/USD").split(",")[0].strip()
@@ -17733,16 +21443,21 @@ async def fetch(symbol: str = None) -> dict:
             return stale
         raise Exception(f"yfinance fetch failed for {ticker}")
     _candle_cache[ticker] = (now, result["candle_ts"], result)
-    print(f"[PRICE] {pair}: ${result['price']:.2f} "
-          f"H:{result['high']:.2f} L:{result['low']:.2f} "
-          f"[{result['candle_ts']}]", flush=True)
+    print(
+        f"[PRICE] {pair}: ${result['price']:.2f} "
+        f"H:{result['high']:.2f} L:{result['low']:.2f} "
+        f"[{result['candle_ts']}]",
+        flush=True,
+    )
     return result
+
 
 def fetch_history_df(pair: str, period: str = "5d"):
     ticker = _to_ticker(pair)
     try:
         import yfinance as yf
         import warnings
+
         warnings.filterwarnings("ignore")
         df = yf.download(ticker, period=period, interval="5m", progress=False)
         if df is None or len(df) < 20:
@@ -17764,15 +21479,23 @@ Scheduled via cron every Sunday at 02:00 UTC.
 Discovers new indicators and validates them through the full reflection pipeline
 before registering — Phase 0 (historical), crisis stress, and redundancy check.
 """
+
 import sys, time, json, math
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from hermes_forex.backtest import (
-    discover_indicator, register_discovered_indicator,
-    init_discovered_storage, load_discovered_indicators, _expr_to_str, _SYMBOLS,
-    _eval_expr, _signal_to_trades, _MACRO_SYMBOLS, _FEATURE_KEYS
+    discover_indicator,
+    register_discovered_indicator,
+    init_discovered_storage,
+    load_discovered_indicators,
+    _expr_to_str,
+    _SYMBOLS,
+    _eval_expr,
+    _signal_to_trades,
+    _MACRO_SYMBOLS,
+    _FEATURE_KEYS,
 )
 
 init_discovered_storage()
@@ -17780,6 +21503,7 @@ results_summary = []
 rejected_count = 0
 
 # ── Validation helpers ──
+
 
 def _walk_forward_compare(pair, label):
     """Compare existing indicators against fresh data. Replace any that new indicators beat.
@@ -17827,9 +21551,11 @@ def _walk_forward_compare(pair, label):
         for name in removed:
             print(f"  🔄 [WALK-FORWARD] {pair}: replaced {name} with better indicator", flush=True)
 
+
 def _fetch_prices(pair, period="6mo"):
     """Fetch close prices and multi-dim data for a pair."""
     import yfinance as yf
+
     sym = _SYMBOLS.get(pair, pair.replace("/", "=X"))
     df = yf.download(sym, period=period, interval="1d", progress=False)
     if df.empty:
@@ -17844,13 +21570,16 @@ def _fetch_prices(pair, period="6mo"):
             mdf = yf.download(msym, period=period, interval="1d", progress=False)
             if not mdf.empty:
                 vals = [float(x) for x in mdf["Close"].values.flatten() if str(x) != "nan"]
-                data[mkey] = (vals[:len(data["close"])] + [vals[-1]] * max(0, len(data["close"]) - len(vals)))
+                data[mkey] = vals[: len(data["close"])] + [vals[-1]] * max(
+                    0, len(data["close"]) - len(vals)
+                )
         except Exception:
             pass
     for k in _FEATURE_KEYS:
         if k not in data:
             data[k] = [0.0] * len(data["close"])
     return data
+
 
 def _evaluate_indicator(expr, data):
     """Evaluate expression on multi-dim data, return (signal, wr, pnl)."""
@@ -17864,6 +21593,7 @@ def _evaluate_indicator(expr, data):
 
 
 # ── Phase 0: Historical validation ──
+
 
 def phase0_validate(pair, expr, label):
     """Validate against 6 months of fresh daily data. Rejects if WR < 45% or PnL < 0."""
@@ -17886,15 +21616,17 @@ def phase0_validate(pair, expr, label):
 # ── Crisis stress check ──
 
 CRISIS_WINDOWS = [
-    ("COVID-19 Crash",     "2020-02-15", "2020-03-31"),
-    ("Rate Shock 2022",    "2022-09-01", "2022-10-15"),
-    ("Brexit Vote",        "2016-06-15", "2016-07-10"),
+    ("COVID-19 Crash", "2020-02-15", "2020-03-31"),
+    ("Rate Shock 2022", "2022-09-01", "2022-10-15"),
+    ("Brexit Vote", "2016-06-15", "2016-07-10"),
     ("SVB/Banking Crisis", "2023-03-06", "2023-03-20"),
 ]
+
 
 def crisis_validate(pair, expr, label):
     """Evaluate indicator during known crisis windows. Rejects if WR < 40% on any crisis."""
     import yfinance as yf
+
     sym = _SYMBOLS.get(pair, pair.replace("/", "=X"))
     failed = []
     for crisis_name, start, end in CRISIS_WINDOWS:
@@ -17917,6 +21649,7 @@ def crisis_validate(pair, expr, label):
 
 
 # ── Redundancy check: reject if too correlated with existing indicators ──
+
 
 def redundancy_check(pair, expr, label):
     """Reject if new indicator's signal has >0.8 correlation with any existing indicator."""
@@ -17945,10 +21678,10 @@ def redundancy_check(pair, expr, label):
             if n < 20:
                 continue
             n1, n2 = new_norm[:n], old_norm[:n]
-            m1, m2 = sum(n1)/n, sum(n2)/n
-            num = sum((n1[i]-m1)*(n2[i]-m2) for i in range(n))
-            d1 = math.sqrt(sum((x-m1)**2 for x in n1))
-            d2 = math.sqrt(sum((x-m2)**2 for x in n2))
+            m1, m2 = sum(n1) / n, sum(n2) / n
+            num = sum((n1[i] - m1) * (n2[i] - m2) for i in range(n))
+            d1 = math.sqrt(sum((x - m1) ** 2 for x in n1))
+            d2 = math.sqrt(sum((x - m2) ** 2 for x in n2))
             if d1 * d2 > 0:
                 corr = num / (d1 * d2)
                 if abs(corr) > 0.8:
@@ -17992,17 +21725,38 @@ for pair in list(_SYMBOLS.keys()):
 
                 # ── All checks passed — register ──
                 reg = register_discovered_indicator(
-                    expr, fitness, pair=pair,
+                    expr,
+                    fitness,
+                    pair=pair,
                     fitness_details={
-                        "total_pnl": tp_gp, "win_rate": wr_gp,
+                        "total_pnl": tp_gp,
+                        "win_rate": wr_gp,
                         "discovered_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                        "source": "weekly_cron_validated", "multi_dim": True,
+                        "source": "weekly_cron_validated",
+                        "multi_dim": True,
                         "validated": "phase0+crisis+redundancy",
-                    }
+                    },
                 )
                 if reg:
-                    used = [k for k in ["volume","dxy","vix","tnx","spx","oil","gold","btc","fvx","eem"] if k in es]
-                    results_summary.append(f"{pair}: {reg} WR={wr_gp:.0%} PnL={tp_gp:+.2f}% [{', '.join(used) if used else 'price-only'}]")
+                    used = [
+                        k
+                        for k in [
+                            "volume",
+                            "dxy",
+                            "vix",
+                            "tnx",
+                            "spx",
+                            "oil",
+                            "gold",
+                            "btc",
+                            "fvx",
+                            "eem",
+                        ]
+                        if k in es
+                    ]
+                    results_summary.append(
+                        f"{pair}: {reg} WR={wr_gp:.0%} PnL={tp_gp:+.2f}% [{', '.join(used) if used else 'price-only'}]"
+                    )
                     print(f"  ✅ VALIDATED: {results_summary[-1]}", flush=True)
         # ── Walk-forward: compare all indicators on fresh data, replace underperformers ──
         _walk_forward_compare(pair, label)
@@ -18011,7 +21765,10 @@ for pair in list(_SYMBOLS.keys()):
 
 total_new = len(results_summary)
 total_all = sum(len(load_discovered_indicators(p)) for p in _SYMBOLS)
-print(f"\n[GP-CRON] Complete: {total_new} accepted, {rejected_count} rejected, {total_all} total across {len(_SYMBOLS)} pairs", flush=True)
+print(
+    f"\n[GP-CRON] Complete: {total_new} accepted, {rejected_count} rejected, {total_all} total across {len(_SYMBOLS)} pairs",
+    flush=True,
+)
 ```
 
 ### hermes_heartbeat.py
@@ -18021,6 +21778,7 @@ print(f"\n[GP-CRON] Complete: {total_new} accepted, {rejected_count} rejected, {
 Checks if both bots have pushed a heartbeat in the last 90 minutes.
 If not, sends a Discord alert.
 """
+
 import json, urllib.request
 from datetime import datetime, timezone, timedelta
 
@@ -18029,14 +21787,15 @@ BOTS = {
     "forex": {
         "pulse_url": "https://hermes-dashboard-api-production.up.railway.app/api/bot/forex/pulse",
         "data_url": "https://hermes-dashboard-api-production.up.railway.app/api/ingest/forex",
-        "state_url": "https://hermes-dashboard-api-production.up.railway.app/api/state?bot=forex"
+        "state_url": "https://hermes-dashboard-api-production.up.railway.app/api/state?bot=forex",
     },
     "gold": {
         "pulse_url": "https://hermes-dashboard-api-production.up.railway.app/api/bot/gold/pulse",
         "data_url": "https://hermes-dashboard-api-production.up.railway.app/api/ingest/gold",
-        "state_url": "https://hermes-dashboard-api-production.up.railway.app/api/state?bot=gold"
-    }
+        "state_url": "https://hermes-dashboard-api-production.up.railway.app/api/state?bot=gold",
+    },
 }
+
 
 def check_bot(bot, bot_id):
     try:
@@ -18050,15 +21809,16 @@ def check_bot(bot, bot_id):
             last_dt = None
     except Exception as e:
         return f"⚠️ {bot_id}: PULSE FAILED — {e}"
-    
+
     now = datetime.now(timezone.utc)
     if last_dt and (now - last_dt) > timedelta(minutes=90):
-        return f"🚨 {bot_id}: NO HEARTBEAT for {(now - last_dt).total_seconds()/60:.0f} minutes (cycle {last_cycle})"
-    
+        return f"🚨 {bot_id}: NO HEARTBEAT for {(now - last_dt).total_seconds() / 60:.0f} minutes (cycle {last_cycle})"
+
     if state != "running":
         return f"⚠️ {bot_id}: DESIRED STATE is '{state}' not 'running'"
-    
+
     return None
+
 
 def send_alert(message):
     if not DISCORD_WEBHOOK:
@@ -18066,8 +21826,11 @@ def send_alert(message):
         return
     payload = {"content": message}
     data = json.dumps(payload).encode()
-    req = urllib.request.Request(DISCORD_WEBHOOK, data=data, headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(
+        DISCORD_WEBHOOK, data=data, headers={"Content-Type": "application/json"}
+    )
     urllib.request.urlopen(req, timeout=10)
+
 
 if __name__ == "__main__":
     alerts = []
@@ -18075,7 +21838,7 @@ if __name__ == "__main__":
         result = check_bot(cfg, bot_id)
         if result:
             alerts.append(result)
-    
+
     if alerts:
         message = "**Hermes Heartbeat Alert**\n" + "\n".join(alerts)
         send_alert(message)
@@ -18129,9 +21892,12 @@ PAIR_TICKERS = {
 }
 
 PAIR_MAP = {
-    "EUR_USD": "EUR/USD", "GBP_USD": "GBP/USD",
-    "AUD_USD": "AUD/USD", "GBP_JPY": "GBP/JPY",
-    "XAU_USD": "XAU/USD", "XAG_USD": "XAG/USD",
+    "EUR_USD": "EUR/USD",
+    "GBP_USD": "GBP/USD",
+    "AUD_USD": "AUD/USD",
+    "GBP_JPY": "GBP/JPY",
+    "XAU_USD": "XAU/USD",
+    "XAG_USD": "XAG/USD",
 }
 
 app = FastAPI(title="Hermes Dashboard API")
@@ -18275,7 +22041,7 @@ def safe_get(d: dict, *keys, default=None):
 
 def upsert_trades(conn, bot: str, trades: list):
     for t in trades:
-        tid = t.get("id") or f"{t.get('entry_ts','')}-{t.get('pair', t.get('asset',''))}"
+        tid = t.get("id") or f"{t.get('entry_ts', '')}-{t.get('pair', t.get('asset', ''))}"
         conn.execute(
             """
             INSERT INTO trades (id, bot, pair, entry_price, exit_price, entry_ts, exit_ts,
@@ -18291,13 +22057,21 @@ def upsert_trades(conn, bot: str, trades: list):
                 raw_json=excluded.raw_json
             """,
             (
-                tid, bot, t.get("pair") or t.get("asset"),
-                t.get("entry_price"), t.get("exit_price"),
-                t.get("entry_ts"), t.get("exit_ts"),
-                t.get("pnl_pct"), t.get("exit_reason"), t.get("hold_cycles"),
-                t.get("entry_rsi"), t.get("entry_regime"),
+                tid,
+                bot,
+                t.get("pair") or t.get("asset"),
+                t.get("entry_price"),
+                t.get("exit_price"),
+                t.get("entry_ts"),
+                t.get("exit_ts"),
+                t.get("pnl_pct"),
+                t.get("exit_reason"),
+                t.get("hold_cycles"),
+                t.get("entry_rsi"),
+                t.get("entry_regime"),
                 t.get("entry_quality_score") or t.get("quality"),
-                t.get("strategy_type"), t.get("chart_context"),
+                t.get("strategy_type"),
+                t.get("chart_context"),
                 json.dumps(t),
             ),
         )
@@ -18314,10 +22088,17 @@ def upsert_hypotheses(conn, bot: str, hyps: list):
             ON CONFLICT(bot, ts, variable) DO NOTHING
             """,
             (
-                bot, ts, h.get("pair") or h.get("symbol"),
-                h.get("version_from"), h.get("version_to"),
-                h.get("variable"), str(h.get("old_value")), str(h.get("new_value")),
-                h.get("reasoning"), h.get("mode"), json.dumps(h),
+                bot,
+                ts,
+                h.get("pair") or h.get("symbol"),
+                h.get("version_from"),
+                h.get("version_to"),
+                h.get("variable"),
+                str(h.get("old_value")),
+                str(h.get("new_value")),
+                h.get("reasoning"),
+                h.get("mode"),
+                json.dumps(h),
             ),
         )
 
@@ -18335,9 +22116,14 @@ def upsert_skips(conn, bot: str, skips: list):
                 raw_json=excluded.raw_json
             """,
             (
-                bot, ts, s.get("pair"), s.get("reason_skipped"),
-                s.get("rsi_at_skip"), s.get("price_at_skip"),
-                s.get("missed_pnl"), json.dumps(s),
+                bot,
+                ts,
+                s.get("pair"),
+                s.get("reason_skipped"),
+                s.get("rsi_at_skip"),
+                s.get("price_at_skip"),
+                s.get("missed_pnl"),
+                json.dumps(s),
             ),
         )
 
@@ -18353,8 +22139,6 @@ def health():
     return {"status": "ok", "ts": utcnow_iso(), "trade_counts": counts}
 
 
-
-
 @app.get("/api/spark")
 def spark(pair: str, bars: int = 30):
     """Return last N closing prices for a pair sparkline. Data from yfinance."""
@@ -18364,6 +22148,7 @@ def spark(pair: str, bars: int = 30):
     try:
         import yfinance as yf
         import warnings
+
         warnings.filterwarnings("ignore")
         df = yf.download(ticker, period="3d", interval="5m", progress=False, auto_adjust=True)
         if df is None or len(df) == 0:
@@ -18471,35 +22256,52 @@ def bot_toggle(bot_name: str):
     svc_id = BOT_SERVICE_MAP.get(bot_name)
     if svc_id and _RAILWAY_TOKEN:
         import httpx as _hx
+
         if new_state == "paused":
             q = '{ service(id: "%s") { deployments(last: 1) { edges { node { id } } } } }' % svc_id
             try:
                 with _hx.Client(timeout=20) as cl:
-                    r = cl.post("https://api.railway.app/graphql/v2",
-                                json={"query": q},
-                                headers={"Authorization": f"Bearer {_RAILWAY_TOKEN}"})
+                    r = cl.post(
+                        "https://api.railway.app/graphql/v2",
+                        json={"query": q},
+                        headers={"Authorization": f"Bearer {_RAILWAY_TOKEN}"},
+                    )
                     data = r.json()
-                    edges = data.get("data", {}).get("service", {}).get("deployments", {}).get("edges", [])
+                    edges = (
+                        data.get("data", {})
+                        .get("service", {})
+                        .get("deployments", {})
+                        .get("edges", [])
+                    )
                     if edges:
                         dep_id = edges[0]["node"]["id"]
                         m1 = 'mutation { deploymentStop(id: "%s") }' % dep_id
-                        cl.post("https://api.railway.app/graphql/v2",
-                                json={"query": m1},
-                                headers={"Authorization": f"Bearer {_RAILWAY_TOKEN}"})
+                        cl.post(
+                            "https://api.railway.app/graphql/v2",
+                            json={"query": m1},
+                            headers={"Authorization": f"Bearer {_RAILWAY_TOKEN}"},
+                        )
                         m2 = 'mutation { deploymentRemove(id: "%s") }' % dep_id
-                        cl.post("https://api.railway.app/graphql/v2",
-                                json={"query": m2},
-                                headers={"Authorization": f"Bearer {_RAILWAY_TOKEN}"})
+                        cl.post(
+                            "https://api.railway.app/graphql/v2",
+                            json={"query": m2},
+                            headers={"Authorization": f"Bearer {_RAILWAY_TOKEN}"},
+                        )
                         print(f"[TOGGLE] {bot_name} dep {dep_id[:8]} stopped+removed", flush=True)
             except Exception as e:
                 print(f"[TOGGLE] Pause failed: {e}", flush=True)
         else:
-            gql = 'mutation { serviceInstanceRedeploy(environmentId: "%s", serviceId: "%s") }' % (_RAILWAY_ENV, svc_id)
+            gql = 'mutation { serviceInstanceRedeploy(environmentId: "%s", serviceId: "%s") }' % (
+                _RAILWAY_ENV,
+                svc_id,
+            )
             try:
                 with _hx.Client(timeout=10) as cl:
-                    resp = cl.post("https://api.railway.app/graphql/v2",
-                                   json={"query": gql},
-                                   headers={"Authorization": f"Bearer {_RAILWAY_TOKEN}"})
+                    resp = cl.post(
+                        "https://api.railway.app/graphql/v2",
+                        json={"query": gql},
+                        headers={"Authorization": f"Bearer {_RAILWAY_TOKEN}"},
+                    )
                     print(f"[TOGGLE] {bot_name} redeploy: {resp.status_code}", flush=True)
             except Exception as e:
                 print(f"[TOGGLE] Resume failed: {e}", flush=True)
@@ -18525,9 +22327,12 @@ def overview():
     conn = get_conn()
     result = {"ts": utcnow_iso(), "bots": {}}
     for bot in VALID_BOTS:
-        state_row = conn.execute("SELECT * FROM latest_state WHERE bot=?",
-            (bot,)).fetchone()
-        strategy = json.loads(state_row["strategy_json"]) if state_row and state_row["strategy_json"] else None
+        state_row = conn.execute("SELECT * FROM latest_state WHERE bot=?", (bot,)).fetchone()
+        strategy = (
+            json.loads(state_row["strategy_json"])
+            if state_row and state_row["strategy_json"]
+            else None
+        )
 
         # Determine valid pairs for this bot from strategy
         valid_pairs = list(strategy.keys()) if strategy else []
@@ -18547,13 +22352,27 @@ def overview():
             "SELECT * FROM skips WHERE bot=? ORDER BY ts DESC LIMIT 200", (bot,)
         ).fetchall()
 
-        heartbeat = json.loads(state_row["heartbeat_json"]) if state_row and state_row["heartbeat_json"] else {}
-        strategy = json.loads(state_row["strategy_json"]) if state_row and state_row["strategy_json"] else None
-        open_trades = json.loads(state_row["open_trades_json"]) if state_row and state_row["open_trades_json"] else []
+        heartbeat = (
+            json.loads(state_row["heartbeat_json"])
+            if state_row and state_row["heartbeat_json"]
+            else {}
+        )
+        strategy = (
+            json.loads(state_row["strategy_json"])
+            if state_row and state_row["strategy_json"]
+            else None
+        )
+        open_trades = (
+            json.loads(state_row["open_trades_json"])
+            if state_row and state_row["open_trades_json"]
+            else []
+        )
 
         result["bots"][bot] = {
             "strategy": strategy,
-            "goal": json.loads(state_row["goal_json"]) if state_row and state_row["goal_json"] else None,
+            "goal": json.loads(state_row["goal_json"])
+            if state_row and state_row["goal_json"]
+            else None,
             "heartbeat": heartbeat,
             "_received_at": state_row["received_at"] if state_row else None,
             "recent_trades": [row_to_trade(r) for r in reversed(trades)],
@@ -18712,8 +22531,13 @@ def daily_summary():
         result["bots"][bot] = _summarize(rows, "last 24h")
         result["bots"][bot]["reflections_today"] = len(hyps)
         result["bots"][bot]["reflections_detail"] = [
-            {"pair": h["pair"], "variable": h["variable"], "old": h["old_value"],
-             "new": h["new_value"], "reasoning": h["reasoning"]}
+            {
+                "pair": h["pair"],
+                "variable": h["variable"],
+                "old": h["old_value"],
+                "new": h["new_value"],
+                "reasoning": h["reasoning"],
+            }
             for h in hyps
         ]
 
@@ -18783,8 +22607,13 @@ def range_summary(
         summary = _summarize(rows, label)
         summary["reflections_in_range"] = len(hyps)
         summary["reflections_detail"] = [
-            {"pair": h["pair"], "variable": h["variable"], "old": h["old_value"],
-             "new": h["new_value"], "reasoning": h["reasoning"]}
+            {
+                "pair": h["pair"],
+                "variable": h["variable"],
+                "old": h["old_value"],
+                "new": h["new_value"],
+                "reasoning": h["reasoning"],
+            }
             for h in hyps
         ]
 
@@ -18809,7 +22638,9 @@ def skip_analysis(bot_name: str):
         raw = json.loads(r["raw_json"]) if r["raw_json"] else {}
         pair = r["pair"] or "unknown"
         reason = r["reason_skipped"] or raw.get("reason_skipped", "unknown")
-        by_pair.setdefault(pair, {"total": 0, "reasons": {}, "missed_pnl_sum": 0, "missed_pnl_count": 0})
+        by_pair.setdefault(
+            pair, {"total": 0, "reasons": {}, "missed_pnl_sum": 0, "missed_pnl_count": 0}
+        )
         by_pair[pair]["total"] += 1
         by_pair[pair]["reasons"][reason] = by_pair[pair]["reasons"].get(reason, 0) + 1
         mp = r["missed_pnl"] or raw.get("missed_pnl")
@@ -18946,7 +22777,9 @@ def detailed_report(
     if skips:
         lines += ["", "-" * 50, "SKIPS (last 20):", "-" * 50]
         for s in skips[:20]:
-            lines.append(f"  [{s['ts'][:19]}] {s['pair']}: {s['reason_skipped']} @ {s['price_at_skip']}")
+            lines.append(
+                f"  [{s['ts'][:19]}] {s['pair']}: {s['reason_skipped']} @ {s['price_at_skip']}"
+            )
 
     return PlainTextResponse("\n".join(lines))
 
@@ -18956,14 +22789,30 @@ def export_text():
     conn = get_conn()
     now = utcnow_iso()
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    lines = [f"HERMES SUMMARY — {now[:19]}", f"Tracking since: {_first_trade_date(conn)}", "=" * 50, ""]
+    lines = [
+        f"HERMES SUMMARY — {now[:19]}",
+        f"Tracking since: {_first_trade_date(conn)}",
+        "=" * 50,
+        "",
+    ]
     for bot in VALID_BOTS:
         # System status
-        state_row = conn.execute("SELECT * FROM latest_state WHERE bot=?",
-            (bot,)).fetchone()
-        strat = json.loads(state_row["strategy_json"]) if state_row and state_row["strategy_json"] else {}
-        hb = json.loads(state_row["heartbeat_json"]) if state_row and state_row["heartbeat_json"] else {}
-        open_json = json.loads(state_row["open_trades_json"]) if state_row and state_row["open_trades_json"] else []
+        state_row = conn.execute("SELECT * FROM latest_state WHERE bot=?", (bot,)).fetchone()
+        strat = (
+            json.loads(state_row["strategy_json"])
+            if state_row and state_row["strategy_json"]
+            else {}
+        )
+        hb = (
+            json.loads(state_row["heartbeat_json"])
+            if state_row and state_row["heartbeat_json"]
+            else {}
+        )
+        open_json = (
+            json.loads(state_row["open_trades_json"])
+            if state_row and state_row["open_trades_json"]
+            else []
+        )
 
         # Only include trades for valid pairs
         valid_pairs = list(strat.keys()) if strat else []
@@ -18997,7 +22846,7 @@ def export_text():
 
         lines.append(f"## {bot.upper()} BOT{pulse_ok}")
         if hb:
-            lines.append(f"Cycle: {hb.get('cycle','?')} | Regimes: {hb.get('regimes',{})}")
+            lines.append(f"Cycle: {hb.get('cycle', '?')} | Regimes: {hb.get('regimes', {})}")
         lines.append("")
 
         # 1. LIFETIME stats
@@ -19010,7 +22859,9 @@ def export_text():
         lines.append("─" * 40)
         lines.append(f"  Closed trades: {len(closed)} | Open: {len(rows) - len(closed)}")
         lines.append(f"  Total PnL: {total_pnl:+.4f}%")
-        lines.append(f"  Win rate: {len(wins)/len(closed)*100:.1f}%" if closed else "  Win rate: N/A")
+        lines.append(
+            f"  Win rate: {len(wins) / len(closed) * 100:.1f}%" if closed else "  Win rate: N/A"
+        )
         lines.append(f"  Avg win: +{avg_win:.4f}% | Avg loss: {avg_loss:.4f}%")
         lines.append(f"  Profit factor: {pf:.3f}")
         lines.append("")
@@ -19019,7 +22870,18 @@ def export_text():
         by_pair = {}
         for r in closed:
             p = r["pair"] or "unknown"
-            by_pair.setdefault(p, {"trades": 0, "pnl": 0, "wins": 0, "pairs_pnls": [], "stops": 0, "targets": 0, "timeouts": 0})
+            by_pair.setdefault(
+                p,
+                {
+                    "trades": 0,
+                    "pnl": 0,
+                    "wins": 0,
+                    "pairs_pnls": [],
+                    "stops": 0,
+                    "targets": 0,
+                    "timeouts": 0,
+                },
+            )
             by_pair[p]["trades"] += 1
             by_pair[p]["pnl"] += r["pnl_pct"] or 0
             by_pair[p]["pairs_pnls"].append(r["pnl_pct"] or 0)
@@ -19044,7 +22906,9 @@ def export_text():
             aw = sum(pw) / len(pw) if pw else 0
             al = sum(pl) / len(pl) if pl else 0
             wr = d["wins"] / d["trades"] * 100 if d["trades"] else 0
-            lines.append(f"  {p:<12} {d['trades']:<8} {wr:<7.1f}% {d['pnl']:<+9.4f}% {aw:<+9.4f}% {al:<+9.4f}% {d['stops']:<7} {d['targets']:<7} {d['timeouts']:<7}")
+            lines.append(
+                f"  {p:<12} {d['trades']:<8} {wr:<7.1f}% {d['pnl']:<+9.4f}% {aw:<+9.4f}% {al:<+9.4f}% {d['stops']:<7} {d['targets']:<7} {d['timeouts']:<7}"
+            )
         lines.append("")
 
         # ── PER-VERSION PERFORMANCE ──
@@ -19087,7 +22951,9 @@ def export_text():
                     change = " ▼ declined"
                 else:
                     change = " → same"
-            lines.append(f"  v{v:<4}: {vs['trades']:<3} trades | WR={wr:<5.1f}% | avg={avg:<+9.4f}% | total={total:<+10.4f}% | Stops={vs['stops']} Tgts={vs['targets']} Time={vs['timeouts']}{change}")
+            lines.append(
+                f"  v{v:<4}: {vs['trades']:<3} trades | WR={wr:<5.1f}% | avg={avg:<+9.4f}% | total={total:<+10.4f}% | Stops={vs['stops']} Tgts={vs['targets']} Time={vs['timeouts']}{change}"
+            )
         lines.append("")
 
         # 3. BY PAIR RECENT (last 10)
@@ -19106,7 +22972,9 @@ def export_text():
             rpnl = sum(rpnls) if rpnls else 0
             lwr = d["wins"] / d["trades"] * 100 if d["trades"] else 0
             trend = "improving" if rwr > lwr + 5 else ("declining" if rwr < lwr - 5 else "stable")
-            lines.append(f"  {p:<12} {len(recent):<5} trades | WR: {rwr:<5.1f}% | PnL: {rpnl:<+9.4f}% | Trend: {trend}")
+            lines.append(
+                f"  {p:<12} {len(recent):<5} trades | WR: {rwr:<5.1f}% | PnL: {rpnl:<+9.4f}% | Trend: {trend}"
+            )
             last5 = recent[-5:]
             for t in last5:
                 lines.append(f"    {t['pnl_pct']:+.4f}% ({t['exit_reason']})")
@@ -19123,11 +22991,21 @@ def export_text():
                 held = t.get("hold_cycles", "?")
                 stop = t.get("_stop_price", 0)
                 target = entry * 1.03 if isinstance(entry, (int, float)) else 0
-                stop_dist = ((stop - entry) / entry * 100) if isinstance(entry, (int, float)) and entry and stop else 0
-                tgt_dist = ((target - entry) / entry * 100) if isinstance(entry, (int, float)) and entry and target else 0
+                stop_dist = (
+                    ((stop - entry) / entry * 100)
+                    if isinstance(entry, (int, float)) and entry and stop
+                    else 0
+                )
+                tgt_dist = (
+                    ((target - entry) / entry * 100)
+                    if isinstance(entry, (int, float)) and entry and target
+                    else 0
+                )
                 pair = t.get("asset", "?")
                 lines.append(f"  {pair}: Entry={entry} | Unrealised: {ur:+.4f}% | Held: {held}c")
-                lines.append(f"    Stop: {stop} ({stop_dist:+.3f}%) | Target: {target:.5f} ({tgt_dist:+.3f}%)")
+                lines.append(
+                    f"    Stop: {stop} ({stop_dist:+.3f}%) | Target: {target:.5f} ({tgt_dist:+.3f}%)"
+                )
         else:
             lines.append("  None")
         lines.append("")
@@ -19140,7 +23018,11 @@ def export_text():
         chart_ctxs = hb.get("chart_contexts", {}) or {}
         # Only show pairs that belong to this bot (from strategy config or regimes)
         if strat:
-            market_pairs = [p for p in ["EUR/USD", "GBP/USD", "AUD/USD", "GBP/JPY", "XAU/USD", "XAG/USD"] if p in strat]
+            market_pairs = [
+                p
+                for p in ["EUR/USD", "GBP/USD", "AUD/USD", "GBP/JPY", "XAU/USD", "XAG/USD"]
+                if p in strat
+            ]
         else:
             market_pairs = list(regimes.keys()) or ["XAU/USD"]
         live_indicators = _fetch_live_indicators(market_pairs)
@@ -19158,7 +23040,9 @@ def export_text():
             chart_short = (chart[:120] + "...") if len(chart) > 120 else chart
             lines.append(f"  {pair_name}: RSI={rsi} ADX={adx} Regime={regime} BB={bb_pos}")
             if isinstance(bb_lower, float) and isinstance(price, float):
-                lines.append(f"    Price={price:.5f} | BB: Lower={bb_lower:.5f} Mid={bb_mid:.5f} Upper={bb_upper:.5f}")
+                lines.append(
+                    f"    Price={price:.5f} | BB: Lower={bb_lower:.5f} Mid={bb_mid:.5f} Upper={bb_upper:.5f}"
+                )
             if chart_short:
                 lines.append(f"    Chart: {chart_short}")
         lines.append("")
@@ -19178,11 +23062,15 @@ def export_text():
             pt = s.get("profit_target_pct", "?")
             atr_floor = s.get("use_atr_floor", "?")
             bear = s.get("allow_bear_entries", False)
-            lines.append(f"  {pair_name}: {st} v{ver} | Thresh={thresh} | Stop={sl}% | Target={pt}% | Floor={atr_floor} | Bear={bear}")
+            lines.append(
+                f"  {pair_name}: {st} v{ver} | Thresh={thresh} | Stop={sl}% | Target={pt}% | Floor={atr_floor} | Bear={bear}"
+            )
         lines.append("")
 
         # 7. REFLECTIONS
-        hyps = conn.execute("SELECT * FROM hypotheses WHERE bot=? ORDER BY ts DESC", (bot,)).fetchall()
+        hyps = conn.execute(
+            "SELECT * FROM hypotheses WHERE bot=? ORDER BY ts DESC", (bot,)
+        ).fetchall()
         if valid_pairs:
             hyps = [h for h in hyps if h["pair"] in valid_pairs]
         if hyps:
@@ -19190,7 +23078,9 @@ def export_text():
             lines.append("REFLECTIONS")
             lines.append("─" * 40)
             for h in hyps:
-                lines.append(f"  [{h['ts'][:19]}] {h['pair']}: {h['variable']} {h['old_value']} → {h['new_value']}")
+                lines.append(
+                    f"  [{h['ts'][:19]}] {h['pair']}: {h['variable']} {h['old_value']} → {h['new_value']}"
+                )
                 if h["reasoning"]:
                     lines.append(f"    Reasoning: {h['reasoning']}")
         lines.append("")
@@ -19209,7 +23099,9 @@ def export_text():
         lines.append("─" * 40)
         lines.append(f"TODAY ({today_str})")
         lines.append("─" * 40)
-        lines.append(f"  Closed: {len(today_closed)} | PnL: {today_total:+.4f}% | WR: {today_wr:.1f}%")
+        lines.append(
+            f"  Closed: {len(today_closed)} | PnL: {today_total:+.4f}% | WR: {today_wr:.1f}%"
+        )
         # Per-pair today breakdown
         today_by_pair = {}
         for r in today_closed:
@@ -19241,36 +23133,42 @@ def _first_trade_date(conn):
 def _fetch_live_indicators(pairs):
     """Compute RSI, ADX, BB for each pair from yfinance. Uses pure Python (no numpy)."""
     import warnings
+
     warnings.filterwarnings("ignore")
     import yfinance as yf
 
     def _rsi(prices, period=14):
-        if len(prices) < period + 1: return None
-        chg = prices[-1] - prices[-period-1]
-        gains = sum(max(prices[i] - prices[i-1], 0) for i in range(-period, 0))
-        losses = sum(max(prices[i-1] - prices[i], 0) for i in range(-period, 0))
-        if losses == 0: return 100.0
+        if len(prices) < period + 1:
+            return None
+        chg = prices[-1] - prices[-period - 1]
+        gains = sum(max(prices[i] - prices[i - 1], 0) for i in range(-period, 0))
+        losses = sum(max(prices[i - 1] - prices[i], 0) for i in range(-period, 0))
+        if losses == 0:
+            return 100.0
         rs = gains / losses if losses else 0
         return round(100.0 - (100.0 / (1.0 + rs)), 1)
 
     def _adx(prices, period=14):
-        if len(prices) < period * 2: return None
-        up_sum = sum(max(prices[i] - prices[i-1], 0) for i in range(-period, 0))
-        down_sum = sum(max(prices[i-1] - prices[i], 0) for i in range(-period, 0))
-        tr_sum = sum(max(prices[i] - prices[i-1], 0) for i in range(-period, 0))
+        if len(prices) < period * 2:
+            return None
+        up_sum = sum(max(prices[i] - prices[i - 1], 0) for i in range(-period, 0))
+        down_sum = sum(max(prices[i - 1] - prices[i], 0) for i in range(-period, 0))
+        tr_sum = sum(max(prices[i] - prices[i - 1], 0) for i in range(-period, 0))
         atr = tr_sum / period if period else 0
-        if atr == 0: return None
+        if atr == 0:
+            return None
         plus_di = 100 * up_sum / period / atr
         minus_di = 100 * down_sum / period / atr
         dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di) if (plus_di + minus_di) > 0 else 0
         return round(dx, 1)
 
     def _bb(prices, period=20, std_dev=1.5):
-        if len(prices) < period: return None, None, None, None
+        if len(prices) < period:
+            return None, None, None, None
         recent = prices[-period:]
         ma = sum(recent) / period
         variance = sum((x - ma) ** 2 for x in recent) / period
-        sd = variance ** 0.5
+        sd = variance**0.5
         lower = round(ma - std_dev * sd, 5)
         upper = round(ma + std_dev * sd, 5)
         bw = round(2 * std_dev * sd / ma * 100, 4) if ma > 0 else 0
@@ -19325,11 +23223,15 @@ def _fetch_live_indicators(pairs):
 
 
 PAIR_MAP = {
-    "EUR_USD": "EUR/USD", "GBP_USD": "GBP/USD",
-    "AUD_USD": "AUD/USD", "GBP_JPY": "GBP/JPY",
-    "XAU_USD": "XAU/USD", "XAG_USD": "XAG/USD",
+    "EUR_USD": "EUR/USD",
+    "GBP_USD": "GBP/USD",
+    "AUD_USD": "AUD/USD",
+    "GBP_JPY": "GBP/JPY",
+    "XAU_USD": "XAU/USD",
+    "XAG_USD": "XAG/USD",
 }
 SLASH_PAIRS = {v: k for k, v in PAIR_MAP.items()}
+
 
 @app.get("/api/export-text/pair/{pair_name}", response_class=PlainTextResponse)
 def export_pair(pair_name: str):
@@ -19338,7 +23240,10 @@ def export_pair(pair_name: str):
 
     # All trades for this pair
     bot = "forex" if pair.count("/") == 1 and pair not in ("XAU/USD", "XAG/USD") else "gold"
-    trades = conn.execute("SELECT * FROM trades WHERE bot=? AND pair=? ORDER BY COALESCE(exit_ts, entry_ts) ASC", (bot, pair)).fetchall()
+    trades = conn.execute(
+        "SELECT * FROM trades WHERE bot=? AND pair=? ORDER BY COALESCE(exit_ts, entry_ts) ASC",
+        (bot, pair),
+    ).fetchall()
     closed = [r for r in trades if r["exit_reason"]]
     pnls = [r["pnl_pct"] for r in closed if r["pnl_pct"] is not None]
     wins = [p for p in pnls if p > 0]
@@ -19346,15 +23251,27 @@ def export_pair(pair_name: str):
 
     # State + strategy
     state_row = conn.execute("SELECT * FROM latest_state WHERE bot=?", (bot,)).fetchone()
-    strat_all = json.loads(state_row["strategy_json"]) if state_row and state_row["strategy_json"] else {}
-    hb = json.loads(state_row["heartbeat_json"]) if state_row and state_row["heartbeat_json"] else {}
-    open_json = json.loads(state_row["open_trades_json"]) if state_row and state_row["open_trades_json"] else []
+    strat_all = (
+        json.loads(state_row["strategy_json"]) if state_row and state_row["strategy_json"] else {}
+    )
+    hb = (
+        json.loads(state_row["heartbeat_json"]) if state_row and state_row["heartbeat_json"] else {}
+    )
+    open_json = (
+        json.loads(state_row["open_trades_json"])
+        if state_row and state_row["open_trades_json"]
+        else []
+    )
     s = strat_all.get(pair, {})
     entry_conf = s.get("entry", {})
 
     # Hypotheses + skips
-    hyps = conn.execute("SELECT * FROM hypotheses WHERE bot=? AND pair=? ORDER BY ts DESC", (bot, pair)).fetchall()
-    skips = conn.execute("SELECT * FROM skips WHERE bot=? AND pair=? ORDER BY ts DESC", (bot, pair)).fetchall()
+    hyps = conn.execute(
+        "SELECT * FROM hypotheses WHERE bot=? AND pair=? ORDER BY ts DESC", (bot, pair)
+    ).fetchall()
+    skips = conn.execute(
+        "SELECT * FROM skips WHERE bot=? AND pair=? ORDER BY ts DESC", (bot, pair)
+    ).fetchall()
     first_trade = trades[0]["entry_ts"][:10] if trades else "—"
     now_str = utcnow_iso()[:19]
     conn.close()
@@ -19371,7 +23288,14 @@ def export_pair(pair_name: str):
     avg_win = sum(wins) / len(wins) if wins else 0
     avg_loss = sum(losses) / len(losses) if losses else 0
     pf = abs(avg_win / avg_loss) if avg_loss != 0 else 0
-    avg_hold = (sum([r["hold_cycles"] for r in closed if r["hold_cycles"]]) / len([r for r in closed if r["hold_cycles"]])) if closed and any(r["hold_cycles"] for r in closed) else 0
+    avg_hold = (
+        (
+            sum([r["hold_cycles"] for r in closed if r["hold_cycles"]])
+            / len([r for r in closed if r["hold_cycles"]])
+        )
+        if closed and any(r["hold_cycles"] for r in closed)
+        else 0
+    )
     max_dd = min(pnls) if pnls else 0
     pairs_pnls = [r["pnl_pct"] for r in closed if r["pnl_pct"] is not None]
 
@@ -19434,8 +23358,16 @@ def export_pair(pair_name: str):
         ur = open_trade.get("_unrealised_pct", 0)
         stop_px = open_trade.get("_stop_price", 0)
         target_px = entry_px * 1.03 if isinstance(entry_px, (int, float)) else 0
-        stop_dist = ((stop_px - entry_px) / entry_px * 100) if isinstance(entry_px, (int, float)) and entry_px else 0
-        tgt_dist = ((target_px - entry_px) / entry_px * 100) if isinstance(entry_px, (int, float)) and entry_px else 0
+        stop_dist = (
+            ((stop_px - entry_px) / entry_px * 100)
+            if isinstance(entry_px, (int, float)) and entry_px
+            else 0
+        )
+        tgt_dist = (
+            ((target_px - entry_px) / entry_px * 100)
+            if isinstance(entry_px, (int, float)) and entry_px
+            else 0
+        )
         held_mins = f"{held}c ({held} min)" if held != "?" else "?"
         entry_rsi = open_trade.get("_entry_rsi", "?")
         entry_reg = open_trade.get("_entry_regime", "?")
@@ -19459,7 +23391,9 @@ def export_pair(pair_name: str):
     # LIFETIME PERFORMANCE
     lines.append("## LIFETIME PERFORMANCE")
     lines.append(f"  Total closed trades: {len(closed)}")
-    lines.append(f"  Win rate: {len(wins)/len(closed)*100:.1f}%" if closed else "  Win rate: N/A")
+    lines.append(
+        f"  Win rate: {len(wins) / len(closed) * 100:.1f}%" if closed else "  Win rate: N/A"
+    )
     lines.append(f"  Total PnL: {total_pnl:+.4f}%")
     lines.append(f"  Avg win: +{avg_win:.4f}%")
     lines.append(f"  Avg loss: {avg_loss:.4f}%")
@@ -19470,9 +23404,21 @@ def export_pair(pair_name: str):
     lines.append("")
     tot = len(closed)
     lines.append(f"  Exit breakdown:")
-    lines.append(f"    Stop loss:     {stops:>4} trades ({stops/tot*100:.0f}%)" if tot else f"    Stop loss:     {stops:>4}")
-    lines.append(f"    Profit target: {targets:>4} trades ({targets/tot*100:.0f}%)" if tot else f"    Profit target: {targets:>4}")
-    lines.append(f"    Time exit:     {timeouts:>4} trades ({timeouts/tot*100:.0f}%)" if tot else f"    Time exit:     {timeouts:>4}")
+    lines.append(
+        f"    Stop loss:     {stops:>4} trades ({stops / tot * 100:.0f}%)"
+        if tot
+        else f"    Stop loss:     {stops:>4}"
+    )
+    lines.append(
+        f"    Profit target: {targets:>4} trades ({targets / tot * 100:.0f}%)"
+        if tot
+        else f"    Profit target: {targets:>4}"
+    )
+    lines.append(
+        f"    Time exit:     {timeouts:>4} trades ({timeouts / tot * 100:.0f}%)"
+        if tot
+        else f"    Time exit:     {timeouts:>4}"
+    )
     lines.append("")
 
     # RECENT vs LIFETIME COMPARISON
@@ -19485,7 +23431,9 @@ def export_pair(pair_name: str):
         sub_wr = len(sub_wins) / len(subset) * 100 if subset else 0
         sub_avg = sum(sub_pnls) / len(sub_pnls) if sub_pnls else 0
         windows[label] = (sub_wr, sub_avg)
-    lines.append(f"                 {'Last 5':>10} {'Last 10':>10} {'Last 20':>10} {'Lifetime':>10}")
+    lines.append(
+        f"                 {'Last 5':>10} {'Last 10':>10} {'Last 20':>10} {'Lifetime':>10}"
+    )
     wr5, a5 = windows.get("Last 5", (0, 0))
     wr10, a10 = windows.get("Last 10", (0, 0))
     wr20, a20 = windows.get("Last 20", (0, 0))
@@ -19498,8 +23446,12 @@ def export_pair(pair_name: str):
 
     # LAST 10 TRADES
     lines.append("## LAST 10 TRADES (most recent first)")
-    lines.append(f"  # | {'Date':<12} | {'Entry':<10} | {'Exit':<10} | {'PnL%':<10} | {'Exit reason':<15} | {'Hold':<6} | {'RSI':<6} | {'Regime':<8}")
-    lines.append(f"  {'-'*3} {'-'*12} {'-'*10} {'-'*10} {'-'*10} {'-'*15} {'-'*6} {'-'*6} {'-'*8}")
+    lines.append(
+        f"  # | {'Date':<12} | {'Entry':<10} | {'Exit':<10} | {'PnL%':<10} | {'Exit reason':<15} | {'Hold':<6} | {'RSI':<6} | {'Regime':<8}"
+    )
+    lines.append(
+        f"  {'-' * 3} {'-' * 12} {'-' * 10} {'-' * 10} {'-' * 10} {'-' * 15} {'-' * 6} {'-' * 6} {'-' * 8}"
+    )
     for idx, r in enumerate(reversed(closed[-10:]), 1):
         d = (r["entry_ts"] or "?")[:10]
         en = r["entry_price"] or "?"
@@ -19510,7 +23462,9 @@ def export_pair(pair_name: str):
         raw = json.loads(r["raw_json"]) if r["raw_json"] else {}
         ersi = raw.get("entry_rsi", "?")
         ereg = raw.get("entry_regime", "?")
-        lines.append(f"  {idx:<3} | {d:<12} | {str(en):<10} | {str(ex):<10} | {pnl:<+9.4f}% | {reason:<15} | {str(held):<6} | {str(ersi):<6} | {ereg:<8}")
+        lines.append(
+            f"  {idx:<3} | {d:<12} | {str(en):<10} | {str(ex):<10} | {pnl:<+9.4f}% | {reason:<15} | {str(held):<6} | {str(ersi):<6} | {ereg:<8}"
+        )
     lines.append("")
 
     # STRATEGY PARAMETERS
@@ -19595,16 +23549,33 @@ def export_pair(pair_name: str):
         lines.append(f"    ✅ RSI {rsi} < threshold {thresh}")
         lines.append(f"    ✅ BB lower touch confirmed")
         lines.append(f"    ✅ ADX {adx} >= {adx_th}")
-        lines.append(f"    ✅ Regime: {regime} (bear entries {'allowed' if bear_ok else 'blocked'})")
+        lines.append(
+            f"    ✅ Regime: {regime} (bear entries {'allowed' if bear_ok else 'blocked'})"
+        )
         lines.append("    → Entry would fire on next cycle")
     elif conditions_met >= 2:
-        lines.append(f"  CLOSE TO ENTRY — {conditions_met} conditions met, {4 - conditions_met} blocking:")
-        lines.append(f"    {'✅' if rsi_ok else '❌'} RSI {rsi} {'<' if rsi_ok else '>='} threshold {thresh}" + (f" (gap {rsi - thresh:.1f} pts)" if not rsi_ok else ""))
-        lines.append(f"    {'✅' if bb_ok else '❌'} BB lower{' not yet ' if not bb_ok else ' '}touched" + (f" (price {last_price}, BB lower {bb_lower})" if not bb_ok else ""))
-        lines.append(f"    {'✅' if adx_ok else '❌'} ADX {adx} {'>=' if adx_ok else '<'} {adx_th}" + (f" (gap {adx_th - adx:.1f})" if not adx_ok else ""))
+        lines.append(
+            f"  CLOSE TO ENTRY — {conditions_met} conditions met, {4 - conditions_met} blocking:"
+        )
+        lines.append(
+            f"    {'✅' if rsi_ok else '❌'} RSI {rsi} {'<' if rsi_ok else '>='} threshold {thresh}"
+            + (f" (gap {rsi - thresh:.1f} pts)" if not rsi_ok else "")
+        )
+        lines.append(
+            f"    {'✅' if bb_ok else '❌'} BB lower{' not yet ' if not bb_ok else ' '}touched"
+            + (f" (price {last_price}, BB lower {bb_lower})" if not bb_ok else "")
+        )
+        lines.append(
+            f"    {'✅' if adx_ok else '❌'} ADX {adx} {'>=' if adx_ok else '<'} {adx_th}"
+            + (f" (gap {adx_th - adx:.1f})" if not adx_ok else "")
+        )
         if regime == "BEAR":
-            lines.append(f"    {'⚠' if bear_ok else '❌'} Bear entries: {'allowed' if bear_ok else 'blocked'}")
-        lines.append(f"    → Nearest trigger: {'RSI drop to ' + str(thresh) if not rsi_ok else 'price touch BB lower' if not bb_ok else 'ADX rising to ' + str(adx_th)}")
+            lines.append(
+                f"    {'⚠' if bear_ok else '❌'} Bear entries: {'allowed' if bear_ok else 'blocked'}"
+            )
+        lines.append(
+            f"    → Nearest trigger: {'RSI drop to ' + str(thresh) if not rsi_ok else 'price touch BB lower' if not bb_ok else 'ADX rising to ' + str(adx_th)}"
+        )
     else:
         lines.append("  NOT CLOSE — blocked by:")
         lines.append(f"    ❌ RSI {rsi} >= threshold {thresh}" if not rsi_ok else "")
@@ -19612,7 +23583,15 @@ def export_pair(pair_name: str):
         lines.append(f"    ❌ ADX {adx} < {adx_th}" if not adx_ok else "")
         if not bear_ok and regime == "BEAR":
             lines.append(f"    ❌ Bear regime — bear entries blocked")
-        lines.append(f"    → Furthest from entry on: RSI" if not rsi_ok else "BB touch" if not bb_ok else "ADX" if not adx_ok else "regime")
+        lines.append(
+            f"    → Furthest from entry on: RSI"
+            if not rsi_ok
+            else "BB touch"
+            if not bb_ok
+            else "ADX"
+            if not adx_ok
+            else "regime"
+        )
 
     lines.append("")
     lines.append("=" * 50)
@@ -19650,15 +23629,20 @@ async def auth_setup(request: Request):
         raise HTTPException(400, "Password too short")
 
     # Save password locally
-    conn.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('dashboard_password', ?)", (password,))
+    conn.execute(
+        "INSERT OR REPLACE INTO app_config (key, value) VALUES ('dashboard_password', ?)",
+        (password,),
+    )
     conn.commit()
 
     # Generate auth token
     token = secrets.token_hex(32)
     now = utcnow_iso()
     expires = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
-    conn.execute("INSERT INTO auth_tokens (token, created_at, expires_at) VALUES (?, ?, ?)",
-                 (token, now, expires))
+    conn.execute(
+        "INSERT INTO auth_tokens (token, created_at, expires_at) VALUES (?, ?, ?)",
+        (token, now, expires),
+    )
     conn.commit()
     conn.close()
 
@@ -19683,8 +23667,10 @@ async def auth_login(request: Request):
     token = secrets.token_hex(32)
     now = utcnow_iso()
     expires = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
-    conn.execute("INSERT INTO auth_tokens (token, created_at, expires_at) VALUES (?, ?, ?)",
-                 (token, now, expires))
+    conn.execute(
+        "INSERT INTO auth_tokens (token, created_at, expires_at) VALUES (?, ?, ?)",
+        (token, now, expires),
+    )
     conn.commit()
     conn.close()
 
@@ -19727,38 +23713,67 @@ def chat(body: ChatBody):
 
     conn = get_conn()
     forex_state = conn.execute("SELECT * FROM latest_state WHERE bot='forex'").fetchone()
-    forex_trades = conn.execute("SELECT * FROM trades WHERE bot='forex' ORDER BY COALESCE(exit_ts, entry_ts) DESC LIMIT 10").fetchall()
-    forex_strat = json.loads(forex_state["strategy_json"]) if forex_state and forex_state["strategy_json"] else {}
-    forex_heartbeat = json.loads(forex_state["heartbeat_json"]) if forex_state and forex_state["heartbeat_json"] else {}
-    forex_open = json.loads(forex_state["open_trades_json"]) if forex_state and forex_state["open_trades_json"] else []
+    forex_trades = conn.execute(
+        "SELECT * FROM trades WHERE bot='forex' ORDER BY COALESCE(exit_ts, entry_ts) DESC LIMIT 10"
+    ).fetchall()
+    forex_strat = (
+        json.loads(forex_state["strategy_json"])
+        if forex_state and forex_state["strategy_json"]
+        else {}
+    )
+    forex_heartbeat = (
+        json.loads(forex_state["heartbeat_json"])
+        if forex_state and forex_state["heartbeat_json"]
+        else {}
+    )
+    forex_open = (
+        json.loads(forex_state["open_trades_json"])
+        if forex_state and forex_state["open_trades_json"]
+        else []
+    )
     conn.close()
 
-    open_summary = [f"{t.get('asset','?')}: entry {t.get('entry_price','?')}, PnL {t.get('_unrealised_pct',0):+.4f}%, stop {t.get('_stop_price','?')}, held {t.get('hold_cycles','?')}c" for t in forex_open]
+    open_summary = [
+        f"{t.get('asset', '?')}: entry {t.get('entry_price', '?')}, PnL {t.get('_unrealised_pct', 0):+.4f}%, stop {t.get('_stop_price', '?')}, held {t.get('hold_cycles', '?')}c"
+        for t in forex_open
+    ]
     recent = [f"{t['pair']}: {t['pnl_pct']:+.4f}% ({t['exit_reason']})" for t in forex_trades[:5]]
     regimes = forex_heartbeat.get("regimes", {})
     cycle = forex_heartbeat.get("cycle", "?")
 
     lines = []
-    if "trade" in question and ("how long" in question or "duration" in question or "estimate" in question):
+    if "trade" in question and (
+        "how long" in question or "duration" in question or "estimate" in question
+    ):
         if open_summary:
             lines.append("Currently open:")
             lines.extend(f"  • {s}" for s in open_summary)
-            lines.append("Mean reversion trades typically exit within 1-6 hours when price bounces to the BB middle band.")
+            lines.append(
+                "Mean reversion trades typically exit within 1-6 hours when price bounces to the BB middle band."
+            )
         else:
             lines.append("No open trades. Bot is waiting for entry conditions.")
             lines.append(f"Regimes: {regimes}")
     elif any(w in question for w in ["win rate", "performance", "profit", "how many"]):
         wins = sum(1 for t in forex_trades if t.get("pnl_pct", 0) > 0)
         total = len(forex_trades)
-        lines.append(f"Last {total} trades: {wins}/{total} wins ({wins/total*100:.0f}%)" if total else "No trades yet.")
+        lines.append(
+            f"Last {total} trades: {wins}/{total} wins ({wins / total * 100:.0f}%)"
+            if total
+            else "No trades yet."
+        )
         lines.extend(f"  {s}" for s in recent)
     elif "strategy" in question or "config" in question:
         for pair, s in forex_strat.items():
             if isinstance(s, dict):
                 e = s.get("entry", {})
-                lines.append(f"  {pair}: {s.get('strategy_type')}, RSI<{e.get('mr_entry_rsi') or e.get('threshold','?')}, stop {s.get('stop_loss_pct','?')}%, floor {s.get('atr_floor_pct','none')}")
+                lines.append(
+                    f"  {pair}: {s.get('strategy_type')}, RSI<{e.get('mr_entry_rsi') or e.get('threshold', '?')}, stop {s.get('stop_loss_pct', '?')}%, floor {s.get('atr_floor_pct', 'none')}"
+                )
     else:
-        lines.append(f"Cycle {cycle}. {'No open trades.' if not open_summary else f'{len(forex_open)} open trade(s).'}")
+        lines.append(
+            f"Cycle {cycle}. {'No open trades.' if not open_summary else f'{len(forex_open)} open trade(s).'}"
+        )
         lines.append(f"Regimes: {regimes}")
 
     return {"answer": "\n".join(lines), "question": question}
@@ -19801,7 +23816,15 @@ def per_version_performance(bot_name: str, pair: Optional[str] = None):
 
         # Per-version aggregate
         if v not in versions:
-            versions[v] = {"trades": 0, "pnls": [], "wins": 0, "stops": 0, "targets": 0, "timeouts": 0, "pairs": set()}
+            versions[v] = {
+                "trades": 0,
+                "pnls": [],
+                "wins": 0,
+                "stops": 0,
+                "targets": 0,
+                "timeouts": 0,
+                "pairs": set(),
+            }
         versions[v]["trades"] += 1
         versions[v]["pnls"].append(pnl)
         if pnl > 0:
@@ -19817,7 +23840,15 @@ def per_version_performance(bot_name: str, pair: Optional[str] = None):
         # Per-pair within version
         pkey = f"{v}::{p}"
         if pkey not in pair_versions:
-            pair_versions[pkey] = {"pair": p, "trades": 0, "pnls": [], "wins": 0, "stops": 0, "targets": 0, "timeouts": 0}
+            pair_versions[pkey] = {
+                "pair": p,
+                "trades": 0,
+                "pnls": [],
+                "wins": 0,
+                "stops": 0,
+                "targets": 0,
+                "timeouts": 0,
+            }
         pair_versions[pkey]["trades"] += 1
         pair_versions[pkey]["pnls"].append(pnl)
         if pnl > 0:
@@ -19839,7 +23870,11 @@ def per_version_performance(bot_name: str, pair: Optional[str] = None):
         change = ""
         if i > 0:
             prev_v = sorted_v[i - 1]
-            prev_avg = sum(versions[prev_v]["pnls"]) / len(versions[prev_v]["pnls"]) if versions[prev_v]["pnls"] else 0
+            prev_avg = (
+                sum(versions[prev_v]["pnls"]) / len(versions[prev_v]["pnls"])
+                if versions[prev_v]["pnls"]
+                else 0
+            )
             if avg > prev_avg:
                 change = "improved"
             elif avg < prev_avg:
@@ -19852,29 +23887,40 @@ def per_version_performance(bot_name: str, pair: Optional[str] = None):
                 p_avg = sum(pv["pnls"]) / len(pv["pnls"]) if pv["pnls"] else 0
                 p_wr = pv["wins"] / len(pv["pnls"]) * 100 if pv["pnls"] else 0
                 p_total = sum(pv["pnls"])
-                pair_rows.append({
-                    "pair": pv["pair"],
-                    "trades": pv["trades"],
-                    "win_rate": round(p_wr, 1),
-                    "avg_pnl": round(p_avg, 4),
-                    "total_pnl": round(p_total, 4),
-                    "stops": pv["stops"],
-                    "targets": pv["targets"],
-                    "timeouts": pv["timeouts"],
-                })
+                pair_rows.append(
+                    {
+                        "pair": pv["pair"],
+                        "trades": pv["trades"],
+                        "win_rate": round(p_wr, 1),
+                        "avg_pnl": round(p_avg, 4),
+                        "total_pnl": round(p_total, 4),
+                        "stops": pv["stops"],
+                        "targets": pv["targets"],
+                        "timeouts": pv["timeouts"],
+                    }
+                )
 
-        result.append({
-            "version": v, "trades": vs["trades"], "win_rate": round(wr, 1),
-            "avg_pnl": round(avg, 4), "total_pnl": round(total, 4),
-            "stops": vs["stops"], "targets": vs["targets"], "timeouts": vs["timeouts"],
-            "pairs": sorted(vs["pairs"]), "trend": change,
-            "pair_breakdown": pair_rows,
-        })
+        result.append(
+            {
+                "version": v,
+                "trades": vs["trades"],
+                "win_rate": round(wr, 1),
+                "avg_pnl": round(avg, 4),
+                "total_pnl": round(total, 4),
+                "stops": vs["stops"],
+                "targets": vs["targets"],
+                "timeouts": vs["timeouts"],
+                "pairs": sorted(vs["pairs"]),
+                "trend": change,
+                "pair_breakdown": pair_rows,
+            }
+        )
     return {"bot": bot_name, "versions": result}
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
 ```
 
@@ -20514,7 +24560,7 @@ E.3 BACKTEST LLM VALIDATION PROMPT
 ```python
 prompt = f"""You are a senior quantitative strategist at a proprietary trading firm.
 
-A backtest engine has evaluated a proposed parameter change and the result is MARGINAL (score={score or '?'}). 
+A backtest engine has evaluated a proposed parameter change and the result is MARGINAL (score={score or "?"}). 
 The mechanical heuristic cannot decide clearly. You must make the final call.
 
 CHANGE: {pair} {param}: {old_val} -> {new_val}

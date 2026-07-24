@@ -61,9 +61,9 @@ subscription covering gold + silver).
 
 ```python
 class PriceAggregator:
-    def __init__(self, pairs, *, sources=None, stale_s=STALE_S_MAX,
-                 consensus_pct=0.01, http_client=None):
-        ...
+    def __init__(
+        self, pairs, *, sources=None, stale_s=STALE_S_MAX, consensus_pct=0.01, http_client=None
+    ): ...
     def fetch_fn(self, pair: str) -> dict | None:
         """Same signature/semantics as yfinance fetch_sync.
 
@@ -74,8 +74,10 @@ class PriceAggregator:
         Never raises (fail-soft): a source error -> that source is dropped for
         this cycle, not a crash.
         """
+
     def seed_history_fn(self, pair, max_candles=300) -> list[dict]:
         """Returns buffered recent consensus candles (oldest-first)."""
+
 
 def make_aggregator_fetch(pairs, *, backend="aggregate", **kw):
     """Builder. backend='aggregate' selects this engine; default stays yfinance

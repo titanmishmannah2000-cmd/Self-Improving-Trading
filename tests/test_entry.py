@@ -22,39 +22,71 @@ p = [110 - i * 1.0 for i in range(40)]  # 110 down to 71, RSI -> 0
 
 
 def mr_strategy(**kw):
-    base = {"strategy_type": "mean_reversion", "session_filter": "london_only",
-            "entry": {"threshold": 38}, "position_size_r": 0.2}
+    base = {
+        "strategy_type": "mean_reversion",
+        "session_filter": "london_only",
+        "entry": {"threshold": 38},
+        "position_size_r": 0.2,
+    }
     base.update(kw)
     return base
 
 
 def rsi_mom_strategy(**kw):
-    base = {"strategy_type": "rsi_momentum", "session_filter": "asian_only",
-            "entry": {"threshold": 41}, "position_size_r": 0.2}
+    base = {
+        "strategy_type": "rsi_momentum",
+        "session_filter": "asian_only",
+        "entry": {"threshold": 41},
+        "position_size_r": 0.2,
+    }
     base.update(kw)
     return base
 
 
 def test_eur_mr_fires():
     sig = evaluate_entry(
-        "EUR/USD", prices_at_bb_lower, mr_strategy(rsi=38, session="LDN", adx=20),
-        "", "neutral", 0, False, {}, 100, "LDN",
+        "EUR/USD",
+        prices_at_bb_lower,
+        mr_strategy(rsi=38, session="LDN", adx=20),
+        "",
+        "neutral",
+        0,
+        False,
+        {},
+        100,
+        "LDN",
     )
     assert sig is not None and sig.type == "mean_reversion"
 
 
 def test_eur_mr_session_block():
     sig = evaluate_entry(
-        "EUR/USD", prices_at_bb_lower, mr_strategy(rsi=38, session="OTHER", adx=20),
-        "", "neutral", 0, False, {}, 100, "OTHER",
+        "EUR/USD",
+        prices_at_bb_lower,
+        mr_strategy(rsi=38, session="OTHER", adx=20),
+        "",
+        "neutral",
+        0,
+        False,
+        {},
+        100,
+        "OTHER",
     )
     assert sig is None  # L04: outside LDN window
 
 
 def test_eur_mr_chart_block():
     sig = evaluate_entry(
-        "EUR/USD", prices_at_bb_lower, mr_strategy(rsi=38, session="LDN", adx=20),
-        "avoid entirely", "neutral", 0, False, {}, 100, "LDN",
+        "EUR/USD",
+        prices_at_bb_lower,
+        mr_strategy(rsi=38, session="LDN", adx=20),
+        "avoid entirely",
+        "neutral",
+        0,
+        False,
+        {},
+        100,
+        "LDN",
     )
     assert sig is None  # hard block from chart vision
 
@@ -62,8 +94,16 @@ def test_eur_mr_chart_block():
 def test_eur_mr_cooldown():
     reentry = {"EUR/USD": {"last_exit_cycle": 85}}  # stopped out 15 cycles ago (100-15)
     sig = evaluate_entry(
-        "EUR/USD", prices_at_bb_lower, mr_strategy(rsi=38, session="LDN", adx=20),
-        "", "neutral", 0, False, reentry, 100, "LDN",
+        "EUR/USD",
+        prices_at_bb_lower,
+        mr_strategy(rsi=38, session="LDN", adx=20),
+        "",
+        "neutral",
+        0,
+        False,
+        reentry,
+        100,
+        "LDN",
     )
     assert sig is None  # L15/L23: re-entry cooldown < 30 cycles
 
@@ -83,7 +123,16 @@ def test_aud_rsi_confluence():
     strict = dict(strat)
     strict["entry"] = {**(strat.get("entry") or {}), "min_oversold_pairs": 2}
     blocked = evaluate_entry(
-        "AUD/USD", p, strict, "", "neutral", 1, True, {}, 100, "ASIA",
+        "AUD/USD",
+        p,
+        strict,
+        "",
+        "neutral",
+        1,
+        True,
+        {},
+        100,
+        "ASIA",
     )
     assert blocked is None  # L18: confluence requires >=2 when configured
 
@@ -94,15 +143,31 @@ def test_l13_ensemble_bearish_blocks_mr_long():
     # bearish discovered-indicator ensemble consensus. An MR long here is exactly
     # the trade that blew up v06; L13 must block it.
     sig = evaluate_entry(
-        "EUR/USD", prices_at_bb_lower, mr_strategy(rsi=38, session="LDN", adx=20),
-        "", "strong_bearish", 0, False, {}, 100, "LDN",
+        "EUR/USD",
+        prices_at_bb_lower,
+        mr_strategy(rsi=38, session="LDN", adx=20),
+        "",
+        "strong_bearish",
+        0,
+        False,
+        {},
+        100,
+        "LDN",
     )
     assert sig is None
     # Sanity: the identical setup with neutral consensus DOES fire (guard is the
     # only thing standing between this and a blocked trade).
     ok = evaluate_entry(
-        "EUR/USD", prices_at_bb_lower, mr_strategy(rsi=38, session="LDN", adx=20),
-        "", "neutral", 0, False, {}, 100, "LDN",
+        "EUR/USD",
+        prices_at_bb_lower,
+        mr_strategy(rsi=38, session="LDN", adx=20),
+        "",
+        "neutral",
+        0,
+        False,
+        {},
+        100,
+        "LDN",
     )
     assert ok is not None and ok.type == "mean_reversion"
 
@@ -114,12 +179,36 @@ def test_session_filter_under_entry_key():
         "entry": {"threshold": 38, "session_filter": "london_only"},
         "position_size_r": 0.2,
     }
-    assert evaluate_entry(
-        "EUR/USD", prices_at_bb_lower, strat, "", "neutral", 0, False, {}, 100, "LDN",
-    ) is not None
-    assert evaluate_entry(
-        "EUR/USD", prices_at_bb_lower, strat, "", "neutral", 0, False, {}, 100, "NY",
-    ) is None
+    assert (
+        evaluate_entry(
+            "EUR/USD",
+            prices_at_bb_lower,
+            strat,
+            "",
+            "neutral",
+            0,
+            False,
+            {},
+            100,
+            "LDN",
+        )
+        is not None
+    )
+    assert (
+        evaluate_entry(
+            "EUR/USD",
+            prices_at_bb_lower,
+            strat,
+            "",
+            "neutral",
+            0,
+            False,
+            {},
+            100,
+            "NY",
+        )
+        is None
+    )
 
 
 def test_mr_entry_rsi_used_when_threshold_absent():
@@ -138,7 +227,16 @@ def test_mr_entry_rsi_used_when_threshold_absent():
         "position_size_r": 0.2,
     }
     sig = evaluate_entry(
-        "EUR/USD", prices_at_bb_lower, strat, "", "neutral", 0, False, {}, 100, "LDN",
+        "EUR/USD",
+        prices_at_bb_lower,
+        strat,
+        "",
+        "neutral",
+        0,
+        False,
+        {},
+        100,
+        "LDN",
     )
     assert sig is not None
     assert sig.meta.get("rsi_threshold") == 30.0
@@ -146,14 +244,31 @@ def test_mr_entry_rsi_used_when_threshold_absent():
 
 def test_traditional_signal_tags_entry_type():
     mr = evaluate_entry(
-        "EUR/USD", prices_at_bb_lower, mr_strategy(),
-        "", "neutral", 0, False, {}, 100, "LDN",
+        "EUR/USD",
+        prices_at_bb_lower,
+        mr_strategy(),
+        "",
+        "neutral",
+        0,
+        False,
+        {},
+        100,
+        "LDN",
     )
     assert mr is not None
     assert mr.meta.get("entry_type") == "mean_reversion"
 
     mom = evaluate_entry(
-        "AUD/USD", p, rsi_mom_strategy(), "", "neutral", 2, True, {}, 100, "ASIA",
+        "AUD/USD",
+        p,
+        rsi_mom_strategy(),
+        "",
+        "neutral",
+        2,
+        True,
+        {},
+        100,
+        "ASIA",
     )
     assert mom is not None
     assert mom.meta.get("entry_type") == "rsi_momentum"
@@ -171,19 +286,52 @@ def test_momentum_atr_vol_proxy_when_vol_above_false():
         "vol_max_pct": 10.0,
     }
     # Explicit True still works
-    assert evaluate_entry(
-        "AUD/USD", p, strat, "", "neutral", 2, True, {}, 100, "ASIA",
-    ) is not None
+    assert (
+        evaluate_entry(
+            "AUD/USD",
+            p,
+            strat,
+            "",
+            "neutral",
+            2,
+            True,
+            {},
+            100,
+            "ASIA",
+        )
+        is not None
+    )
     # False + elevated ATR on the downtrend series should still fire via proxy
     sig = evaluate_entry(
-        "AUD/USD", p, strat, "", "neutral", 2, False, {}, 100, "ASIA",
+        "AUD/USD",
+        p,
+        strat,
+        "",
+        "neutral",
+        2,
+        False,
+        {},
+        100,
+        "ASIA",
     )
     assert sig is not None and sig.type == "rsi_momentum"
     # Flat series -> ATR ~0 -> proxy fails
     flat = [100.0] * 40
-    assert evaluate_entry(
-        "AUD/USD", flat, strat, "", "neutral", 2, False, {}, 100, "ASIA",
-    ) is None
+    assert (
+        evaluate_entry(
+            "AUD/USD",
+            flat,
+            strat,
+            "",
+            "neutral",
+            2,
+            False,
+            {},
+            100,
+            "ASIA",
+        )
+        is None
+    )
 
 
 def test_momentum_legacy_vol_yaml_remapped_for_live_atr():

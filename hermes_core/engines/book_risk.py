@@ -7,13 +7,13 @@ open book. Never skips. Flag off / errors → passthrough.
 
 from __future__ import annotations
 
-from hermes_core.env import get_env
 from hermes_core.engines.kelly_sizing import bayesian_p
+from hermes_core.env import get_env
 
-BOOK_RISK_CAP = 1.0          # 2× MAX_POSITION_SIZE (0.5)
+BOOK_RISK_CAP = 1.0  # 2× MAX_POSITION_SIZE (0.5)
 TILT_MIN = 0.50
 TILT_MAX = 1.15
-TILT_K = 1.25                # sensitivity to (edge_i - mean_open)
+TILT_K = 1.25  # sensitivity to (edge_i - mean_open)
 
 
 def book_risk_enabled() -> bool:

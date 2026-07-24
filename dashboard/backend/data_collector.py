@@ -11,14 +11,10 @@ Each `collect_*` function returns a dict with:
 Paths are resolved from PROJECTS_ROOT.
 """
 
-import csv
 import json
 import os
 import subprocess
-from datetime import datetime, timezone
-from io import StringIO
 from pathlib import Path
-from typing import Optional
 
 # Prefer repo-relative / env paths; never require Windows D:/projects.
 RAILWAY_BUNDLE = Path(__file__).parent.parent / "bot_code"
@@ -59,7 +55,7 @@ DASHBOARD_API_URL = os.environ.get(
 )
 
 
-def _read_file(path: Path, max_chars: int = 50000) -> Optional[str]:
+def _read_file(path: Path, max_chars: int = 50000) -> str | None:
     """Read a file up to max_chars. Returns None if not found or error."""
     try:
         if not path.exists():
@@ -96,7 +92,7 @@ def _read_state_files(bot_name: str) -> dict[str, str]:
     return result
 
 
-def _run_cmd(cmd: list[str], timeout: int = 15, cwd: Optional[str] = None) -> str:
+def _run_cmd(cmd: list[str], timeout: int = 15, cwd: str | None = None) -> str:
     """Run a shell command and return stdout + stderr."""
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd)
@@ -120,7 +116,7 @@ def collect_static_code(include_all_core: bool = True) -> dict:
             continue  # handled separately to avoid huge context
         pkg = "hermes_trading" if bot_name == "gold" else "hermes_forex"
         src_dir = bot_path / pkg
-        for fname in (CORE_FILES if include_all_core else ["loop.py", "reflect.py"]):
+        for fname in CORE_FILES if include_all_core else ["loop.py", "reflect.py"]:
             content = _read_file(src_dir / fname)
             if content:
                 files[f"{bot_name}/{pkg}/{fname}"] = content
@@ -188,6 +184,7 @@ def collect_data_logging_integrity() -> dict:
     # Dashboard API overview
     try:
         import httpx
+
         r = httpx.get(f"{DASHBOARD_API_URL}/api/overview", timeout=10)
         if r.status_code == 200:
             logs["dashboard/overview"] = json.dumps(r.json(), indent=2)
@@ -238,6 +235,7 @@ def collect_performance_drift() -> dict:
     # Lifetime summary from dashboard
     try:
         import httpx
+
         r = httpx.get(f"{DASHBOARD_API_URL}/api/lifetime-summary", timeout=10)
         if r.status_code == 200:
             logs["dashboard/lifetime-summary"] = json.dumps(r.json(), indent=2)
@@ -271,6 +269,7 @@ def collect_performance_drift() -> dict:
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
+
 
 def _get_deploy_state() -> dict:
     """Check Railway deploy status for both projects."""
@@ -311,8 +310,13 @@ def _get_risk_baselines() -> dict:
                 # Simple parse for key fields
                 for line in content.splitlines():
                     line = line.strip()
-                    for key in ["stop_loss_pct", "profit_target_pct", "max_risk_pct",
-                                "min_trades", "max_drawdown_pct"]:
+                    for key in [
+                        "stop_loss_pct",
+                        "profit_target_pct",
+                        "max_risk_pct",
+                        "min_trades",
+                        "max_drawdown_pct",
+                    ]:
                         if line.startswith(key + ":") or line.startswith(key + ":"):
                             val = line.split(":", 1)[1].strip()
                             pair = yaml_file.stem.replace("_", "/")

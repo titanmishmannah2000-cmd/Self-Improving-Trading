@@ -7,15 +7,19 @@ Reads from: audit_findings, monitor_metrics, audit_maturity, sentinel
 Output: Structured text briefing (delivered via cron job)
 """
 
-import json
-import os
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
-from findings_store import _get_conn, get_summary_stats, get_latest_run, list_findings, get_latest_maturity_per_domain
+from findings_store import (
+    _get_conn,
+    get_latest_maturity_per_domain,
+    get_latest_run,
+    get_summary_stats,
+    list_findings,
+)
 from sentinel import check_live_anomalies
 
 
@@ -24,9 +28,9 @@ def build_briefing(verbose: bool = True) -> str:
     stats = get_summary_stats()
     maturity = get_latest_maturity_per_domain()
     anomalies = check_live_anomalies()
-    latest_run = get_latest_run()
+    get_latest_run()
 
-    now = datetime.now(timezone.utc).strftime("%B %d, %Y")
+    now = datetime.now(UTC).strftime("%B %d, %Y")
 
     # ── System Health ──
     has_critical = stats.get("critical_open", 0) > 0 or anomalies.get("has_critical")
@@ -88,8 +92,7 @@ def build_briefing(verbose: bool = True) -> str:
         f"SYSTEM HEALTH: {health} (maturity: {avg_maturity}/5)\n\n"
         f"{live_section}\n\n"
         f"{findings_section}\n\n"
-        f"RECOMMENDATIONS:\n"
-        + "\n".join(f"  {r}" for r in recs)
+        f"RECOMMENDATIONS:\n" + "\n".join(f"  {r}" for r in recs)
     )
 
     if verbose:

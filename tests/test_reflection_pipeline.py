@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import math
 import random
-from pathlib import Path
 
 import pytest
 import yaml
@@ -27,27 +26,40 @@ from hermes_core.engines.reflect import (
 
 def _sine(n=200, start=1.10, amp=0.01, period=20, seed=1):
     rng = random.Random(seed)
-    return [start + amp * math.sin(2 * math.pi * i / period)
-            + rng.uniform(-0.0003, 0.0003) for i in range(n)]
+    return [
+        start + amp * math.sin(2 * math.pi * i / period) + rng.uniform(-0.0003, 0.0003)
+        for i in range(n)
+    ]
 
 
 def _trades(pnls, base=1.1000, pair="EUR/USD"):
     out = []
     for i, p in enumerate(pnls):
-        out.append({
-            "pair": pair, "cycle": i, "reason": "tp" if p > 0 else "sl",
-            "exit_reason": "tp" if p > 0 else "sl",
-            "entry_price": base, "exit_price": base * (1 + p / 100.0),
-            "pnl_pct": p,
-        })
+        out.append(
+            {
+                "pair": pair,
+                "cycle": i,
+                "reason": "tp" if p > 0 else "sl",
+                "exit_reason": "tp" if p > 0 else "sl",
+                "entry_price": base,
+                "exit_price": base * (1 + p / 100.0),
+                "pnl_pct": p,
+            }
+        )
     return out
 
 
 STRAT = {
     "pair": "EUR/USD",
     "strategy_type": "mean_reversion",
-    "entry": {"threshold": 30, "indicator": "rsi", "direction": "long",
-              "mr_entry_rsi": 30, "bb_std_dev": 2.0, "session_filter": "london_only"},
+    "entry": {
+        "threshold": 30,
+        "indicator": "rsi",
+        "direction": "long",
+        "mr_entry_rsi": 30,
+        "bb_std_dev": 2.0,
+        "session_filter": "london_only",
+    },
     "stop_loss_pct": 1.5,
     "profit_target_pct": 3.0,
     "trailing_stop_pct": 0.0,
@@ -78,12 +90,11 @@ def reflect_env(tmp_path, monkeypatch):
     strat_path = strat_dir / "EUR_USD.yaml"
     strat_path.write_text(yaml.safe_dump(STRAT, sort_keys=False), encoding="utf-8")
 
-    monkeypatch.setattr(rf, "reflection_latch_path",
-                        lambda bot=None: state / ".reflection_latches.json")
-    monkeypatch.setattr(rf, "hypotheses_path",
-                        lambda bot=None: state / "hypotheses.jsonl")
-    monkeypatch.setattr(rf, "strategy_yaml_path",
-                        lambda pair, bot="forex": strat_path)
+    monkeypatch.setattr(
+        rf, "reflection_latch_path", lambda bot=None: state / ".reflection_latches.json"
+    )
+    monkeypatch.setattr(rf, "hypotheses_path", lambda bot=None: state / "hypotheses.jsonl")
+    monkeypatch.setattr(rf, "strategy_yaml_path", lambda pair, bot="forex": strat_path)
     monkeypatch.setattr(bt, "KB_PATH", state / "hypotheses_kb.jsonl")
 
     def _load_strat(pair, bot=None):
@@ -95,6 +106,7 @@ def reflect_env(tmp_path, monkeypatch):
         return state
 
     import hermes_core.state.paths as paths_mod
+
     monkeypatch.setattr(paths_mod, "bot_state_dir", _bot_state)
 
     return {"state": state, "strat_path": strat_path}
@@ -109,7 +121,11 @@ def test_latch_blocks_repeat(reflect_env):
 
 def test_apply_strategy_change_writes_version(reflect_env):
     written = apply_strategy_change(
-        "EUR/USD", "stop_loss_pct", 1.2, bot="forex", version="01",
+        "EUR/USD",
+        "stop_loss_pct",
+        1.2,
+        bot="forex",
+        version="01",
         strategy=dict(STRAT),
     )
     assert written["stop_loss_pct"] == 1.2
@@ -122,8 +138,13 @@ def test_apply_strategy_change_writes_version(reflect_env):
 def test_pipeline_no_proposal(reflect_env):
     quiet = _trades([0.3, -0.2, 0.4, -0.1, 0.2])
     res = run_reflection_pipeline(
-        "EUR/USD", quiet, bot="forex", goal=GOAL, strategy=dict(STRAT),
-        prices=_sine(), auto_deploy=True,
+        "EUR/USD",
+        quiet,
+        bot="forex",
+        goal=GOAL,
+        strategy=dict(STRAT),
+        prices=_sine(),
+        auto_deploy=True,
     )
     assert res["status"] == "no_proposal"
     assert res["deployed"] is False
@@ -138,8 +159,13 @@ def test_pipeline_deploy_on_approve(reflect_env):
     # stop_loss_pct 1.5→1.5 via monkeypatched layer1... simpler: run with
     # prices that pass when tightening is mild.
     res = run_reflection_pipeline(
-        "EUR/USD", losing, bot="forex", goal=GOAL, strategy=dict(STRAT),
-        prices=_sine(), auto_deploy=True,
+        "EUR/USD",
+        losing,
+        bot="forex",
+        goal=GOAL,
+        strategy=dict(STRAT),
+        prices=_sine(),
+        auto_deploy=True,
     )
     # Either deploy or backtest_reject is fine as long as we went past L1;
     # sine+tighter stop often still passes. Assert we did not skip L2 wrongly.
@@ -166,10 +192,18 @@ def test_pipeline_l2_reject_blocks_deploy(reflect_env):
     rf.combined_reflect = _high_score  # type: ignore[assignment]
     try:
         res = run_reflection_pipeline(
-            "EUR/USD", losing, bot="forex", goal=GOAL, strategy=dict(STRAT),
-            prices=_sine(), auto_deploy=True,
-            llm_callers={"deepseek": lambda p: "NO", "gemini": lambda p: "NO",
-                         "groq": lambda p: "NO"},
+            "EUR/USD",
+            losing,
+            bot="forex",
+            goal=GOAL,
+            strategy=dict(STRAT),
+            prices=_sine(),
+            auto_deploy=True,
+            llm_callers={
+                "deepseek": lambda p: "NO",
+                "gemini": lambda p: "NO",
+                "groq": lambda p: "NO",
+            },
         )
     finally:
         rf.combined_reflect = orig  # type: ignore[assignment]
@@ -186,15 +220,26 @@ def test_maybe_reflect_pair_cadence_and_latch(reflect_env):
     with open(trades_path, "w", encoding="utf-8") as fh:
         for t in _trades([-12.0, -13.0, -11.0, -14.0]):
             fh.write(json.dumps(t) + "\n")
-    assert maybe_reflect_pair(
-        "forex", "EUR/USD", goal=GOAL, prices=_sine(), auto_deploy=False,
-    ) is None
+    assert (
+        maybe_reflect_pair(
+            "forex",
+            "EUR/USD",
+            goal=GOAL,
+            prices=_sine(),
+            auto_deploy=False,
+        )
+        is None
+    )
 
     # 5th close → fires
     with open(trades_path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(_trades([-12.0])[0]) + "\n")
     first = maybe_reflect_pair(
-        "forex", "EUR/USD", goal=GOAL, prices=_sine(), auto_deploy=False,
+        "forex",
+        "EUR/USD",
+        goal=GOAL,
+        prices=_sine(),
+        auto_deploy=False,
     )
     assert first is not None
     assert first.get("closed") == 5
@@ -202,7 +247,11 @@ def test_maybe_reflect_pair_cadence_and_latch(reflect_env):
 
     # Same count again → latched skip
     second = maybe_reflect_pair(
-        "forex", "EUR/USD", goal=GOAL, prices=_sine(), auto_deploy=False,
+        "forex",
+        "EUR/USD",
+        goal=GOAL,
+        prices=_sine(),
+        auto_deploy=False,
     )
     assert second is not None
     assert second["status"] == "latched"

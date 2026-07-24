@@ -50,8 +50,26 @@ def test_adx_range():
 
 def test_bb_ordering():
     s = [
-        100, 102, 101, 103, 102, 104, 103, 105, 104, 106,
-        103, 101, 99, 100, 102, 101, 103, 104, 102, 101,
+        100,
+        102,
+        101,
+        103,
+        102,
+        104,
+        103,
+        105,
+        104,
+        106,
+        103,
+        101,
+        99,
+        100,
+        102,
+        101,
+        103,
+        104,
+        102,
+        101,
     ]
     o = compute_bb(s, 20, 1.5)
     assert o["lower"] < o["middle"] < o["upper"]
@@ -88,7 +106,14 @@ def test_roc_sign_and_magnitude():
 def test_compute_all_keys_and_types():
     out = compute_all(list(range(40)))
     assert set(out.keys()) == {
-        "rsi", "atr", "adx", "bb", "roc", "regime", "fast_regime", "divergence",
+        "rsi",
+        "atr",
+        "adx",
+        "bb",
+        "roc",
+        "regime",
+        "fast_regime",
+        "divergence",
     }
     assert isinstance(out["bb"], dict)
     assert out["regime"] in ("trend", "range")

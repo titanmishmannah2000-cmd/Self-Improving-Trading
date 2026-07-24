@@ -33,12 +33,12 @@ from pathlib import Path
 
 from hermes_core.state.paths import crisis_db_path, current_bot, flatline_log_path
 
-CRISIS_SIGNATURE_LENGTH = 9   # [GUARD L21] fixed 9-dim vector
-CRISIS_WINDOW_SIZE = 12       # timesteps sampled per crisis window
-CRISIS_SAMPLE_INTERVAL = 5    # step between samples
-NOVEL_DISTANCE = 0.5          # [GUARD L21] cosine dist > this = novel regime
-NOVELTY_MULTIPLIER = 3.0      # [GUARD L21] novelty > 3.0*median -> flatline
-FLATLINE_CYCLES = 60          # [GUARD L21] novel regime pause length (cycles)
+CRISIS_SIGNATURE_LENGTH = 9  # [GUARD L21] fixed 9-dim vector
+CRISIS_WINDOW_SIZE = 12  # timesteps sampled per crisis window
+CRISIS_SAMPLE_INTERVAL = 5  # step between samples
+NOVEL_DISTANCE = 0.5  # [GUARD L21] cosine dist > this = novel regime
+NOVELTY_MULTIPLIER = 3.0  # [GUARD L21] novelty > 3.0*median -> flatline
+FLATLINE_CYCLES = 60  # [GUARD L21] novel regime pause length (cycles)
 
 # Test override hooks (tests monkeypatch these module attributes).
 DB_PATH: Path | None = None
@@ -60,25 +60,37 @@ def _flatline_path(pair: str | None = None) -> Path:
         return flatline_log_path(pair=pair)
     return flatline_log_path(current_bot())
 
+
 # Pre-seeded known crises (blueprint F.4 ids). Signatures are representative
 # 9-vectors; the COVID one is reproduced exactly in tests for test_covid_nn.
 COVID_SIG = [12.5, 7.5, 0.05, 0.3, 3.2, 3.75, 0.5, 0.3, 0.92]
 _PRESEEDED = {
     "covid_crash_2020": {
-        "name": "COVID-19", "signature": [COVID_SIG], "pnl_impact": -18.0,
-        "optimal_stop": 2.5, "optimal_target": 0.3, "regime": "CRASH",
+        "name": "COVID-19",
+        "signature": [COVID_SIG],
+        "pnl_impact": -18.0,
+        "optimal_stop": 2.5,
+        "optimal_target": 0.3,
+        "regime": "CRASH",
         "volatility_class": "extreme",
     },
     "nfp_spike_2023": {
-        "name": "NFP Spike", "signature": [[4.1, 2.5, 0.55, 0.3, 1.8, 1.23, 0.4, 0.5, 0.98]],
-        "pnl_impact": -3.0, "optimal_stop": 1.5, "optimal_target": 0.5,
-        "regime": "SPIKE", "volatility_class": "elevated",
+        "name": "NFP Spike",
+        "signature": [[4.1, 2.5, 0.55, 0.3, 1.8, 1.23, 0.4, 0.5, 0.98]],
+        "pnl_impact": -3.0,
+        "optimal_stop": 1.5,
+        "optimal_target": 0.5,
+        "regime": "SPIKE",
+        "volatility_class": "elevated",
     },
     "london_open_volatility": {
         "name": "London Open Volatility",
         "signature": [[2.0, 1.2, 0.62, 0.3, 1.2, 0.6, 0.30, 0.2, 1.01]],
-        "pnl_impact": -1.0, "optimal_stop": 1.2, "optimal_target": 0.6,
-        "regime": "SESSION", "volatility_class": "normal",
+        "pnl_impact": -1.0,
+        "optimal_stop": 1.2,
+        "optimal_target": 0.6,
+        "regime": "SESSION",
+        "volatility_class": "normal",
     },
 }
 
@@ -120,11 +132,11 @@ def _extract_crisis_features(
 
     return [
         round(atr_pct, 6),
-        round(atr_pct * 0.6, 6),    # approximated 1h ATR
+        round(atr_pct * 0.6, 6),  # approximated 1h ATR
         round(rsi / 100.0, 4),
-        round(0.3, 4),              # approximated ADX (placeholder)
+        round(0.3, 4),  # approximated ADX (placeholder)
         round(vol_ratio, 4),
-        round(atr_pct * 0.3, 6),    # approximated spread
+        round(atr_pct * 0.3, 6),  # approximated spread
         round(session_hour, 4),
         round(day_of_week, 4),
         round(price_ma, 4),
@@ -179,7 +191,9 @@ def _record_flatline(pair: str, reason: str, details: str = "") -> dict:
     log_path = FLATLINE_LOG if FLATLINE_LOG is not None else _flatline_path(pair)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     entry = {
-        "pair": pair, "reason": reason, "details": details,
+        "pair": pair,
+        "reason": reason,
+        "details": details,
         "ts": datetime.now(UTC).isoformat(),
         "expires_in_cycles": FLATLINE_CYCLES,
     }
@@ -197,8 +211,7 @@ def _record_flatline(pair: str, reason: str, details: str = "") -> dict:
                     recent += 1
             if recent >= 3:
                 print(
-                    f"[hermes][flatline-alert] {pair}: NOVEL_REGIME x{recent} "
-                    f"(details={details})",
+                    f"[hermes][flatline-alert] {pair}: NOVEL_REGIME x{recent} (details={details})",
                     flush=True,
                 )
         except Exception:  # noqa: BLE001 — alert must never break trading
@@ -229,15 +242,20 @@ def get_crisis_recommendation(features: list[float]) -> dict:
     unlike anything known -> no recommendation should be applied (L21).
     """
     safe = {
-        "crisis_name": None, "distance": 1.0, "pnl_impact": 0,
-        "recommended_stop_pct": None, "recommended_target_pct": None,
-        "regime": "UNKNOWN", "volatility_class": "normal", "novel": True,
+        "crisis_name": None,
+        "distance": 1.0,
+        "pnl_impact": 0,
+        "recommended_stop_pct": None,
+        "recommended_target_pct": None,
+        "regime": "UNKNOWN",
+        "volatility_class": "normal",
+        "novel": True,
     }
     nearest = find_nearest_crisis(features, top_n=1)
     if not nearest:
         return safe
     dist, cid, data = nearest[0]
-    if dist > NOVEL_DISTANCE:        # [GUARD L21] too far -> novel, no rec
+    if dist > NOVEL_DISTANCE:  # [GUARD L21] too far -> novel, no rec
         return {**safe, "distance": round(dist, 4)}
     return {
         "crisis_name": data.get("name", cid),
@@ -258,8 +276,11 @@ def _novelty_baseline(crises: dict, exclude: str | None = None) -> float | None:
     Gives a stable 'how spread out is the known world' baseline. Needs >= 2
     known crises; returns None if there is no baseline yet.
     """
-    sigs = {cid: d.get("signature", []) for cid, d in crises.items()
-            if cid != exclude and d.get("signature")}
+    sigs = {
+        cid: d.get("signature", [])
+        for cid, d in crises.items()
+        if cid != exclude and d.get("signature")
+    }
     ids = list(sigs)
     if len(ids) < 2:
         return None
@@ -273,9 +294,7 @@ def _novelty_baseline(crises: dict, exclude: str | None = None) -> float | None:
     return statistics.median(mins)
 
 
-def check_novel_regime(
-    pair: str, prices: list[float], volumes: list[float] | None = None
-) -> dict:
+def check_novel_regime(pair: str, prices: list[float], volumes: list[float] | None = None) -> dict:
     """L21 flatline guard. If the current fingerprint is further than
     NOVELTY_MULTIPLIER * median-known-distance from every known crisis, treat it
     as a genuinely novel regime and pause the pair for FLATLINE_CYCLES.
@@ -284,28 +303,45 @@ def check_novel_regime(
     """
     sig = _extract_crisis_features(prices, volumes)
     if sig is None:
-        return {"novel": False, "reason": "insufficient price data",
-                "pause_cycles": 0, "flatlined": False}
+        return {
+            "novel": False,
+            "reason": "insufficient price data",
+            "pause_cycles": 0,
+            "flatlined": False,
+        }
     crises = _load_crises()
     baseline = _novelty_baseline(crises)
     if baseline is None:
-        return {"novel": False, "reason": "insufficient known-crisis baseline",
-                "pause_cycles": 0, "flatlined": False}
+        return {
+            "novel": False,
+            "reason": "insufficient known-crisis baseline",
+            "pause_cycles": 0,
+            "flatlined": False,
+        }
 
     nearest = find_nearest_crisis(sig, top_n=1)
     dist = nearest[0][0] if nearest else 1.0
     threshold = NOVELTY_MULTIPLIER * baseline
-    if dist > threshold:                       # [GUARD L21] novel regime
-        _record_flatline(pair, "NOVEL_REGIME",
-                         f"distance {dist:.3f} > {threshold:.3f} (3.0*median)")
-        return {"novel": True, "distance": round(dist, 4),
-                "median_baseline": round(baseline, 4),
-                "threshold": round(threshold, 4),
-                "pause_cycles": FLATLINE_CYCLES, "flatlined": True}
-    return {"novel": False, "distance": round(dist, 4),
+    if dist > threshold:  # [GUARD L21] novel regime
+        _record_flatline(
+            pair, "NOVEL_REGIME", f"distance {dist:.3f} > {threshold:.3f} (3.0*median)"
+        )
+        return {
+            "novel": True,
+            "distance": round(dist, 4),
             "median_baseline": round(baseline, 4),
             "threshold": round(threshold, 4),
-            "pause_cycles": 0, "flatlined": False}
+            "pause_cycles": FLATLINE_CYCLES,
+            "flatlined": True,
+        }
+    return {
+        "novel": False,
+        "distance": round(dist, 4),
+        "median_baseline": round(baseline, 4),
+        "threshold": round(threshold, 4),
+        "pause_cycles": 0,
+        "flatlined": False,
+    }
 
 
 # ── online learning (append-only) ─────────────────────────────────────────
@@ -321,8 +357,9 @@ def _compute_signature_from_history(
         if abs(idx) >= len(price_history):
             continue
         chunk = price_history[idx:]
-        vol_chunk = (volume_history[idx:] if volume_history
-                     and abs(idx) < len(volume_history) else None)
+        vol_chunk = (
+            volume_history[idx:] if volume_history and abs(idx) < len(volume_history) else None
+        )
         feats = _extract_crisis_features(chunk, vol_chunk)
         if feats:
             signature.append(feats)
@@ -330,8 +367,10 @@ def _compute_signature_from_history(
 
 
 def save_lived_crisis(
-    pair: str, pnl_impact: float,
-    price_history: list[float], volume_history: list[float] | None = None,
+    pair: str,
+    pnl_impact: float,
+    price_history: list[float],
+    volume_history: list[float] | None = None,
 ) -> str | None:
     """Persist a lived crisis experience. Append-only: never overwrites prior
     history (fresh id = lived_{pair}_{ts}). Returns the crisis_id or None."""
@@ -341,7 +380,7 @@ def save_lived_crisis(
     if not signature:
         return None
 
-    crises = _load_crises()          # load first -> append, never clobber
+    crises = _load_crises()  # load first -> append, never clobber
     crisis_id = f"lived_{pair}_{int(time.time() * 1000)}"
     survived = pnl_impact > -5.0
     crises[crisis_id] = {
@@ -362,8 +401,7 @@ def save_lived_crisis(
 class CrisisLearning:
     """Roadmap S12 contract wrapper around the free functions above."""
 
-    def signature(self, prices: list[float],
-                  volumes: list[float] | None = None) -> tuple | None:
+    def signature(self, prices: list[float], volumes: list[float] | None = None) -> tuple | None:
         feats = _extract_crisis_features(prices, volumes)
         return tuple(feats) if feats else None
 
@@ -374,11 +412,16 @@ class CrisisLearning:
         dist, cid, data = scored[0]
         return CrisisMatch(round(dist, 4), cid, data.get("name", cid), data)
 
-    def save_lived_crisis(self, pair: str, pnl_impact: float,
-                          price_history: list[float],
-                          volume_history: list[float] | None = None) -> str | None:
+    def save_lived_crisis(
+        self,
+        pair: str,
+        pnl_impact: float,
+        price_history: list[float],
+        volume_history: list[float] | None = None,
+    ) -> str | None:
         return save_lived_crisis(pair, pnl_impact, price_history, volume_history)
 
-    def check_novel_regime(self, pair: str, prices: list[float],
-                           volumes: list[float] | None = None) -> dict:
+    def check_novel_regime(
+        self, pair: str, prices: list[float], volumes: list[float] | None = None
+    ) -> dict:
         return check_novel_regime(pair, prices, volumes)

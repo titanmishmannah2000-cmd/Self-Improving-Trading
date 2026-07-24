@@ -104,7 +104,7 @@ async def _download(symbol: str, period: str, interval: str) -> pd.DataFrame | N
             return None
         except Exception:  # noqa: BLE001 — fail-soft contract: swallow + retry
             if attempt < RETRY_ATTEMPTS - 1:
-                await asyncio.sleep(RETRY_BASE_DELAY * (2 ** attempt))
+                await asyncio.sleep(RETRY_BASE_DELAY * (2**attempt))
     # exhausted retries — feed unavailable, fail soft
     return None
 
@@ -143,8 +143,7 @@ async def seed_history(pair: str, max_candles: int = 300) -> list:
     Returns a list of Candle dicts, oldest-first, capped at ``max_candles``.
     Returns [] if the feed is unavailable (fail-soft).
     """
-    return await seed_history_interval(pair, interval="5m", period="60d",
-                                        max_candles=max_candles)
+    return await seed_history_interval(pair, interval="5m", period="60d", max_candles=max_candles)
 
 
 def _goldapi_spot(sym: str) -> float | None:
@@ -155,6 +154,7 @@ def _goldapi_spot(sym: str) -> float | None:
     """
     try:
         import httpx as _hx
+
         r = _hx.get(f"https://api.gold-api.com/price/{sym}", timeout=5.0)
         r.raise_for_status()
         price = r.json().get("price")
@@ -189,20 +189,23 @@ async def _rescaled_silver_history(max_candles: int) -> list[dict]:
         ratio = xau / xag  # current gold/silver ratio (~80)
         out = []
         for c in gold_h:
-            out.append({
-                "price": c["price"] / ratio,
-                "high": c.get("high", c["price"]) / ratio,
-                "low": c.get("low", c["price"]) / ratio,
-                "ts": c.get("ts"),
-                "candle_ts": c.get("candle_ts"),
-            })
+            out.append(
+                {
+                    "price": c["price"] / ratio,
+                    "high": c.get("high", c["price"]) / ratio,
+                    "low": c.get("low", c["price"]) / ratio,
+                    "ts": c.get("ts"),
+                    "candle_ts": c.get("candle_ts"),
+                }
+            )
         return out
     except Exception:  # noqa: BLE001 — fail-soft
         return []
 
 
-async def seed_history_interval(pair: str, interval: str = "5m", period: str = "2y",
-                                 max_candles: int = 500) -> list:
+async def seed_history_interval(
+    pair: str, interval: str = "5m", period: str = "2y", max_candles: int = 500
+) -> list:
     """Return up to ``max_candles`` candles for ``pair`` at an arbitrary
     ``interval``/``period`` (e.g. daily 2y for the GP discovery regime). The GP
     discovery engine requires longer-horizon daily history to find predictive
@@ -262,9 +265,11 @@ def seed_history_sync(pair: str, max_candles: int = 300) -> list:
     return _run(seed_history(pair, max_candles=max_candles))
 
 
-def seed_history_interval_sync(pair: str, interval: str = "1d", period: str = "2y",
-                               max_candles: int = 500) -> list:
+def seed_history_interval_sync(
+    pair: str, interval: str = "1d", period: str = "2y", max_candles: int = 500
+) -> list:
     """Synchronous wrapper around :func:`seed_history_interval` (long-horizon
     history fetch used by GP discovery)."""
-    return _run(seed_history_interval(pair, interval=interval, period=period,
-                                       max_candles=max_candles))
+    return _run(
+        seed_history_interval(pair, interval=interval, period=period, max_candles=max_candles)
+    )

@@ -1,4 +1,5 @@
 """Live verification (items 18-20) — read-only health report."""
+
 from __future__ import annotations
 
 import json
@@ -56,7 +57,9 @@ def main() -> None:
                 rows = rows.get("indicators") or []
             if not isinstance(rows, list):
                 rows = []
-            approved = sum(1 for r in rows if isinstance(r, dict) and r.get("backtest_approved") is True)
+            approved = sum(
+                1 for r in rows if isinstance(r, dict) and r.get("backtest_approved") is True
+            )
             print(f"    {p.name}: n={len(rows)} approved={approved}")
             if rows:
                 r0 = rows[0]
@@ -67,8 +70,12 @@ def main() -> None:
 
         shadow = sd / "gp_shadow.jsonl"
         if shadow.exists():
-            lines = [json.loads(l) for l in shadow.read_text(encoding="utf-8").splitlines() if l.strip()]
-            act = Counter(l.get("num_active") for l in lines[-50:])
+            lines = [
+                json.loads(line)
+                for line in shadow.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            act = Counter(row.get("num_active") for row in lines[-50:])
             print(f"  gp_shadow lines={len(lines)} recent_num_active={dict(act)}")
             if lines:
                 print(f"    last={lines[-1]}")
@@ -77,8 +84,14 @@ def main() -> None:
 
         hyp = hypotheses_path(bot)
         if hyp.exists():
-            hl = [json.loads(l) for l in hyp.read_text(encoding="utf-8").splitlines() if l.strip()]
-            print(f"  hypotheses lines={len(hl)} status={dict(Counter(x.get('status') for x in hl))}")
+            hl = [
+                json.loads(line)
+                for line in hyp.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            print(
+                f"  hypotheses lines={len(hl)} status={dict(Counter(x.get('status') for x in hl))}"
+            )
         else:
             print("  hypotheses empty/missing")
 
@@ -90,7 +103,11 @@ def main() -> None:
 
         kb = hypotheses_kb_path(bot)
         if kb.exists():
-            kl = [json.loads(l) for l in kb.read_text(encoding="utf-8").splitlines() if l.strip()]
+            kl = [
+                json.loads(line)
+                for line in kb.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
             print(
                 f"  kb lines={len(kl)} approved={sum(1 for x in kl if x.get('approved'))} "
                 f"gp_expr={sum(1 for x in kl if x.get('param') == 'gp_expr')}"
@@ -100,7 +117,11 @@ def main() -> None:
 
         tr = sd / "trades.jsonl"
         if tr.exists():
-            tl = [json.loads(l) for l in tr.read_text(encoding="utf-8").splitlines() if l.strip()]
+            tl = [
+                json.loads(line)
+                for line in tr.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
             by = Counter(t.get("pair") for t in tl)
             vers = Counter(str(t.get("strategy_version")) for t in tl[-30:])
             print(f"  trades={len(tl)} by_pair={dict(by)} recent_versions={dict(vers)}")

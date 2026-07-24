@@ -94,10 +94,17 @@ st, body = req("GET", "/api/trades/crypto")
 check("unknown bot read -> []", st == 200 and body == [], f"({st},{body})")
 
 # 7. hypotheses + skips ingest + read
-st, _ = req("POST", "/api/ingest/forex", {
-    "hypotheses": [{"ts": "t1", "variable": "stop_loss", "old_value": "0.5", "new_value": "0.6"}],
-    "skips": [{"ts": "s1", "pair": "GBP/USD", "reason_skipped": "rsi"}],
-}, TOKEN)
+st, _ = req(
+    "POST",
+    "/api/ingest/forex",
+    {
+        "hypotheses": [
+            {"ts": "t1", "variable": "stop_loss", "old_value": "0.5", "new_value": "0.6"}
+        ],
+        "skips": [{"ts": "s1", "pair": "GBP/USD", "reason_skipped": "rsi"}],
+    },
+    TOKEN,
+)
 check("forex hypotheses/skips ingest 200", st == 200, f"({st})")
 hy = req("GET", "/api/hypotheses/forex")[1]
 sk = req("GET", "/api/skips/forex")[1]

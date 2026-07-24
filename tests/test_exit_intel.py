@@ -49,8 +49,11 @@ def test_thin_evidence_passthrough():
 def test_strong_edge_stamps_soft_knobs():
     cortex = SimpleNamespace(
         edge_stats=lambda *_a, **_k: {
-            "wins": 12, "losses": 3, "n": 15,
-            "avg_win": 2.0, "avg_loss": 1.0,
+            "wins": 12,
+            "losses": 3,
+            "n": 15,
+            "avg_win": 2.0,
+            "avg_loss": 1.0,
         },
     )
     out = apply_exit_intel(

@@ -31,16 +31,15 @@ import json
 import sys
 import threading
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 
-from datetime import datetime, timezone
-
 
 def _now_iso() -> str:
     """UTC ISO timestamp for open-trade pushes (no external dep)."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 from hermes_core.adapters import make_aggregator_fetch, make_default_fetch, seed_history
@@ -85,7 +84,9 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
         return
     # Real runtime state lives where the loop writes it (HERMES_STATE_ROOT
     # volume, per-bot) — heartbeat/trades/skips below.
-    sdir = Path(get_env("HERMES_STATE_ROOT", str(Path(__file__).resolve().parents[2]))) / bot / "state"
+    sdir = (
+        Path(get_env("HERMES_STATE_ROOT", str(Path(__file__).resolve().parents[2]))) / bot / "state"
+    )
 
     def _read_jsonl(name: str, limit: int = 400):
         p = sdir / name
@@ -102,7 +103,11 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
         return out
 
     try:
-        heartbeat = json.loads((sdir / "heartbeat.json").read_text(encoding="utf-8")) if (sdir / "heartbeat.json").exists() else {}
+        heartbeat = (
+            json.loads((sdir / "heartbeat.json").read_text(encoding="utf-8"))
+            if (sdir / "heartbeat.json").exists()
+            else {}
+        )
     except Exception:
         heartbeat = {}
     # Discovered + cortex are written by the genetic/cortex engines under
@@ -115,14 +120,14 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
     # a pair's own file may not exist — its indicators live in the group's
     # anchor pair file. Use the shared-inclusive loader so every configured
     # pair is represented (matches what the entry engine actually trades on).
-    from hermes_core.config import repo_root
     from hermes_core.engines.genetic import (
         load_discovered_indicators,
         load_discovery_pulses,
         niche_map_from_indicators,
     )
+
     discovered_pairs: dict = {}
-    for p in (cfg.get("pairs") or []):
+    for p in cfg.get("pairs") or []:
         try:
             inds = load_discovered_indicators(p, include_shared=True)
             if inds:
@@ -165,12 +170,11 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
     try:
         from hermes_core.engines.decision_cortex import Cortex
         from hermes_core.engines.policy_engine import PolicyEngine
+
         cx = Cortex(bot=bot)
         cortex = cx.summary()
         try:
-            pol = PolicyEngine().evaluate(
-                max(cycle, 0), list(cfg.get("pairs") or []), cortex=cx
-            )
+            pol = PolicyEngine().evaluate(max(cycle, 0), list(cfg.get("pairs") or []), cortex=cx)
             cortex["policy"] = {
                 **pol.to_dict(),
                 "version": 1,
@@ -193,7 +197,7 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
     # Build a real per-pair strategy dict (the dashboard's overview calls
     # .keys() on strategy_json, so it MUST be a mapping, not a list).
     strategies = {}
-    for p in (cfg.get("pairs") or []):
+    for p in cfg.get("pairs") or []:
         try:
             strategies[p] = load_strategy_for_pair(p, bot)
         except Exception:
@@ -351,8 +355,9 @@ def _push_prices_threaded(bot: str, prices: dict[str, float]) -> None:
     threading.Thread(target=_push_prices, args=(bot, prices), daemon=True).start()
 
 
-def _discovery_loop(bot: str, pairs: list[str], stop: threading.Event,
-                    cortex=None, cfg: dict | None = None) -> None:
+def _discovery_loop(
+    bot: str, pairs: list[str], stop: threading.Event, cortex=None, cfg: dict | None = None
+) -> None:
     """Background periodic GP discovery (decoupled from the heartbeat cycle).
 
     Runs _maybe_discover for each pair on its own interval so a slow price API
@@ -369,6 +374,7 @@ def _discovery_loop(bot: str, pairs: list[str], stop: threading.Event,
     if the trade loop is wedged. [X1]
     """
     from hermes_core.engines.genetic import load_discovered_indicators
+
     interval = max(int(get_env("DISCOVERY_INTERVAL_S", "3600")), 60)
     # Run an immediate first pass shortly after startup, then every `interval`.
     while not stop.is_set():
@@ -377,13 +383,14 @@ def _discovery_loop(bot: str, pairs: list[str], stop: threading.Event,
                 return
             try:
                 from hermes_core.engines.loop import _maybe_discover
+
                 _maybe_discover(bot, pair, cortex=cortex)
                 n = len(load_discovered_indicators(pair))
-                print(f"[hermes][discovery] {bot}/{pair}: discovered={n}",
-                      flush=True)
+                print(f"[hermes][discovery] {bot}/{pair}: discovered={n}", flush=True)
             except Exception as exc:  # noqa: BLE001 — never let discovery kill the bot
-                print(f"[hermes][discovery] {bot}/{pair}: ERROR {exc!r}",
-                      file=sys.stderr, flush=True)
+                print(
+                    f"[hermes][discovery] {bot}/{pair}: ERROR {exc!r}", file=sys.stderr, flush=True
+                )
                 continue
         # Push discovered state now (decoupled from the trade loop). [X1]
         try:
@@ -405,12 +412,15 @@ async def run_bot(bot_name: str) -> None:
     # Seed volume strategies from image defaults (never overwrites existing).
     with contextlib.suppress(Exception):
         from hermes_core.config import ensure_bot_strategies_seeded
+
         ensure_bot_strategies_seeded(bot)
     cfg = load_config(bot)
     pairs = cfg.get("pairs") or []
     cycle_seconds = int(get_env("HERMES_CYCLE_SECONDS", "60"))
-    print(f"[hermes] bot={bot} pairs={pairs} backend={get_env('PRICE_BACKEND','aggregate')}",
-          flush=True)
+    print(
+        f"[hermes] bot={bot} pairs={pairs} backend={get_env('PRICE_BACKEND', 'aggregate')}",
+        flush=True,
+    )
 
     # Build the price fetcher; for the aggregate backend this also sets up the
     # live crypto websocket with an on_tick forwarder to the dashboard.
@@ -441,13 +451,14 @@ async def run_bot(bot_name: str) -> None:
     _disc_cortex = None
     try:
         from hermes_core.engines.decision_cortex import Cortex
+
         _disc_cortex = Cortex(bot=bot)
     except Exception:
         _disc_cortex = None
     print(f"[hermes] starting discovery loop for {bot} pairs={pairs}", flush=True)
-    _disc = threading.Thread(target=_discovery_loop,
-                             args=(bot, pairs, _stop, _disc_cortex, cfg),
-                             daemon=True)
+    _disc = threading.Thread(
+        target=_discovery_loop, args=(bot, pairs, _stop, _disc_cortex, cfg), daemon=True
+    )
     _disc.start()
     try:
         while True:
@@ -457,14 +468,18 @@ async def run_bot(bot_name: str) -> None:
             # inflated cooldowns / oversold confluence counts.
             try:
                 summary = await asyncio.to_thread(
-                    run_cycle, bot, cycle, fetch_fn=fetch_fn,
-                    open_positions=open_positions, reentry=reentry,
-                    oversold_pairs=oversold_pairs, vol_above=vol_above,
+                    run_cycle,
+                    bot,
+                    cycle,
+                    fetch_fn=fetch_fn,
+                    open_positions=open_positions,
+                    reentry=reentry,
+                    oversold_pairs=oversold_pairs,
+                    vol_above=vol_above,
                     history_fn=getattr(aggregator, "seed_history_fn", seed_history),
                 )
             except Exception:  # noqa: BLE001 — one bad cycle must not kill the bot
-                print(f"[hermes] {bot} cycle {cycle} errored",
-                      file=sys.stderr, flush=True)
+                print(f"[hermes] {bot} cycle {cycle} errored", file=sys.stderr, flush=True)
                 summary = None
             if isinstance(summary, dict):
                 oversold_pairs = summary.get("oversold_pairs", oversold_pairs)

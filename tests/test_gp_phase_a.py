@@ -22,6 +22,7 @@ def _tmp_discovered(tmp_path, monkeypatch):
 
 def _structured(n=500, start=1.10, seed=3):
     import math
+
     rng = random.Random(seed)
     out = [start]
     for i in range(1, n):
@@ -87,8 +88,14 @@ def test_pool_lift_positive_for_first():
 def test_discover_phase_a_metadata():
     """Admitted indicators carry Phase A dashboard contract fields."""
     inds = gp.discover(
-        "EUR/USD", _structured(600),
-        generations=12, pop_size=24, seed=11, top_k=3, horizon=1, n_islands=2,
+        "EUR/USD",
+        _structured(600),
+        generations=12,
+        pop_size=24,
+        seed=11,
+        top_k=3,
+        horizon=1,
+        n_islands=2,
     )
     if not inds:
         pytest.skip("no admits on synthetic series (gates strict) — grammar path still covered")

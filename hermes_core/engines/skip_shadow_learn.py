@@ -11,6 +11,7 @@ can attach as context (``skipped_json``).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 from collections import Counter
@@ -20,11 +21,11 @@ from hermes_core.env import get_env
 from hermes_core.state.paths import bot_state_dir, current_bot
 
 # Cadence / gates
-SKIP_WINDOW = 200           # recent skips scanned per pair
-SHADOW_WINDOW = 80          # recent gp_shadow rows scanned
-SKIP_FIRE_EVERY = 50        # fire when pair skip count crosses multiples of this
-SKIP_MIN_FOR_RULE = 20      # need at least this many in-window skips to propose
-DOMINANCE = 0.55            # top reason share to treat as dominant
+SKIP_WINDOW = 200  # recent skips scanned per pair
+SHADOW_WINDOW = 80  # recent gp_shadow rows scanned
+SKIP_FIRE_EVERY = 50  # fire when pair skip count crosses multiples of this
+SKIP_MIN_FOR_RULE = 20  # need at least this many in-window skips to propose
+DOMINANCE = 0.55  # top reason share to treat as dominant
 
 LATCH_NAME = ".skip_shadow_latches.json"
 
@@ -38,6 +39,8 @@ def skip_shadow_promote_enabled() -> bool:
 
 
 PROMOTE_LATCH_NAME = ".skip_shadow_promote_latches.json"
+
+
 def _read_jsonl(path: Path, limit: int) -> list[dict]:
     if not path.exists() or limit <= 0:
         return []
@@ -111,9 +114,7 @@ def format_skip_shadow_context(analysis: dict) -> str:
         return ""
     parts = [f"skips={analysis['skip_count']}"]
     if analysis.get("top_reason"):
-        parts.append(
-            f"top={analysis['top_reason']}({analysis.get('top_share', 0):.0%})"
-        )
+        parts.append(f"top={analysis['top_reason']}({analysis.get('top_share', 0):.0%})")
     if analysis.get("shadow_count"):
         parts.append(f"shadow_n={analysis['shadow_count']}")
         if analysis.get("shadow_consensus"):
@@ -152,16 +153,18 @@ def propose_skip_shadow_notes(
     }
 
     if top and share >= DOMINANCE:
-        notes.append({
-            **base,
-            "variable": "observation",
-            "old": None,
-            "new": None,
-            "reason": (
-                f"HIF Phase-4: dominant skip '{top}' "
-                f"({share:.0%} of {n} recent). Context: {ctx}"
-            ),
-        })
+        notes.append(
+            {
+                **base,
+                "variable": "observation",
+                "old": None,
+                "new": None,
+                "reason": (
+                    f"HIF Phase-4: dominant skip '{top}' "
+                    f"({share:.0%} of {n} recent). Context: {ctx}"
+                ),
+            }
+        )
 
     # Actionable shadow proposal: RR guard dominance with TP < SL.
     if top == "rr_guard" and share >= DOMINANCE and strategy:
@@ -171,39 +174,38 @@ def propose_skip_shadow_notes(
         except (TypeError, ValueError):
             sl, tp = 0.0, 0.0
         if sl > 0 and tp > 0 and tp < sl:
-            notes.append({
-                **base,
-                "status": "skip_shadow_proposed",
-                "variable": "profit_target_pct",
-                "old": tp,
-                "new": round(sl, 4),  # restore RR >= 1.0
-                "reason": (
-                    f"HIF Phase-4: rr_guard dominates skips ({share:.0%}); "
-                    f"TP {tp} < SL {sl} — propose TP=SL for RR=1.0 (shadow only)"
-                ),
-                "confidence": 0.5,
-                "deployable": False,
-            })
+            notes.append(
+                {
+                    **base,
+                    "status": "skip_shadow_proposed",
+                    "variable": "profit_target_pct",
+                    "old": tp,
+                    "new": round(sl, 4),  # restore RR >= 1.0
+                    "reason": (
+                        f"HIF Phase-4: rr_guard dominates skips ({share:.0%}); "
+                        f"TP {tp} < SL {sl} — propose TP=SL for RR=1.0 (shadow only)"
+                    ),
+                    "confidence": 0.5,
+                    "deployable": False,
+                }
+            )
 
     # Shadow lean note when GP often votes but live stays quiet.
     cons = analysis.get("shadow_consensus") or {}
-    if (
-        analysis.get("shadow_signals", 0) >= 5
-        and top == "no_signal"
-        and share >= 0.5
-        and cons
-    ):
+    if analysis.get("shadow_signals", 0) >= 5 and top == "no_signal" and share >= 0.5 and cons:
         lean = max(cons, key=cons.get)
-        notes.append({
-            **base,
-            "variable": "observation",
-            "old": None,
-            "new": None,
-            "reason": (
-                f"HIF Phase-4: live no_signal dominant while GP shadow leans "
-                f"'{lean}' ({analysis.get('shadow_signals')} shadow signals). {ctx}"
-            ),
-        })
+        notes.append(
+            {
+                **base,
+                "variable": "observation",
+                "old": None,
+                "new": None,
+                "reason": (
+                    f"HIF Phase-4: live no_signal dominant while GP shadow leans "
+                    f"'{lean}' ({analysis.get('shadow_signals')} shadow signals). {ctx}"
+                ),
+            }
+        )
 
     return notes
 
@@ -235,11 +237,10 @@ def _log_hypotheses(recs: list[dict]) -> None:
     if not recs:
         return
     from hermes_core.engines.reflect import _log_hypothesis
+
     for rec in recs:
-        try:
+        with contextlib.suppress(Exception):
             _log_hypothesis(rec)
-        except Exception:  # noqa: BLE001
-            pass
 
 
 def maybe_skip_shadow_learn(
@@ -285,16 +286,21 @@ def maybe_skip_shadow_learn(
             if bucket <= prev:
                 continue
             notes = propose_skip_shadow_notes(
-                pair, bot, analysis, strategy=strategies.get(pair),
+                pair,
+                bot,
+                analysis,
+                strategy=strategies.get(pair),
             )
             if notes:
                 _log_hypotheses(notes)
-                summary["fired"].append({
-                    "pair": pair,
-                    "bucket": bucket,
-                    "n_notes": len(notes),
-                    "top_reason": analysis.get("top_reason"),
-                })
+                summary["fired"].append(
+                    {
+                        "pair": pair,
+                        "bucket": bucket,
+                        "n_notes": len(notes),
+                        "top_reason": analysis.get("top_reason"),
+                    }
+                )
             latches[pair] = bucket
         except Exception:  # noqa: BLE001 — never break the cycle
             continue
@@ -328,8 +334,7 @@ def _save_promote_latches(bot: str, data: dict) -> None:
 
 def _proposal_key(rec: dict) -> str:
     return (
-        f"{rec.get('pair')}|{rec.get('variable')}|{rec.get('old')}|"
-        f"{rec.get('new')}|{rec.get('ts')}"
+        f"{rec.get('pair')}|{rec.get('variable')}|{rec.get('old')}|{rec.get('new')}|{rec.get('ts')}"
     )
 
 
@@ -362,9 +367,9 @@ def promote_skip_shadow_proposal(
     Never blind: always runs backtest first. ``auto_deploy`` defaults to
     REFLECT_AUTO_DEPLOY (same lever as trade reflection).
     """
-    from hermes_core.engines.backtest import backtest_with_history
-    from hermes_core.engines.reflect import apply_strategy_change, _log_hypothesis
     from hermes_core.config import load_strategy_for_pair
+    from hermes_core.engines.backtest import backtest_with_history
+    from hermes_core.engines.reflect import _log_hypothesis, apply_strategy_change
 
     bot = bot or rec.get("bot") or current_bot()
     pair = rec.get("pair")
@@ -386,37 +391,55 @@ def promote_skip_shadow_proposal(
     bt = backtest_fn or backtest_with_history
     try:
         verdict = bt(
-            pair, variable, old_val, new_val,
-            strategy=strategy, prices=prices, bot=bot,
+            pair,
+            variable,
+            old_val,
+            new_val,
+            strategy=strategy,
+            prices=prices,
+            bot=bot,
         )
     except Exception as exc:  # noqa: BLE001 — fail closed (no deploy)
-        _log_hypothesis({
-            "pair": pair, "bot": bot, "variable": variable,
-            "old": old_val, "new": new_val,
-            "status": "backtest_rejected",
-            "source": "skip_shadow_promote",
-            "backtest": {"approved": False, "reason": f"error:{exc}"},
-            "ts": time.time(),
-            "deployable": False,
-        })
+        _log_hypothesis(
+            {
+                "pair": pair,
+                "bot": bot,
+                "variable": variable,
+                "old": old_val,
+                "new": new_val,
+                "status": "backtest_rejected",
+                "source": "skip_shadow_promote",
+                "backtest": {"approved": False, "reason": f"error:{exc}"},
+                "ts": time.time(),
+                "deployable": False,
+            }
+        )
         return {"status": "backtest_reject", "deployed": False, "error": str(exc)}
 
     approved = bool(verdict.get("approved"))
-    _log_hypothesis({
-        "pair": pair, "bot": bot, "variable": variable,
-        "old": old_val, "new": new_val,
-        "status": "backtest_approved" if approved else "backtest_rejected",
-        "source": "skip_shadow_promote",
-        "backtest": {
-            "approved": approved,
-            "reason": verdict.get("reason"),
-            "version_bumped": (verdict.get("phases") or {}).get(
-                "phase6_deploy", {},
-            ).get("version_bumped"),
-        },
-        "ts": time.time(),
-        "deployable": False,
-    })
+    _log_hypothesis(
+        {
+            "pair": pair,
+            "bot": bot,
+            "variable": variable,
+            "old": old_val,
+            "new": new_val,
+            "status": "backtest_approved" if approved else "backtest_rejected",
+            "source": "skip_shadow_promote",
+            "backtest": {
+                "approved": approved,
+                "reason": verdict.get("reason"),
+                "version_bumped": (verdict.get("phases") or {})
+                .get(
+                    "phase6_deploy",
+                    {},
+                )
+                .get("version_bumped"),
+            },
+            "ts": time.time(),
+            "deployable": False,
+        }
+    )
     if not approved:
         return {
             "status": "backtest_reject",
@@ -425,19 +448,28 @@ def promote_skip_shadow_proposal(
             "verdict": verdict,
         }
 
-    bumped = (verdict.get("phases") or {}).get("phase6_deploy", {}).get(
-        "version_bumped",
+    bumped = (
+        (verdict.get("phases") or {})
+        .get("phase6_deploy", {})
+        .get(
+            "version_bumped",
+        )
     )
     if not auto_deploy:
-        _log_hypothesis({
-            "pair": pair, "bot": bot, "variable": variable,
-            "old": old_val, "new": new_val,
-            "status": "approved_pending_deploy",
-            "source": "skip_shadow_promote",
-            "version": bumped,
-            "ts": time.time(),
-            "deployable": True,
-        })
+        _log_hypothesis(
+            {
+                "pair": pair,
+                "bot": bot,
+                "variable": variable,
+                "old": old_val,
+                "new": new_val,
+                "status": "approved_pending_deploy",
+                "source": "skip_shadow_promote",
+                "version": bumped,
+                "ts": time.time(),
+                "deployable": True,
+            }
+        )
         return {
             "status": "approved_pending_deploy",
             "pair": pair,
@@ -447,18 +479,27 @@ def promote_skip_shadow_proposal(
         }
 
     written = apply_strategy_change(
-        pair, variable, new_val,
-        bot=bot, version=bumped, strategy=strategy,
+        pair,
+        variable,
+        new_val,
+        bot=bot,
+        version=bumped,
+        strategy=strategy,
     )
-    _log_hypothesis({
-        "pair": pair, "bot": bot, "variable": variable,
-        "old": old_val, "new": new_val,
-        "status": "deployed",
-        "source": "skip_shadow_promote",
-        "version": written.get("version"),
-        "ts": time.time(),
-        "deployable": True,
-    })
+    _log_hypothesis(
+        {
+            "pair": pair,
+            "bot": bot,
+            "variable": variable,
+            "old": old_val,
+            "new": new_val,
+            "status": "deployed",
+            "source": "skip_shadow_promote",
+            "version": written.get("version"),
+            "ts": time.time(),
+            "deployable": True,
+        }
+    )
     return {
         "status": "deployed",
         "pair": pair,

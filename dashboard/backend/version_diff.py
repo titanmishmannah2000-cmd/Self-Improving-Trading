@@ -9,13 +9,14 @@ snapshots the old vs new config and analyzes the expected impact.
 import json
 import os
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
-from collections import defaultdict
 
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
-from findings_store import _get_conn, insert_finding, get_latest_run, list_findings, get_finding, update_finding_status, _ts
+import contextlib
+
+from findings_store import get_latest_run, insert_finding
 
 _REPO = Path(__file__).resolve().parents[2]
 STRATEGY_DIRS = {
@@ -35,10 +36,8 @@ def snapshot_current(bot_name: str) -> dict:
     if not strategy_dir or not strategy_dir.exists():
         return strategies
     for yaml_file in sorted(strategy_dir.glob("*.yaml")):
-        try:
+        with contextlib.suppress(Exception):
             strategies[yaml_file.stem] = yaml_file.read_text(encoding="utf-8")
-        except Exception:
-            pass
     return strategies
 
 
@@ -72,10 +71,8 @@ def detect_changes(verbose: bool = True) -> list[dict]:
         snapshot_file = VERSION_HISTORY_DIR / f"{bot_name}_strategies.json"
         previous = {}
         if snapshot_file.exists():
-            try:
+            with contextlib.suppress(Exception):
                 previous = json.loads(snapshot_file.read_text())
-            except Exception:
-                pass
 
         # Get current
         current = snapshot_current(bot_name)
@@ -91,28 +88,28 @@ def detect_changes(verbose: bool = True) -> list[dict]:
                 new_ver = 0
                 for line in old_yaml.splitlines():
                     if line.strip().startswith("version:"):
-                        try: old_ver = int(line.split(":", 1)[1].strip())
-                        except: pass
+                        with contextlib.suppress(BaseException):
+                            old_ver = int(line.split(":", 1)[1].strip())
                 for line in new_yaml.splitlines():
                     if line.strip().startswith("version:"):
-                        try: new_ver = int(line.split(":", 1)[1].strip())
-                        except: pass
+                        with contextlib.suppress(BaseException):
+                            new_ver = int(line.split(":", 1)[1].strip())
 
                 if new_ver > old_ver:
-                    changes.append({
-                        "bot": bot_name,
-                        "pair": pair,
-                        "old_version": old_ver,
-                        "new_version": new_ver,
-                        "old_yaml": old_yaml,
-                        "new_yaml": new_yaml,
-                    })
+                    changes.append(
+                        {
+                            "bot": bot_name,
+                            "pair": pair,
+                            "old_version": old_ver,
+                            "new_version": new_ver,
+                            "old_yaml": old_yaml,
+                            "new_yaml": new_yaml,
+                        }
+                    )
 
         # Save current as snapshot for next run
-        try:
+        with contextlib.suppress(Exception):
             snapshot_file.write_text(json.dumps(current, indent=2))
-        except Exception:
-            pass
 
     return changes
 
@@ -122,8 +119,8 @@ def analyze_change(change: dict) -> dict:
     # Extract diff highlights
     old_lines = set(change["old_yaml"].splitlines())
     new_lines = set(change["new_yaml"].splitlines())
-    added = [l for l in new_lines if l not in old_lines and l.strip()]
-    removed = [l for l in old_lines if l not in new_lines and l.strip()]
+    added = [line for line in new_lines if line not in old_lines and line.strip()]
+    removed = [line for line in old_lines if line not in new_lines and line.strip()]
 
     diff_text = "Added/Changed:\n" + "\n".join(added[:10])
     if removed:
@@ -131,6 +128,7 @@ def analyze_change(change: dict) -> dict:
 
     try:
         import httpx
+
         api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         if not api_key:
             env_path = _HERE / ".env"
@@ -148,8 +146,14 @@ def analyze_change(change: dict) -> dict:
             json={
                 "model": "deepseek-v4-flash",
                 "messages": [
-                    {"role": "system", "content": "You analyse strategy config changes. Given old vs new YAML for a trading pair, describe what changed and predict the likely impact on win rate, PnL, and risk. Output JSON: {has_analysis: bool, summary: str, predicted_impact: str, confidence: int}"},
-                    {"role": "user", "content": f"Bot: {change['bot']}, Pair: {change['pair']}, v{change['old_version']} → v{change['new_version']}\n\nDiff:\n{diff_text}"},
+                    {
+                        "role": "system",
+                        "content": "You analyse strategy config changes. Given old vs new YAML for a trading pair, describe what changed and predict the likely impact on win rate, PnL, and risk. Output JSON: {has_analysis: bool, summary: str, predicted_impact: str, confidence: int}",
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Bot: {change['bot']}, Pair: {change['pair']}, v{change['old_version']} → v{change['new_version']}\n\nDiff:\n{diff_text}",
+                    },
                 ],
                 "response_format": {"type": "json_object"},
                 "max_tokens": 1024,
@@ -170,9 +174,9 @@ def analyze_change(change: dict) -> dict:
 def run_version_diff(verbose: bool = True) -> list[dict]:
     """Detect and analyze strategy version changes."""
     if verbose:
-        print(f"\n{'='*40}")
-        print(f"VERSION DIFF INTELLIGENCE")
-        print(f"{'='*40}")
+        print(f"\n{'=' * 40}")
+        print("VERSION DIFF INTELLIGENCE")
+        print(f"{'=' * 40}")
 
     changes = detect_changes(verbose)
     if not changes:
@@ -186,14 +190,18 @@ def run_version_diff(verbose: bool = True) -> list[dict]:
     stored = []
     for change in changes:
         if verbose:
-            print(f"  📋 {change['bot']} {change['pair']}: v{change['old_version']} → v{change['new_version']}")
+            print(
+                f"  📋 {change['bot']} {change['pair']}: v{change['old_version']} → v{change['new_version']}"
+            )
 
         analysis = analyze_change(change)
         if not analysis.get("has_analysis"):
             continue
 
         latest_run = get_latest_run()
-        audit_run_id = latest_run["id"] if latest_run else f"ver-{datetime.now(timezone.utc).strftime('%Y%m%d')}"
+        audit_run_id = (
+            latest_run["id"] if latest_run else f"ver-{datetime.now(UTC).strftime('%Y%m%d')}"
+        )
 
         finding = insert_finding(
             domain="strategy-logic",

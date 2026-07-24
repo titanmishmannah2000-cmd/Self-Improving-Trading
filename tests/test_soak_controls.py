@@ -2,20 +2,15 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
-import pytest
-
+from hermes_core.engines import self_audit
 from hermes_core.engines.loop import run_cycle
 from hermes_core.engines.soak_controls import (
+    clear_halt,
     ensure_state_files,
     entries_halted,
     price_sanity_book,
     write_halt,
-    clear_halt,
 )
-from hermes_core.engines import self_audit
 
 
 class FakeFeed:
@@ -85,7 +80,8 @@ def test_halt_file_blocks_new_entries(tmp_path, monkeypatch):
     # Seed a long history so indicators work.
     hist = [{"price": 1.08 + i * 0.0001} for i in range(80)]
     summary = run_cycle(
-        "forex", 1,
+        "forex",
+        1,
         fetch_fn=feed,
         history_fn=lambda pair: hist,
         now_fn=lambda: 12 * 3600,
@@ -119,6 +115,7 @@ def test_self_audit_archive_orphan(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_STATE_ROOT", str(tmp_path))
     # Create goldbot orphan under repo — audit looks at repo_root path.
     from hermes_core.config import repo_root
+
     orphan = repo_root() / "goldbot" / "state"
     orphan.mkdir(parents=True, exist_ok=True)
     gate = orphan / "gp_promote_gate.json"
@@ -130,4 +127,5 @@ def test_self_audit_archive_orphan(tmp_path, monkeypatch):
         assert names["archive_isolated"]["passed"] is False
     finally:
         import shutil
+
         shutil.rmtree(repo_root() / "goldbot", ignore_errors=True)

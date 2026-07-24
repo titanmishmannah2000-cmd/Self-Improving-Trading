@@ -210,9 +210,13 @@ class PriceStream:
         return hist[-max_candles:]
 
 
-def make_stream_fetch(pairs: list[str], *, url: str | None = None,
-                      api_key: str | None = None,
-                      on_tick: Callable[[str, float], None] | None = None) -> PriceStream:
+def make_stream_fetch(
+    pairs: list[str],
+    *,
+    url: str | None = None,
+    api_key: str | None = None,
+    on_tick: Callable[[str, float], None] | None = None,
+) -> PriceStream:
     """Build a ``PriceStream`` and return its instance.
 
     The caller is responsible for ``await stream.connect()`` (and ``aclose``)

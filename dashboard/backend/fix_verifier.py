@@ -10,13 +10,12 @@ Usage:
 
 import json
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
-from findings_store import _get_conn, list_findings, get_finding, get_latest_run, update_finding_status
+from findings_store import _get_conn, get_finding, get_latest_run, list_findings
 
 
 def get_unverified_fixes(hours_back: int = 168) -> list[dict]:
@@ -27,7 +26,7 @@ def get_unverified_fixes(hours_back: int = 168) -> list[dict]:
     """
     conn = _get_conn()
     try:
-        since = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).isoformat()
+        since = (datetime.now(UTC) - timedelta(hours=hours_back)).isoformat()
         rows = conn.execute(
             """SELECT * FROM audit_findings
                WHERE status = 'applied' AND updated_at >= ?
@@ -49,7 +48,10 @@ def verify_finding(finding_id: str) -> dict:
     if not finding:
         return {"status": "error", "evidence": "Finding not found"}
     if finding["status"] != "applied":
-        return {"status": "inconclusive", "evidence": f"Finding is {finding['status']}, not applied"}
+        return {
+            "status": "inconclusive",
+            "evidence": f"Finding is {finding['status']}, not applied",
+        }
 
     domain = finding["domain"]
     finding_type = finding["type"]
@@ -74,8 +76,10 @@ def verify_finding(finding_id: str) -> dict:
         elif nf["created_at"] > fix_time and nf["type"] == finding_type:
             # Same type in same domain — check if location suggests same bug
             nf_loc = (nf.get("location") or "")[:60]
-            if location_hint and nf_loc and (
-                location_hint[:30] in nf_loc or nf_loc[:30] in location_hint
+            if (
+                location_hint
+                and nf_loc
+                and (location_hint[:30] in nf_loc or nf_loc[:30] in location_hint)
             ):
                 regressions.append(nf)
 
@@ -109,7 +113,9 @@ def verify_all(verbose: bool = True) -> list[dict]:
         results.append(result)
 
         if verbose:
-            status_icon = {"verified": "✅", "regressed": "🔴", "inconclusive": "🟡"}.get(result["status"], "❓")
+            status_icon = {"verified": "✅", "regressed": "🔴", "inconclusive": "🟡"}.get(
+                result["status"], "❓"
+            )
             print(f"  {status_icon} [{f['domain']:>22}] {f['description'][:80]}")
             print(f"      → {result['status']}: {result['evidence'][:100]}")
 
@@ -118,6 +124,7 @@ def verify_all(verbose: bool = True) -> list[dict]:
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="Fix Verification (Layer 4)")
     parser.add_argument("--finding", type=str, help="Verify a specific finding by ID")
     args = parser.parse_args()

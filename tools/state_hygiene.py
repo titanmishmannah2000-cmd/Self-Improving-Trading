@@ -18,7 +18,7 @@ import json
 import shutil
 import time
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,7 +26,7 @@ BOTS = ("forex", "gold", "crypto")
 
 
 def _stamp() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    return datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
 
 
 def quarantine_legacy_state() -> list[str]:
@@ -38,8 +38,12 @@ def quarantine_legacy_state() -> list[str]:
     arch = legacy / "archive" / f"quarantine_{_stamp()}"
     arch.mkdir(parents=True, exist_ok=True)
     for name in (
-        "trades.jsonl", "skips.jsonl", "heartbeat.json", "policy.json",
-        "flatline_log.jsonl", "dashboard.db",
+        "trades.jsonl",
+        "skips.jsonl",
+        "heartbeat.json",
+        "policy.json",
+        "flatline_log.jsonl",
+        "dashboard.db",
     ):
         src = legacy / name
         if src.exists():
@@ -83,6 +87,7 @@ def bootstrap_canonical() -> list[str]:
         ensure_state_files,
         reset_reflection_latches,
     )
+
     actions: list[str] = []
     for bot in BOTS:
         d = ensure_state_files(bot)
@@ -115,10 +120,11 @@ def purge_seed_discovered() -> list[str]:
                 if expr.startswith("ta.") or "mom(close" in expr:
                     dirty = True
                     break
-                if ind.get("horizon") is None or ind.get("interval") is None:
-                    if ind.get("source") in ("seed", "dashboard", None):
-                        dirty = True
-                        break
+                if (ind.get("horizon") is None or ind.get("interval") is None) and ind.get(
+                    "source"
+                ) in ("seed", "dashboard", None):
+                    dirty = True
+                    break
             if dirty:
                 arch = d / "archive"
                 arch.mkdir(parents=True, exist_ok=True)
@@ -152,16 +158,21 @@ def rebuild_learning(bot: str = "forex") -> list[str]:
                 pnl_f = float(pnl)
             except (TypeError, ValueError):
                 continue
-            if abs(pnl_f) == 1.0 and rec.get("exit_reason") in (None, "tp", "sl"):
-                # keep real ±1.0 if hold is long enough
-                if int(rec.get("hold_cycles") or 0) < 2:
-                    continue
-            entries.append({
-                "pair": rec.get("pair"),
-                "type": rec.get("entry_type") or rec.get("type") or "mean_reversion",
-                "outcome": 1 if pnl_f > 0 else 0,
-                "pnl": pnl_f,
-            })
+            # Keep real ±1.0 if hold is long enough; drop short stub toys.
+            if (
+                abs(pnl_f) == 1.0
+                and rec.get("exit_reason") in (None, "tp", "sl")
+                and int(rec.get("hold_cycles") or 0) < 2
+            ):
+                continue
+            entries.append(
+                {
+                    "pair": rec.get("pair"),
+                    "type": rec.get("entry_type") or rec.get("type") or "mean_reversion",
+                    "outcome": 1 if pnl_f > 0 else 0,
+                    "pnl": pnl_f,
+                }
+            )
     cortex_path.write_text(
         json.dumps({"entries": entries[-2000:], "indicator_stats": {}}, indent=2),
         encoding="utf-8",
@@ -216,9 +227,12 @@ def set_soak_sessions_24h() -> list[str]:
     """Set runtime (+ seed) forex sessions to 24h for paper soak."""
     actions: list[str] = []
     import yaml  # type: ignore
+
     targets = []
-    for base in (ROOT / "forex" / "state" / "strategies",
-                 ROOT / "bots" / "forex" / "state" / "strategies"):
+    for base in (
+        ROOT / "forex" / "state" / "strategies",
+        ROOT / "bots" / "forex" / "state" / "strategies",
+    ):
         if base.exists():
             targets.extend(base.glob("*.yaml"))
     for path in targets:

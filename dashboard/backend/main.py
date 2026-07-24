@@ -17,15 +17,14 @@ Endpoints:
 """
 
 import json
-import os
-import sqlite3
-import secrets
-import sys
 import math
+import os
+import secrets
+import sqlite3
+import sys
 import threading
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
 # Ensure sibling modules (live_compat, audit_*, etc.) resolve whether this file
 # is run directly (python main.py) or imported as dashboard.backend.main.
@@ -66,9 +65,7 @@ def _is_contaminated_trade(r) -> bool:
         entry = r["entry_price"] or 0
     if tid in CONTAMINATED_TRADE_IDS:
         return True
-    if pair == CONTAMINATED_PAIR and (entry or 0) > CONTAMINATED_ENTRY_MAX:
-        return True
-    return False
+    return bool(pair == CONTAMINATED_PAIR and (entry or 0) > CONTAMINATED_ENTRY_MAX)
 
 
 def _count_closed_trades(conn, bot: str, valid_pairs: list | None = None) -> int:
@@ -107,9 +104,7 @@ def purge_legacy_dashboard_rows(conn) -> dict:
     """
     epoch = PROJECT_TRADE_EPOCH
     stats = {
-        "trades_legacy_id": conn.execute(
-            "DELETE FROM trades WHERE id LIKE 'trade_%'"
-        ).rowcount,
+        "trades_legacy_id": conn.execute("DELETE FROM trades WHERE id LIKE 'trade_%'").rowcount,
         "trades_before_epoch": conn.execute(
             """
             DELETE FROM trades WHERE
@@ -135,6 +130,7 @@ def purge_legacy_dashboard_rows(conn) -> dict:
 
 
 # ── Wilson Score Interval ──
+
 
 def wilson_score_interval(wins: int, total: int, confidence: float = 0.95):
     """Wilson score interval for win rate confidence. Returns (lower%, upper%)."""
@@ -164,9 +160,12 @@ PAIR_TICKERS = {
 }
 
 PAIR_MAP = {
-    "EUR_USD": "EUR/USD", "GBP_USD": "GBP/USD",
-    "AUD_USD": "AUD/USD", "GBP_JPY": "GBP/JPY",
-    "XAU_USD": "XAU/USD", "XAG_USD": "XAG/USD",
+    "EUR_USD": "EUR/USD",
+    "GBP_USD": "GBP/USD",
+    "AUD_USD": "AUD/USD",
+    "GBP_JPY": "GBP/JPY",
+    "XAU_USD": "XAU/USD",
+    "XAG_USD": "XAG/USD",
 }
 
 app = FastAPI(title="Hermes Dashboard API")
@@ -189,10 +188,13 @@ VALID_BOT_ALIASES = {
 # Teach this backend to read the ACTUAL live bot state files (bots/{bot}/state)
 # and serve them in the shapes the redesigned frontend expects. Registered
 # BEFORE the base routes so these take precedence where they overlap.
+import contextlib
+
 from live_compat import register as _register_live_compat
 
+
 def utcnow_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 # Real-time price fan-out (S19 / [GUARD L64])
@@ -205,20 +207,18 @@ def _broadcast_price(bot: str, prices: dict) -> None:
     with _sse_lock:
         subs = list(_sse_subscribers)
     for q in subs:
-        try:
+        with contextlib.suppress(Exception):
             q.put_nowait(payload)
-        except Exception:
-            pass
 
 
-_register_live_compat(
-    app, lambda: INGEST_TOKEN, VALID_BOTS, on_price_broadcast=_broadcast_price
-)
+_register_live_compat(app, lambda: INGEST_TOKEN, VALID_BOTS, on_price_broadcast=_broadcast_price)
+
 
 # Quick test route registered immediately after FastAPI app creation
 @app.get("/api/quick-test")
 def quick_test():
-    return {"status": "quick test route works", "ts": datetime.now(timezone.utc).isoformat()}
+    return {"status": "quick test route works", "ts": datetime.now(UTC).isoformat()}
+
 
 # Rebuild marker: Force Railway to pick up the latest routes (discovered, cortex, audit endpoints)
 INGEST_TOKEN = os.getenv("INGEST_TOKEN", "")
@@ -259,6 +259,7 @@ def get_conn():
 
 def test_client():
     from fastapi.testclient import TestClient
+
     return TestClient(app)
 
 
@@ -404,12 +405,12 @@ except sqlite3.OperationalError:
 
 
 def _ts() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def upsert_trades(conn, bot: str, trades: list):
     for t in trades:
-        tid = t.get("id") or f"{t.get('entry_ts','')}-{t.get('pair', t.get('asset',''))}"
+        tid = t.get("id") or f"{t.get('entry_ts', '')}-{t.get('pair', t.get('asset', ''))}"
         conn.execute(
             """
             INSERT INTO trades (id, bot, pair, entry_price, exit_price, entry_ts, exit_ts,
@@ -425,13 +426,21 @@ def upsert_trades(conn, bot: str, trades: list):
                 raw_json=excluded.raw_json
             """,
             (
-                tid, bot, t.get("pair") or t.get("asset"),
-                t.get("entry_price"), t.get("exit_price"),
-                t.get("entry_ts"), t.get("exit_ts"),
-                t.get("pnl_pct"), t.get("exit_reason"), t.get("hold_cycles"),
-                t.get("entry_rsi"), t.get("entry_regime"),
+                tid,
+                bot,
+                t.get("pair") or t.get("asset"),
+                t.get("entry_price"),
+                t.get("exit_price"),
+                t.get("entry_ts"),
+                t.get("exit_ts"),
+                t.get("pnl_pct"),
+                t.get("exit_reason"),
+                t.get("hold_cycles"),
+                t.get("entry_rsi"),
+                t.get("entry_regime"),
                 t.get("entry_quality_score") or t.get("quality"),
-                t.get("strategy_type"), t.get("chart_context"),
+                t.get("strategy_type"),
+                t.get("chart_context"),
                 json.dumps(t),
             ),
         )
@@ -448,7 +457,7 @@ def upsert_hypotheses(conn, bot: str, hyps: list):
                 sec = float(ts)
                 if sec > 1e12:  # ms
                     sec /= 1000.0
-                ts = datetime.fromtimestamp(sec, tz=timezone.utc).isoformat()
+                ts = datetime.fromtimestamp(sec, tz=UTC).isoformat()
             except (TypeError, ValueError, OSError, OverflowError):
                 ts = utcnow_iso()
         old_v = h.get("old_value", h.get("old"))
@@ -462,12 +471,17 @@ def upsert_hypotheses(conn, bot: str, hyps: list):
             ON CONFLICT(bot, ts, variable) DO NOTHING
             """,
             (
-                bot, ts, h.get("pair") or h.get("symbol"),
-                h.get("version_from"), h.get("version_to"),
+                bot,
+                ts,
+                h.get("pair") or h.get("symbol"),
+                h.get("version_from"),
+                h.get("version_to"),
                 h.get("variable"),
                 None if old_v is None else str(old_v),
                 None if new_v is None else str(new_v),
-                reasoning, h.get("mode") or h.get("status"), json.dumps(h),
+                reasoning,
+                h.get("mode") or h.get("status"),
+                json.dumps(h),
             ),
         )
 
@@ -480,7 +494,7 @@ def upsert_skips(conn, bot: str, skips: list):
                 sec = float(ts)
                 if sec > 1e12:
                     sec /= 1000.0
-                ts = datetime.fromtimestamp(sec, tz=timezone.utc).isoformat()
+                ts = datetime.fromtimestamp(sec, tz=UTC).isoformat()
             except (TypeError, ValueError, OSError, OverflowError):
                 ts = utcnow_iso()
         reason = s.get("reason_skipped") or s.get("reason")
@@ -495,9 +509,14 @@ def upsert_skips(conn, bot: str, skips: list):
                 raw_json=excluded.raw_json
             """,
             (
-                bot, ts, s.get("pair"), reason,
-                s.get("rsi_at_skip"), s.get("price_at_skip"),
-                s.get("missed_pnl"), json.dumps(s),
+                bot,
+                ts,
+                s.get("pair"),
+                reason,
+                s.get("rsi_at_skip"),
+                s.get("price_at_skip"),
+                s.get("missed_pnl"),
+                json.dumps(s),
             ),
         )
 
@@ -510,15 +529,18 @@ def health():
         row = conn.execute("SELECT COUNT(*) c FROM trades WHERE bot=?", (bot,)).fetchone()
         counts[bot] = row["c"]
     conn.close()
-    return {"status": "ok-v2-new-code", "ts": utcnow_iso(), "deployment_timestamp": "2026-07-14T18:20:00Z", "trade_counts": counts}
+    return {
+        "status": "ok-v2-new-code",
+        "ts": utcnow_iso(),
+        "deployment_timestamp": "2026-07-14T18:20:00Z",
+        "trade_counts": counts,
+    }
 
 
 @app.get("/api/health/ping")
 def health_ping():
     """Minimal health endpoint for external uptime monitors. No auth needed. No trading data."""
     return {"status": "ok", "last_seen": utcnow_iso()}
-
-
 
 
 @app.get("/api/test-rebuild-2026-07-14")
@@ -539,9 +561,11 @@ def spark(pair: str, bars: int = 30):
     bot_for_pair = None
     for _b in VALID_BOTS:
         try:
-            row = get_conn().execute(
-                "SELECT heartbeat_json FROM latest_state WHERE bot=?", (_b,)
-            ).fetchone()
+            row = (
+                get_conn()
+                .execute("SELECT heartbeat_json FROM latest_state WHERE bot=?", (_b,))
+                .fetchone()
+            )
             if row and row["heartbeat_json"]:
                 hb = json.loads(row["heartbeat_json"])
                 ph = hb.get("price_history", {}) or {}
@@ -553,8 +577,10 @@ def spark(pair: str, bars: int = 30):
     ticker = PAIR_TICKERS.get(pair)
     if ticker:
         try:
-            import yfinance as yf
             import warnings
+
+            import yfinance as yf
+
             warnings.filterwarnings("ignore")
             df = yf.download(ticker, period="3d", interval="5m", progress=False, auto_adjust=True)
             if df is not None and len(df) > 0:
@@ -569,9 +595,11 @@ def spark(pair: str, bars: int = 30):
     # Fallback to the bot's rolling live-price history.
     if bot_for_pair:
         try:
-            row = get_conn().execute(
-                "SELECT heartbeat_json FROM latest_state WHERE bot=?", (bot_for_pair,)
-            ).fetchone()
+            row = (
+                get_conn()
+                .execute("SELECT heartbeat_json FROM latest_state WHERE bot=?", (bot_for_pair,))
+                .fetchone()
+            )
             if row and row["heartbeat_json"]:
                 hb = json.loads(row["heartbeat_json"])
                 ph = (hb.get("price_history", {}) or {}).get(pair, [])
@@ -594,14 +622,13 @@ async def ingest(bot_name: str, request: Request):
             raise HTTPException(404, f"Unknown bot '{bot_name}'")
     bot_name = normalized
 
-    if INGEST_TOKEN:
-        if request.headers.get("X-Ingest-Token", "") != INGEST_TOKEN:
-            raise HTTPException(401, "Invalid or missing ingest token")
+    if INGEST_TOKEN and request.headers.get("X-Ingest-Token", "") != INGEST_TOKEN:
+        raise HTTPException(401, "Invalid or missing ingest token")
 
     try:
         payload = await request.json()
-    except Exception:
-        raise HTTPException(400, "Body must be valid JSON")
+    except Exception as err:
+        raise HTTPException(400, "Body must be valid JSON") from err
 
     # Legacy S16 ingest: single trade record (id + pair) without recent_trades wrapper.
     if "recent_trades" not in payload and payload.get("id"):
@@ -616,9 +643,19 @@ async def ingest(bot_name: str, request: Request):
         # Guard: forex bot should never receive gold pair data
         if bot_name == "forex":
             gold_pairs = {"XAU/USD", "XAG/USD"}
-            trades = [t for t in payload.get("recent_trades", []) if t.get("pair", t.get("asset", "")) not in gold_pairs]
-            hyps = [h for h in payload.get("recent_hypotheses", []) if h.get("pair", "") not in gold_pairs]
-            skips = [s for s in payload.get("recent_skips", []) if s.get("pair", "") not in gold_pairs]
+            trades = [
+                t
+                for t in payload.get("recent_trades", [])
+                if t.get("pair", t.get("asset", "")) not in gold_pairs
+            ]
+            hyps = [
+                h
+                for h in payload.get("recent_hypotheses", [])
+                if h.get("pair", "") not in gold_pairs
+            ]
+            skips = [
+                s for s in payload.get("recent_skips", []) if s.get("pair", "") not in gold_pairs
+            ]
         else:
             trades = payload.get("recent_trades", [])
             hyps = payload.get("recent_hypotheses", [])
@@ -728,35 +765,49 @@ def bot_toggle(bot_name: str):
     svc_id = BOT_SERVICE_MAP.get(bot_name)
     if svc_id and _RAILWAY_TOKEN:
         import httpx as _hx
+
         if new_state == "paused":
-            q = '{ service(id: "%s") { deployments(last: 1) { edges { node { id } } } } }' % svc_id
+            q = f'{{ service(id: "{svc_id}") {{ deployments(last: 1) {{ edges {{ node {{ id }} }} }} }} }}'
             try:
                 with _hx.Client(timeout=20) as cl:
-                    r = cl.post("https://api.railway.app/graphql/v2",
-                                json={"query": q},
-                                headers={"Authorization": f"Bearer {_RAILWAY_TOKEN}"})
+                    r = cl.post(
+                        "https://api.railway.app/graphql/v2",
+                        json={"query": q},
+                        headers={"Authorization": f"Bearer {_RAILWAY_TOKEN}"},
+                    )
                     data = r.json()
-                    edges = data.get("data", {}).get("service", {}).get("deployments", {}).get("edges", [])
+                    edges = (
+                        data.get("data", {})
+                        .get("service", {})
+                        .get("deployments", {})
+                        .get("edges", [])
+                    )
                     if edges:
                         dep_id = edges[0]["node"]["id"]
-                        m1 = 'mutation { deploymentStop(id: "%s") }' % dep_id
-                        cl.post("https://api.railway.app/graphql/v2",
-                                json={"query": m1},
-                                headers={"Authorization": f"Bearer {_RAILWAY_TOKEN}"})
-                        m2 = 'mutation { deploymentRemove(id: "%s") }' % dep_id
-                        cl.post("https://api.railway.app/graphql/v2",
-                                json={"query": m2},
-                                headers={"Authorization": f"Bearer {_RAILWAY_TOKEN}"})
+                        m1 = f'mutation {{ deploymentStop(id: "{dep_id}") }}'
+                        cl.post(
+                            "https://api.railway.app/graphql/v2",
+                            json={"query": m1},
+                            headers={"Authorization": f"Bearer {_RAILWAY_TOKEN}"},
+                        )
+                        m2 = f'mutation {{ deploymentRemove(id: "{dep_id}") }}'
+                        cl.post(
+                            "https://api.railway.app/graphql/v2",
+                            json={"query": m2},
+                            headers={"Authorization": f"Bearer {_RAILWAY_TOKEN}"},
+                        )
                         print(f"[TOGGLE] {bot_name} dep {dep_id[:8]} stopped+removed", flush=True)
             except Exception as e:
                 print(f"[TOGGLE] Pause failed: {e}", flush=True)
         else:
-            gql = 'mutation { serviceInstanceRedeploy(environmentId: "%s", serviceId: "%s") }' % (_RAILWAY_ENV, svc_id)
+            gql = f'mutation {{ serviceInstanceRedeploy(environmentId: "{_RAILWAY_ENV}", serviceId: "{svc_id}") }}'
             try:
                 with _hx.Client(timeout=10) as cl:
-                    resp = cl.post("https://api.railway.app/graphql/v2",
-                                   json={"query": gql},
-                                   headers={"Authorization": f"Bearer {_RAILWAY_TOKEN}"})
+                    resp = cl.post(
+                        "https://api.railway.app/graphql/v2",
+                        json={"query": gql},
+                        headers={"Authorization": f"Bearer {_RAILWAY_TOKEN}"},
+                    )
                     print(f"[TOGGLE] {bot_name} redeploy: {resp.status_code}", flush=True)
             except Exception as e:
                 print(f"[TOGGLE] Resume failed: {e}", flush=True)
@@ -784,9 +835,12 @@ def overview():
     conn = get_conn()
     result = {"ts": utcnow_iso(), "bots": {}}
     for bot in VALID_BOTS:
-        state_row = conn.execute("SELECT * FROM latest_state WHERE bot=?",
-            (bot,)).fetchone()
-        strategy = json.loads(state_row["strategy_json"]) if state_row and state_row["strategy_json"] else None
+        state_row = conn.execute("SELECT * FROM latest_state WHERE bot=?", (bot,)).fetchone()
+        strategy = (
+            json.loads(state_row["strategy_json"])
+            if state_row and state_row["strategy_json"]
+            else None
+        )
 
         # Determine valid pairs for this bot from strategy
         valid_pairs = list(strategy.keys()) if strategy else []
@@ -810,7 +864,9 @@ def overview():
 
         # Lifetime closed count (NOT the recent-300 window) — Live pulse source of truth.
         closed_trades = _count_closed_trades(
-            conn, bot, valid_pairs if valid_pairs else None,
+            conn,
+            bot,
+            valid_pairs if valid_pairs else None,
         )
 
         hyps = conn.execute(
@@ -820,18 +876,32 @@ def overview():
             "SELECT * FROM skips WHERE bot=? ORDER BY ts DESC LIMIT 50", (bot,)
         ).fetchall()
 
-        heartbeat = json.loads(state_row["heartbeat_json"]) if state_row and state_row["heartbeat_json"] else {}
+        heartbeat = (
+            json.loads(state_row["heartbeat_json"])
+            if state_row and state_row["heartbeat_json"]
+            else {}
+        )
         heartbeat = heartbeat or {}
-        strategy = json.loads(state_row["strategy_json"]) if state_row and state_row["strategy_json"] else None
+        strategy = (
+            json.loads(state_row["strategy_json"])
+            if state_row and state_row["strategy_json"]
+            else None
+        )
         strategy = strategy or {}
         # Open trades: the bot pushes its CURRENT open_positions every cycle as
         # recent_open_trades (carrying entry_type, e.g. 'gp_ensemble' for the GP
         # brain). That list is the ONLY source of truth for live opens — never
         # infer opens from trades-table rows missing exit_reason (ghost opens).
-        open_trades = json.loads(state_row["open_trades_json"]) if state_row and state_row["open_trades_json"] else []
+        open_trades = (
+            json.loads(state_row["open_trades_json"])
+            if state_row and state_row["open_trades_json"]
+            else []
+        )
         open_trades = open_trades if isinstance(open_trades, list) else []
         # Drop malformed entries without a pair so the pulse/cards stay aligned.
-        open_trades = [t for t in open_trades if isinstance(t, dict) and (t.get("pair") or t.get("asset"))]
+        open_trades = [
+            t for t in open_trades if isinstance(t, dict) and (t.get("pair") or t.get("asset"))
+        ]
         # Deduplicate live opens by pair (one position per pair).
         _seen_open_pairs: set[str] = set()
         _uniq_opens = []
@@ -843,16 +913,18 @@ def overview():
             _uniq_opens.append(t)
         open_trades = _uniq_opens
         if open_trades:
-            live_by_id = {r["id"]: r for r in conn.execute(
-                "SELECT * FROM trades WHERE bot=? AND exit_ts IS NULL", (bot,)).fetchall()}
+            live_by_id = {
+                r["id"]: r
+                for r in conn.execute(
+                    "SELECT * FROM trades WHERE bot=? AND exit_ts IS NULL", (bot,)
+                ).fetchall()
+            }
             for t in open_trades:
                 if not t.get("entry_type"):
                     src = live_by_id.get(t.get("id"))
                     if src and src["raw_json"]:
-                        try:
+                        with contextlib.suppress(Exception):
                             t["entry_type"] = json.loads(src["raw_json"]).get("entry_type")
-                        except Exception:
-                            pass
                 # Normalize aliases the frontend already understands.
                 t.setdefault("pair", t.get("asset"))
                 if t.get("unrealised_pct") is None and t.get("_unrealised_pct") is not None:
@@ -863,14 +935,25 @@ def overview():
 
         result["bots"][bot] = {
             "strategy": strategy,
-            "goal": json.loads(state_row["goal_json"]) if state_row and state_row["goal_json"] else None,
+            "goal": json.loads(state_row["goal_json"])
+            if state_row and state_row["goal_json"]
+            else None,
             "heartbeat": heartbeat,
             # Sticky prices: prefer this cycle's live quote, but fall back to the
             # last known good tick from price_history so a single bad fetch poll
             # (e.g. silver no_candle) doesn't blank the card mid-stream — a real
             # ticker keeps showing the last quote between refreshes.
-            "prices": (lambda hp: {**{p: ph[-1] for p, ph in (hp.get("price_history", {}) or {}).items() if ph}, **(hp.get("prices", {}) or {})})(heartbeat) if isinstance(heartbeat, dict) else {},
-            "price_history": heartbeat.get("price_history", {}) if isinstance(heartbeat, dict) else {},
+            "prices": (
+                lambda hp: {
+                    **{p: ph[-1] for p, ph in (hp.get("price_history", {}) or {}).items() if ph},
+                    **(hp.get("prices", {}) or {}),
+                }
+            )(heartbeat)
+            if isinstance(heartbeat, dict)
+            else {},
+            "price_history": heartbeat.get("price_history", {})
+            if isinstance(heartbeat, dict)
+            else {},
             "_received_at": state_row["received_at"] if state_row else None,
             "recent_trades": [row_to_trade(r) for r in reversed(trades)],
             "recent_open_trades": open_trades,
@@ -882,10 +965,21 @@ def overview():
                 "regimes": heartbeat.get("regimes", {}),
                 "active_pairs": heartbeat.get("status", "unknown"),
                 "cycle": heartbeat.get("cycle"),
-                "flatlined_pairs": json.loads(state_row["flatlined_json"]) if state_row and state_row["flatlined_json"] else {},
+                "flatlined_pairs": json.loads(state_row["flatlined_json"])
+                if state_row and state_row["flatlined_json"]
+                else {},
                 "discovery_stale_days": (
-                    round((datetime.now(timezone.utc) - datetime.fromisoformat(heartbeat["last_discovery_run_ts"])).total_seconds() / 86400, 1)
-                ) if heartbeat and heartbeat.get("last_discovery_run_ts") else None,
+                    round(
+                        (
+                            datetime.now(UTC)
+                            - datetime.fromisoformat(heartbeat["last_discovery_run_ts"])
+                        ).total_seconds()
+                        / 86400,
+                        1,
+                    )
+                )
+                if heartbeat and heartbeat.get("last_discovery_run_ts")
+                else None,
             },
         }
 
@@ -908,7 +1002,7 @@ def overview():
 
 
 @app.get("/api/bot/{bot_name}/trades")
-def bot_trades(bot_name: str, pair: Optional[str] = None, limit: int = 5000):
+def bot_trades(bot_name: str, pair: str | None = None, limit: int = 5000):
     if bot_name not in VALID_BOTS:
         return []
     conn = get_conn()
@@ -927,7 +1021,7 @@ def bot_trades(bot_name: str, pair: Optional[str] = None, limit: int = 5000):
 
 
 @app.get("/api/trades/{bot_name}")
-def api_bot_trades(bot_name: str, pair: Optional[str] = None, limit: int = 5000):
+def api_bot_trades(bot_name: str, pair: str | None = None, limit: int = 5000):
     """Per-bot trade read-back (used by dashboard tabs + S18 isolation test)."""
     return bot_trades(bot_name, pair=pair, limit=limit)
 
@@ -943,7 +1037,7 @@ ALERT_RULES = {
 
 
 def compute_alerts(conn) -> list:
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     alerts = []
 
     dismissed = {
@@ -1088,7 +1182,7 @@ def _summarize(rows, label: str) -> dict:
 @app.get("/api/daily-summary")
 def daily_summary():
     conn = get_conn()
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
     result = {"date": cutoff[:10], "range": "last_24h", "cutoff_iso": cutoff, "bots": {}}
 
     for bot in VALID_BOTS:
@@ -1102,8 +1196,13 @@ def daily_summary():
         result["bots"][bot] = _summarize(rows, "last 24h")
         result["bots"][bot]["reflections_today"] = len(hyps)
         result["bots"][bot]["reflections_detail"] = [
-            {"pair": h["pair"], "variable": h["variable"], "old": h["old_value"],
-             "new": h["new_value"], "reasoning": h["reasoning"]}
+            {
+                "pair": h["pair"],
+                "variable": h["variable"],
+                "old": h["old_value"],
+                "new": h["new_value"],
+                "reasoning": h["reasoning"],
+            }
             for h in hyps
         ]
 
@@ -1133,9 +1232,9 @@ def lifetime_summary():
 
 @app.get("/api/range-summary")
 def range_summary(
-    bot_name: Optional[str] = None,
-    from_ts: Optional[str] = None,
-    to_ts: Optional[str] = None,
+    bot_name: str | None = None,
+    from_ts: str | None = None,
+    to_ts: str | None = None,
 ):
     conn = get_conn()
     result = {"bots": {}, "from_ts": from_ts, "to_ts": to_ts}
@@ -1173,8 +1272,13 @@ def range_summary(
         summary = _summarize(rows, label)
         summary["reflections_in_range"] = len(hyps)
         summary["reflections_detail"] = [
-            {"pair": h["pair"], "variable": h["variable"], "old": h["old_value"],
-             "new": h["new_value"], "reasoning": h["reasoning"]}
+            {
+                "pair": h["pair"],
+                "variable": h["variable"],
+                "old": h["old_value"],
+                "new": h["new_value"],
+                "reasoning": h["reasoning"],
+            }
             for h in hyps
         ]
 
@@ -1198,13 +1302,10 @@ def skip_analysis(bot_name: str):
     for r in rows:
         raw = json.loads(r["raw_json"]) if r["raw_json"] else {}
         pair = r["pair"] or "unknown"
-        reason = (
-            r["reason_skipped"]
-            or raw.get("reason_skipped")
-            or raw.get("reason")
-            or "unknown"
+        reason = r["reason_skipped"] or raw.get("reason_skipped") or raw.get("reason") or "unknown"
+        by_pair.setdefault(
+            pair, {"total": 0, "reasons": {}, "missed_pnl_sum": 0, "missed_pnl_count": 0}
         )
-        by_pair.setdefault(pair, {"total": 0, "reasons": {}, "missed_pnl_sum": 0, "missed_pnl_count": 0})
         by_pair[pair]["total"] += 1
         by_pair[pair]["reasons"][reason] = by_pair[pair]["reasons"].get(reason, 0) + 1
         mp = r["missed_pnl"] or raw.get("missed_pnl")
@@ -1231,16 +1332,16 @@ def strategy_params(bot_name: str):
 @app.get("/api/detailed-report/{bot_name}")
 def detailed_report(
     bot_name: str,
-    pair: Optional[str] = None,
-    from_ts: Optional[str] = None,
-    to_ts: Optional[str] = None,
+    pair: str | None = None,
+    from_ts: str | None = None,
+    to_ts: str | None = None,
 ):
     if bot_name not in VALID_BOTS:
         raise HTTPException(404, "Unknown bot")
     conn = get_conn()
 
     if not from_ts and not to_ts:
-        from_ts = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        from_ts = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
 
     query = "SELECT * FROM trades WHERE bot=?"
     params: list = [bot_name]
@@ -1341,7 +1442,9 @@ def detailed_report(
     if skips:
         lines += ["", "-" * 50, "SKIPS (last 20):", "-" * 50]
         for s in skips[:20]:
-            lines.append(f"  [{s['ts'][:19]}] {s['pair']}: {s['reason_skipped']} @ {s['price_at_skip']}")
+            lines.append(
+                f"  [{s['ts'][:19]}] {s['pair']}: {s['reason_skipped']} @ {s['price_at_skip']}"
+            )
 
     return PlainTextResponse("\n".join(lines))
 
@@ -1350,15 +1453,31 @@ def detailed_report(
 def export_text():
     conn = get_conn()
     now = utcnow_iso()
-    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    lines = [f"HERMES SUMMARY — {now[:19]}", f"Tracking since: {_first_trade_date(conn)}", "=" * 50, ""]
+    today_str = datetime.now(UTC).strftime("%Y-%m-%d")
+    lines = [
+        f"HERMES SUMMARY — {now[:19]}",
+        f"Tracking since: {_first_trade_date(conn)}",
+        "=" * 50,
+        "",
+    ]
     for bot in VALID_BOTS:
         # System status
-        state_row = conn.execute("SELECT * FROM latest_state WHERE bot=?",
-            (bot,)).fetchone()
-        strat = json.loads(state_row["strategy_json"]) if state_row and state_row["strategy_json"] else {}
-        hb = json.loads(state_row["heartbeat_json"]) if state_row and state_row["heartbeat_json"] else {}
-        open_json = json.loads(state_row["open_trades_json"]) if state_row and state_row["open_trades_json"] else []
+        state_row = conn.execute("SELECT * FROM latest_state WHERE bot=?", (bot,)).fetchone()
+        strat = (
+            json.loads(state_row["strategy_json"])
+            if state_row and state_row["strategy_json"]
+            else {}
+        )
+        hb = (
+            json.loads(state_row["heartbeat_json"])
+            if state_row and state_row["heartbeat_json"]
+            else {}
+        )
+        open_json = (
+            json.loads(state_row["open_trades_json"])
+            if state_row and state_row["open_trades_json"]
+            else []
+        )
 
         # Only include trades for valid pairs
         valid_pairs = list(strat.keys()) if strat else []
@@ -1392,7 +1511,7 @@ def export_text():
 
         lines.append(f"## {bot.upper()} BOT{pulse_ok}")
         if hb:
-            lines.append(f"Cycle: {hb.get('cycle','?')} | Regimes: {hb.get('regimes',{})}")
+            lines.append(f"Cycle: {hb.get('cycle', '?')} | Regimes: {hb.get('regimes', {})}")
         lines.append("")
 
         # 1. LIFETIME stats
@@ -1405,7 +1524,9 @@ def export_text():
         lines.append("─" * 40)
         lines.append(f"  Closed trades: {len(closed)} | Open: {len(rows) - len(closed)}")
         lines.append(f"  Total PnL: {total_pnl:+.4f}%")
-        lines.append(f"  Win rate: {len(wins)/len(closed)*100:.1f}%" if closed else "  Win rate: N/A")
+        lines.append(
+            f"  Win rate: {len(wins) / len(closed) * 100:.1f}%" if closed else "  Win rate: N/A"
+        )
         lines.append(f"  Avg win: +{avg_win:.4f}% | Avg loss: {avg_loss:.4f}%")
         lines.append(f"  Profit factor: {pf:.3f}")
         lines.append("")
@@ -1414,7 +1535,18 @@ def export_text():
         by_pair = {}
         for r in closed:
             p = r["pair"] or "unknown"
-            by_pair.setdefault(p, {"trades": 0, "pnl": 0, "wins": 0, "pairs_pnls": [], "stops": 0, "targets": 0, "timeouts": 0})
+            by_pair.setdefault(
+                p,
+                {
+                    "trades": 0,
+                    "pnl": 0,
+                    "wins": 0,
+                    "pairs_pnls": [],
+                    "stops": 0,
+                    "targets": 0,
+                    "timeouts": 0,
+                },
+            )
             by_pair[p]["trades"] += 1
             by_pair[p]["pnl"] += r["pnl_pct"] or 0
             by_pair[p]["pairs_pnls"].append(r["pnl_pct"] or 0)
@@ -1439,7 +1571,9 @@ def export_text():
             aw = sum(pw) / len(pw) if pw else 0
             al = sum(pl) / len(pl) if pl else 0
             wr = d["wins"] / d["trades"] * 100 if d["trades"] else 0
-            lines.append(f"  {p:<12} {d['trades']:<8} {wr:<7.1f}% {d['pnl']:<+9.4f}% {aw:<+9.4f}% {al:<+9.4f}% {d['stops']:<7} {d['targets']:<7} {d['timeouts']:<7}")
+            lines.append(
+                f"  {p:<12} {d['trades']:<8} {wr:<7.1f}% {d['pnl']:<+9.4f}% {aw:<+9.4f}% {al:<+9.4f}% {d['stops']:<7} {d['targets']:<7} {d['timeouts']:<7}"
+            )
         lines.append("")
 
         # ── PER-VERSION PERFORMANCE ──
@@ -1482,7 +1616,9 @@ def export_text():
                     change = " ▼ declined"
                 else:
                     change = " → same"
-            lines.append(f"  v{v:<4}: {vs['trades']:<3} trades | WR={wr:<5.1f}% | avg={avg:<+9.4f}% | total={total:<+10.4f}% | Stops={vs['stops']} Tgts={vs['targets']} Time={vs['timeouts']}{change}")
+            lines.append(
+                f"  v{v:<4}: {vs['trades']:<3} trades | WR={wr:<5.1f}% | avg={avg:<+9.4f}% | total={total:<+10.4f}% | Stops={vs['stops']} Tgts={vs['targets']} Time={vs['timeouts']}{change}"
+            )
         lines.append("")
 
         # 3. BY PAIR RECENT (last 10)
@@ -1496,12 +1632,14 @@ def export_text():
                 continue
             rpnls = [r["pnl_pct"] for r in recent if r["pnl_pct"] is not None]
             rwins = [x for x in rpnls if x > 0]
-            rlosses = [x for x in rpnls if x <= 0]
+            [x for x in rpnls if x <= 0]
             rwr = len(rwins) / len(recent) * 100 if recent else 0
             rpnl = sum(rpnls) if rpnls else 0
             lwr = d["wins"] / d["trades"] * 100 if d["trades"] else 0
             trend = "improving" if rwr > lwr + 5 else ("declining" if rwr < lwr - 5 else "stable")
-            lines.append(f"  {p:<12} {len(recent):<5} trades | WR: {rwr:<5.1f}% | PnL: {rpnl:<+9.4f}% | Trend: {trend}")
+            lines.append(
+                f"  {p:<12} {len(recent):<5} trades | WR: {rwr:<5.1f}% | PnL: {rpnl:<+9.4f}% | Trend: {trend}"
+            )
             last5 = recent[-5:]
             for t in last5:
                 lines.append(f"    {t['pnl_pct']:+.4f}% ({t['exit_reason']})")
@@ -1518,11 +1656,21 @@ def export_text():
                 held = t.get("hold_cycles", "?")
                 stop = t.get("_stop_price", 0)
                 target = entry * 1.03 if isinstance(entry, (int, float)) else 0
-                stop_dist = ((stop - entry) / entry * 100) if isinstance(entry, (int, float)) and entry and stop else 0
-                tgt_dist = ((target - entry) / entry * 100) if isinstance(entry, (int, float)) and entry and target else 0
+                stop_dist = (
+                    ((stop - entry) / entry * 100)
+                    if isinstance(entry, (int, float)) and entry and stop
+                    else 0
+                )
+                tgt_dist = (
+                    ((target - entry) / entry * 100)
+                    if isinstance(entry, (int, float)) and entry and target
+                    else 0
+                )
                 pair = t.get("asset", "?")
                 lines.append(f"  {pair}: Entry={entry} | Unrealised: {ur:+.4f}% | Held: {held}c")
-                lines.append(f"    Stop: {stop} ({stop_dist:+.3f}%) | Target: {target:.5f} ({tgt_dist:+.3f}%)")
+                lines.append(
+                    f"    Stop: {stop} ({stop_dist:+.3f}%) | Target: {target:.5f} ({tgt_dist:+.3f}%)"
+                )
         else:
             lines.append("  None")
         lines.append("")
@@ -1535,7 +1683,11 @@ def export_text():
         chart_ctxs = hb.get("chart_contexts", {}) or {}
         # Only show pairs that belong to this bot (from strategy config or regimes)
         if strat:
-            market_pairs = [p for p in ["EUR/USD", "GBP/USD", "AUD/USD", "GBP/JPY", "XAU/USD", "XAG/USD"] if p in strat]
+            market_pairs = [
+                p
+                for p in ["EUR/USD", "GBP/USD", "AUD/USD", "GBP/JPY", "XAU/USD", "XAG/USD"]
+                if p in strat
+            ]
         else:
             market_pairs = list(regimes.keys()) or ["XAU/USD"]
         live_indicators = _fetch_live_indicators(market_pairs)
@@ -1553,7 +1705,9 @@ def export_text():
             chart_short = (chart[:120] + "...") if len(chart) > 120 else chart
             lines.append(f"  {pair_name}: RSI={rsi} ADX={adx} Regime={regime} BB={bb_pos}")
             if isinstance(bb_lower, float) and isinstance(price, float):
-                lines.append(f"    Price={price:.5f} | BB: Lower={bb_lower:.5f} Mid={bb_mid:.5f} Upper={bb_upper:.5f}")
+                lines.append(
+                    f"    Price={price:.5f} | BB: Lower={bb_lower:.5f} Mid={bb_mid:.5f} Upper={bb_upper:.5f}"
+                )
             if chart_short:
                 lines.append(f"    Chart: {chart_short}")
         lines.append("")
@@ -1573,11 +1727,15 @@ def export_text():
             pt = s.get("profit_target_pct", "?")
             atr_floor = s.get("use_atr_floor", "?")
             bear = s.get("allow_bear_entries", False)
-            lines.append(f"  {pair_name}: {st} v{ver} | Thresh={thresh} | Stop={sl}% | Target={pt}% | Floor={atr_floor} | Bear={bear}")
+            lines.append(
+                f"  {pair_name}: {st} v{ver} | Thresh={thresh} | Stop={sl}% | Target={pt}% | Floor={atr_floor} | Bear={bear}"
+            )
         lines.append("")
 
         # 7. REFLECTIONS
-        hyps = conn.execute("SELECT * FROM hypotheses WHERE bot=? ORDER BY ts DESC LIMIT 500", (bot,)).fetchall()
+        hyps = conn.execute(
+            "SELECT * FROM hypotheses WHERE bot=? ORDER BY ts DESC LIMIT 500", (bot,)
+        ).fetchall()
         if valid_pairs:
             hyps = [h for h in hyps if h["pair"] in valid_pairs]
         if hyps:
@@ -1585,7 +1743,9 @@ def export_text():
             lines.append("REFLECTIONS")
             lines.append("─" * 40)
             for h in hyps:
-                lines.append(f"  [{h['ts'][:19]}] {h['pair']}: {h['variable']} {h['old_value']} → {h['new_value']}")
+                lines.append(
+                    f"  [{h['ts'][:19]}] {h['pair']}: {h['variable']} {h['old_value']} → {h['new_value']}"
+                )
                 if h["reasoning"]:
                     lines.append(f"    Reasoning: {h['reasoning']}")
         lines.append("")
@@ -1604,7 +1764,9 @@ def export_text():
         lines.append("─" * 40)
         lines.append(f"TODAY ({today_str})")
         lines.append("─" * 40)
-        lines.append(f"  Closed: {len(today_closed)} | PnL: {today_total:+.4f}% | WR: {today_wr:.1f}%")
+        lines.append(
+            f"  Closed: {len(today_closed)} | PnL: {today_total:+.4f}% | WR: {today_wr:.1f}%"
+        )
         # Per-pair today breakdown
         today_by_pair = {}
         for r in today_closed:
@@ -1636,36 +1798,42 @@ def _first_trade_date(conn):
 def _fetch_live_indicators(pairs):
     """Compute RSI, ADX, BB for each pair from yfinance. Uses pure Python (no numpy)."""
     import warnings
+
     warnings.filterwarnings("ignore")
     import yfinance as yf
 
     def _rsi(prices, period=14):
-        if len(prices) < period + 1: return None
-        chg = prices[-1] - prices[-period-1]
-        gains = sum(max(prices[i] - prices[i-1], 0) for i in range(-period, 0))
-        losses = sum(max(prices[i-1] - prices[i], 0) for i in range(-period, 0))
-        if losses == 0: return 100.0
+        if len(prices) < period + 1:
+            return None
+        prices[-1] - prices[-period - 1]
+        gains = sum(max(prices[i] - prices[i - 1], 0) for i in range(-period, 0))
+        losses = sum(max(prices[i - 1] - prices[i], 0) for i in range(-period, 0))
+        if losses == 0:
+            return 100.0
         rs = gains / losses if losses else 0
         return round(100.0 - (100.0 / (1.0 + rs)), 1)
 
     def _adx(prices, period=14):
-        if len(prices) < period * 2: return None
-        up_sum = sum(max(prices[i] - prices[i-1], 0) for i in range(-period, 0))
-        down_sum = sum(max(prices[i-1] - prices[i], 0) for i in range(-period, 0))
-        tr_sum = sum(max(prices[i] - prices[i-1], 0) for i in range(-period, 0))
+        if len(prices) < period * 2:
+            return None
+        up_sum = sum(max(prices[i] - prices[i - 1], 0) for i in range(-period, 0))
+        down_sum = sum(max(prices[i - 1] - prices[i], 0) for i in range(-period, 0))
+        tr_sum = sum(max(prices[i] - prices[i - 1], 0) for i in range(-period, 0))
         atr = tr_sum / period if period else 0
-        if atr == 0: return None
+        if atr == 0:
+            return None
         plus_di = 100 * up_sum / period / atr
         minus_di = 100 * down_sum / period / atr
         dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di) if (plus_di + minus_di) > 0 else 0
         return round(dx, 1)
 
     def _bb(prices, period=20, std_dev=1.5):
-        if len(prices) < period: return None, None, None, None
+        if len(prices) < period:
+            return None, None, None, None
         recent = prices[-period:]
         ma = sum(recent) / period
         variance = sum((x - ma) ** 2 for x in recent) / period
-        sd = variance ** 0.5
+        sd = variance**0.5
         lower = round(ma - std_dev * sd, 5)
         upper = round(ma + std_dev * sd, 5)
         bw = round(2 * std_dev * sd / ma * 100, 4) if ma > 0 else 0
@@ -1720,11 +1888,15 @@ def _fetch_live_indicators(pairs):
 
 
 PAIR_MAP = {
-    "EUR_USD": "EUR/USD", "GBP_USD": "GBP/USD",
-    "AUD_USD": "AUD/USD", "GBP_JPY": "GBP/JPY",
-    "XAU_USD": "XAU/USD", "XAG_USD": "XAG/USD",
+    "EUR_USD": "EUR/USD",
+    "GBP_USD": "GBP/USD",
+    "AUD_USD": "AUD/USD",
+    "GBP_JPY": "GBP/JPY",
+    "XAU_USD": "XAU/USD",
+    "XAG_USD": "XAG/USD",
 }
 SLASH_PAIRS = {v: k for k, v in PAIR_MAP.items()}
+
 
 @app.get("/api/export-text/pair/{pair_name}", response_class=PlainTextResponse)
 def export_pair(pair_name: str):
@@ -1734,11 +1906,17 @@ def export_pair(pair_name: str):
     # Determine bot from pair: gold pairs vs forex pairs
     gold_pairs = {"XAU/USD", "XAG/USD"}
     bot = "gold" if pair in gold_pairs else "forex"
-    trades = conn.execute("SELECT * FROM trades WHERE bot=? AND pair=? ORDER BY COALESCE(exit_ts, entry_ts) ASC", (bot, pair)).fetchall()
+    trades = conn.execute(
+        "SELECT * FROM trades WHERE bot=? AND pair=? ORDER BY COALESCE(exit_ts, entry_ts) ASC",
+        (bot, pair),
+    ).fetchall()
     # Fallback: if no data for guessed bot, try the other one
     if not trades:
         bot = "forex" if bot == "gold" else "gold"
-        trades = conn.execute("SELECT * FROM trades WHERE bot=? AND pair=? ORDER BY COALESCE(exit_ts, entry_ts) ASC", (bot, pair)).fetchall()
+        trades = conn.execute(
+            "SELECT * FROM trades WHERE bot=? AND pair=? ORDER BY COALESCE(exit_ts, entry_ts) ASC",
+            (bot, pair),
+        ).fetchall()
     closed = [r for r in trades if r["exit_reason"]]
     pnls = [r["pnl_pct"] for r in closed if r["pnl_pct"] is not None]
     wins = [p for p in pnls if p > 0]
@@ -1746,15 +1924,27 @@ def export_pair(pair_name: str):
 
     # State + strategy
     state_row = conn.execute("SELECT * FROM latest_state WHERE bot=?", (bot,)).fetchone()
-    strat_all = json.loads(state_row["strategy_json"]) if state_row and state_row["strategy_json"] else {}
-    hb = json.loads(state_row["heartbeat_json"]) if state_row and state_row["heartbeat_json"] else {}
-    open_json = json.loads(state_row["open_trades_json"]) if state_row and state_row["open_trades_json"] else []
+    strat_all = (
+        json.loads(state_row["strategy_json"]) if state_row and state_row["strategy_json"] else {}
+    )
+    hb = (
+        json.loads(state_row["heartbeat_json"]) if state_row and state_row["heartbeat_json"] else {}
+    )
+    open_json = (
+        json.loads(state_row["open_trades_json"])
+        if state_row and state_row["open_trades_json"]
+        else []
+    )
     s = strat_all.get(pair, {})
     entry_conf = s.get("entry", {})
 
     # Hypotheses + skips
-    hyps = conn.execute("SELECT * FROM hypotheses WHERE bot=? AND pair=? ORDER BY ts DESC LIMIT 500", (bot, pair)).fetchall()
-    skips = conn.execute("SELECT * FROM skips WHERE bot=? AND pair=? ORDER BY ts DESC", (bot, pair)).fetchall()
+    hyps = conn.execute(
+        "SELECT * FROM hypotheses WHERE bot=? AND pair=? ORDER BY ts DESC LIMIT 500", (bot, pair)
+    ).fetchall()
+    skips = conn.execute(
+        "SELECT * FROM skips WHERE bot=? AND pair=? ORDER BY ts DESC", (bot, pair)
+    ).fetchall()
     first_trade = trades[0]["entry_ts"][:10] if trades else "—"
     now_str = utcnow_iso()[:19]
     conn.close()
@@ -1771,9 +1961,16 @@ def export_pair(pair_name: str):
     avg_win = sum(wins) / len(wins) if wins else 0
     avg_loss = sum(losses) / len(losses) if losses else 0
     pf = abs(avg_win / avg_loss) if avg_loss != 0 else 0
-    avg_hold = (sum([r["hold_cycles"] for r in closed if r["hold_cycles"]]) / len([r for r in closed if r["hold_cycles"]])) if closed and any(r["hold_cycles"] for r in closed) else 0
+    avg_hold = (
+        (
+            sum([r["hold_cycles"] for r in closed if r["hold_cycles"]])
+            / len([r for r in closed if r["hold_cycles"]])
+        )
+        if closed and any(r["hold_cycles"] for r in closed)
+        else 0
+    )
     max_dd = min(pnls) if pnls else 0
-    pairs_pnls = [r["pnl_pct"] for r in closed if r["pnl_pct"] is not None]
+    [r["pnl_pct"] for r in closed if r["pnl_pct"] is not None]
 
     # Exit breakdown
     stops = sum(1 for r in closed if r["exit_reason"] == "stop_loss")
@@ -1834,14 +2031,22 @@ def export_pair(pair_name: str):
         ur = open_trade.get("_unrealised_pct", 0)
         stop_px = open_trade.get("_stop_price", 0)
         target_px = entry_px * 1.03 if isinstance(entry_px, (int, float)) else 0
-        stop_dist = ((stop_px - entry_px) / entry_px * 100) if isinstance(entry_px, (int, float)) and entry_px else 0
-        tgt_dist = ((target_px - entry_px) / entry_px * 100) if isinstance(entry_px, (int, float)) and entry_px else 0
+        stop_dist = (
+            ((stop_px - entry_px) / entry_px * 100)
+            if isinstance(entry_px, (int, float)) and entry_px
+            else 0
+        )
+        tgt_dist = (
+            ((target_px - entry_px) / entry_px * 100)
+            if isinstance(entry_px, (int, float)) and entry_px
+            else 0
+        )
         held_mins = f"{held}c ({held} min)" if held != "?" else "?"
         entry_rsi = open_trade.get("_entry_rsi", "?")
         entry_reg = open_trade.get("_entry_regime", "?")
         entry_q = open_trade.get("entry_quality_score", "?")
         entry_ver = open_trade.get("strategy_version", "?")
-        lines.append(f"  Status: OPEN")
+        lines.append("  Status: OPEN")
         lines.append(f"  Entry price: {entry_px}")
         lines.append(f"  Entry time: {entry_ts}")
         lines.append(f"  Hold time: {held_mins}")
@@ -1859,7 +2064,9 @@ def export_pair(pair_name: str):
     # LIFETIME PERFORMANCE
     lines.append("## LIFETIME PERFORMANCE")
     lines.append(f"  Total closed trades: {len(closed)}")
-    lines.append(f"  Win rate: {len(wins)/len(closed)*100:.1f}%" if closed else "  Win rate: N/A")
+    lines.append(
+        f"  Win rate: {len(wins) / len(closed) * 100:.1f}%" if closed else "  Win rate: N/A"
+    )
     lines.append(f"  Total PnL: {total_pnl:+.4f}%")
     lines.append(f"  Avg win: +{avg_win:.4f}%")
     lines.append(f"  Avg loss: {avg_loss:.4f}%")
@@ -1869,10 +2076,22 @@ def export_pair(pair_name: str):
     lines.append(f"  Tracking since: {first_trade}")
     lines.append("")
     tot = len(closed)
-    lines.append(f"  Exit breakdown:")
-    lines.append(f"    Stop loss:     {stops:>4} trades ({stops/tot*100:.0f}%)" if tot else f"    Stop loss:     {stops:>4}")
-    lines.append(f"    Profit target: {targets:>4} trades ({targets/tot*100:.0f}%)" if tot else f"    Profit target: {targets:>4}")
-    lines.append(f"    Time exit:     {timeouts:>4} trades ({timeouts/tot*100:.0f}%)" if tot else f"    Time exit:     {timeouts:>4}")
+    lines.append("  Exit breakdown:")
+    lines.append(
+        f"    Stop loss:     {stops:>4} trades ({stops / tot * 100:.0f}%)"
+        if tot
+        else f"    Stop loss:     {stops:>4}"
+    )
+    lines.append(
+        f"    Profit target: {targets:>4} trades ({targets / tot * 100:.0f}%)"
+        if tot
+        else f"    Profit target: {targets:>4}"
+    )
+    lines.append(
+        f"    Time exit:     {timeouts:>4} trades ({timeouts / tot * 100:.0f}%)"
+        if tot
+        else f"    Time exit:     {timeouts:>4}"
+    )
     lines.append("")
 
     # RECENT vs LIFETIME COMPARISON
@@ -1885,7 +2104,9 @@ def export_pair(pair_name: str):
         sub_wr = len(sub_wins) / len(subset) * 100 if subset else 0
         sub_avg = sum(sub_pnls) / len(sub_pnls) if sub_pnls else 0
         windows[label] = (sub_wr, sub_avg)
-    lines.append(f"                 {'Last 5':>10} {'Last 10':>10} {'Last 20':>10} {'Lifetime':>10}")
+    lines.append(
+        f"                 {'Last 5':>10} {'Last 10':>10} {'Last 20':>10} {'Lifetime':>10}"
+    )
     wr5, a5 = windows.get("Last 5", (0, 0))
     wr10, a10 = windows.get("Last 10", (0, 0))
     wr20, a20 = windows.get("Last 20", (0, 0))
@@ -1898,8 +2119,12 @@ def export_pair(pair_name: str):
 
     # LAST 10 TRADES
     lines.append("## LAST 10 TRADES (most recent first)")
-    lines.append(f"  # | {'Date':<12} | {'Entry':<10} | {'Exit':<10} | {'PnL%':<10} | {'Exit reason':<15} | {'Hold':<6} | {'RSI':<6} | {'Regime':<8}")
-    lines.append(f"  {'-'*3} {'-'*12} {'-'*10} {'-'*10} {'-'*10} {'-'*15} {'-'*6} {'-'*6} {'-'*8}")
+    lines.append(
+        f"  # | {'Date':<12} | {'Entry':<10} | {'Exit':<10} | {'PnL%':<10} | {'Exit reason':<15} | {'Hold':<6} | {'RSI':<6} | {'Regime':<8}"
+    )
+    lines.append(
+        f"  {'-' * 3} {'-' * 12} {'-' * 10} {'-' * 10} {'-' * 10} {'-' * 15} {'-' * 6} {'-' * 6} {'-' * 8}"
+    )
     for idx, r in enumerate(reversed(closed[-10:]), 1):
         d = (r["entry_ts"] or "?")[:10]
         en = r["entry_price"] or "?"
@@ -1910,7 +2135,9 @@ def export_pair(pair_name: str):
         raw = json.loads(r["raw_json"]) if r["raw_json"] else {}
         ersi = raw.get("entry_rsi", "?")
         ereg = raw.get("entry_regime", "?")
-        lines.append(f"  {idx:<3} | {d:<12} | {str(en):<10} | {str(ex):<10} | {pnl:<+9.4f}% | {reason:<15} | {str(held):<6} | {str(ersi):<6} | {ereg:<8}")
+        lines.append(
+            f"  {idx:<3} | {d:<12} | {str(en):<10} | {str(ex):<10} | {pnl:<+9.4f}% | {reason:<15} | {str(held):<6} | {str(ersi):<6} | {ereg:<8}"
+        )
     lines.append("")
 
     # STRATEGY PARAMETERS
@@ -1993,26 +2220,51 @@ def export_pair(pair_name: str):
     if conditions_met == 4:
         lines.append("  READY TO ENTRY — all conditions met:")
         lines.append(f"    ✅ RSI {rsi} < threshold {thresh}")
-        lines.append(f"    ✅ BB lower touch confirmed")
+        lines.append("    ✅ BB lower touch confirmed")
         lines.append(f"    ✅ ADX {adx} >= {adx_th}")
-        lines.append(f"    ✅ Regime: {regime} (bear entries {'allowed' if bear_ok else 'blocked'})")
+        lines.append(
+            f"    ✅ Regime: {regime} (bear entries {'allowed' if bear_ok else 'blocked'})"
+        )
         lines.append("    → Entry would fire on next cycle")
     elif conditions_met >= 2:
-        lines.append(f"  CLOSE TO ENTRY — {conditions_met} conditions met, {4 - conditions_met} blocking:")
-        lines.append(f"    {'✅' if rsi_ok else '❌'} RSI {rsi} {'<' if rsi_ok else '>='} threshold {thresh}" + (f" (gap {rsi - thresh:.1f} pts)" if not rsi_ok else ""))
-        lines.append(f"    {'✅' if bb_ok else '❌'} BB lower{' not yet ' if not bb_ok else ' '}touched" + (f" (price {last_price}, BB lower {bb_lower})" if not bb_ok else ""))
-        lines.append(f"    {'✅' if adx_ok else '❌'} ADX {adx} {'>=' if adx_ok else '<'} {adx_th}" + (f" (gap {adx_th - adx:.1f})" if not adx_ok else ""))
+        lines.append(
+            f"  CLOSE TO ENTRY — {conditions_met} conditions met, {4 - conditions_met} blocking:"
+        )
+        lines.append(
+            f"    {'✅' if rsi_ok else '❌'} RSI {rsi} {'<' if rsi_ok else '>='} threshold {thresh}"
+            + (f" (gap {rsi - thresh:.1f} pts)" if not rsi_ok else "")
+        )
+        lines.append(
+            f"    {'✅' if bb_ok else '❌'} BB lower{' not yet ' if not bb_ok else ' '}touched"
+            + (f" (price {last_price}, BB lower {bb_lower})" if not bb_ok else "")
+        )
+        lines.append(
+            f"    {'✅' if adx_ok else '❌'} ADX {adx} {'>=' if adx_ok else '<'} {adx_th}"
+            + (f" (gap {adx_th - adx:.1f})" if not adx_ok else "")
+        )
         if regime == "BEAR":
-            lines.append(f"    {'⚠' if bear_ok else '❌'} Bear entries: {'allowed' if bear_ok else 'blocked'}")
-        lines.append(f"    → Nearest trigger: {'RSI drop to ' + str(thresh) if not rsi_ok else 'price touch BB lower' if not bb_ok else 'ADX rising to ' + str(adx_th)}")
+            lines.append(
+                f"    {'⚠' if bear_ok else '❌'} Bear entries: {'allowed' if bear_ok else 'blocked'}"
+            )
+        lines.append(
+            f"    → Nearest trigger: {'RSI drop to ' + str(thresh) if not rsi_ok else 'price touch BB lower' if not bb_ok else 'ADX rising to ' + str(adx_th)}"
+        )
     else:
         lines.append("  NOT CLOSE — blocked by:")
         lines.append(f"    ❌ RSI {rsi} >= threshold {thresh}" if not rsi_ok else "")
-        lines.append(f"    ❌ BB lower not touched" if not bb_ok else "")
+        lines.append("    ❌ BB lower not touched" if not bb_ok else "")
         lines.append(f"    ❌ ADX {adx} < {adx_th}" if not adx_ok else "")
         if not bear_ok and regime == "BEAR":
-            lines.append(f"    ❌ Bear regime — bear entries blocked")
-        lines.append(f"    → Furthest from entry on: RSI" if not rsi_ok else "BB touch" if not bb_ok else "ADX" if not adx_ok else "regime")
+            lines.append("    ❌ Bear regime — bear entries blocked")
+        lines.append(
+            "    → Furthest from entry on: RSI"
+            if not rsi_ok
+            else "BB touch"
+            if not bb_ok
+            else "ADX"
+            if not adx_ok
+            else "regime"
+        )
 
     lines.append("")
     lines.append("=" * 50)
@@ -2050,15 +2302,20 @@ async def auth_setup(request: Request):
         raise HTTPException(400, "Password too short")
 
     # Save password locally
-    conn.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('dashboard_password', ?)", (password,))
+    conn.execute(
+        "INSERT OR REPLACE INTO app_config (key, value) VALUES ('dashboard_password', ?)",
+        (password,),
+    )
     conn.commit()
 
     # Generate auth token
     token = secrets.token_hex(32)
     now = utcnow_iso()
-    expires = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
-    conn.execute("INSERT INTO auth_tokens (token, created_at, expires_at) VALUES (?, ?, ?)",
-                 (token, now, expires))
+    expires = (datetime.now(UTC) + timedelta(days=7)).isoformat()
+    conn.execute(
+        "INSERT INTO auth_tokens (token, created_at, expires_at) VALUES (?, ?, ?)",
+        (token, now, expires),
+    )
     conn.commit()
     conn.close()
 
@@ -2082,9 +2339,11 @@ async def auth_login(request: Request):
 
     token = secrets.token_hex(32)
     now = utcnow_iso()
-    expires = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
-    conn.execute("INSERT INTO auth_tokens (token, created_at, expires_at) VALUES (?, ?, ?)",
-                 (token, now, expires))
+    expires = (datetime.now(UTC) + timedelta(days=7)).isoformat()
+    conn.execute(
+        "INSERT INTO auth_tokens (token, created_at, expires_at) VALUES (?, ?, ?)",
+        (token, now, expires),
+    )
     conn.commit()
     conn.close()
 
@@ -2128,27 +2387,59 @@ def chat(body: ChatBody):
     conn = get_conn()
     forex_state = conn.execute("SELECT * FROM latest_state WHERE bot='forex'").fetchone()
     gold_state = conn.execute("SELECT * FROM latest_state WHERE bot='gold'").fetchone()
-    forex_trades = conn.execute("SELECT * FROM trades WHERE bot='forex' ORDER BY COALESCE(exit_ts, entry_ts) DESC LIMIT 10").fetchall()
-    gold_trades = conn.execute("SELECT * FROM trades WHERE bot='gold' ORDER BY COALESCE(exit_ts, entry_ts) DESC LIMIT 10").fetchall()
-    forex_strat = json.loads(forex_state["strategy_json"]) if forex_state and forex_state["strategy_json"] else {}
-    forex_heartbeat = json.loads(forex_state["heartbeat_json"]) if forex_state and forex_state["heartbeat_json"] else {}
-    forex_open = json.loads(forex_state["open_trades_json"]) if forex_state and forex_state["open_trades_json"] else []
-    gold_open = json.loads(gold_state["open_trades_json"]) if gold_state and gold_state["open_trades_json"] else []
+    forex_trades = conn.execute(
+        "SELECT * FROM trades WHERE bot='forex' ORDER BY COALESCE(exit_ts, entry_ts) DESC LIMIT 10"
+    ).fetchall()
+    gold_trades = conn.execute(
+        "SELECT * FROM trades WHERE bot='gold' ORDER BY COALESCE(exit_ts, entry_ts) DESC LIMIT 10"
+    ).fetchall()
+    forex_strat = (
+        json.loads(forex_state["strategy_json"])
+        if forex_state and forex_state["strategy_json"]
+        else {}
+    )
+    forex_heartbeat = (
+        json.loads(forex_state["heartbeat_json"])
+        if forex_state and forex_state["heartbeat_json"]
+        else {}
+    )
+    forex_open = (
+        json.loads(forex_state["open_trades_json"])
+        if forex_state and forex_state["open_trades_json"]
+        else []
+    )
+    gold_open = (
+        json.loads(gold_state["open_trades_json"])
+        if gold_state and gold_state["open_trades_json"]
+        else []
+    )
     conn.close()
 
-    open_summary = [f"{t.get('asset','?')}: entry {t.get('entry_price','?')}, stop {t.get('_stop_price','?')}, held {t.get('hold_cycles','?')}c" for t in forex_open]
-    gold_summary = [f"{t.get('asset','?')}: entry {t.get('entry_price','?')}, held {t.get('hold_cycles','?')}c" for t in gold_open]
+    open_summary = [
+        f"{t.get('asset', '?')}: entry {t.get('entry_price', '?')}, stop {t.get('_stop_price', '?')}, held {t.get('hold_cycles', '?')}c"
+        for t in forex_open
+    ]
+    [
+        f"{t.get('asset', '?')}: entry {t.get('entry_price', '?')}, held {t.get('hold_cycles', '?')}c"
+        for t in gold_open
+    ]
     recent = [f"{t['pair']}: {t['pnl_pct']:+.4f}% ({t['exit_reason']})" for t in forex_trades[:5]]
-    gold_recent = [f"{t['pair']}: {t['pnl_pct']:+.4f}% ({t['exit_reason']})" for t in gold_trades[:5]]
+    gold_recent = [
+        f"{t['pair']}: {t['pnl_pct']:+.4f}% ({t['exit_reason']})" for t in gold_trades[:5]
+    ]
     regimes = forex_heartbeat.get("regimes", {})
     cycle = forex_heartbeat.get("cycle", "?")
 
     lines = []
-    if "trade" in question and ("how long" in question or "duration" in question or "estimate" in question):
+    if "trade" in question and (
+        "how long" in question or "duration" in question or "estimate" in question
+    ):
         if open_summary:
             lines.append("Currently open:")
             lines.extend(f"  • {s}" for s in open_summary)
-            lines.append("Mean reversion trades typically exit within 1-6 hours when price bounces to the BB middle band.")
+            lines.append(
+                "Mean reversion trades typically exit within 1-6 hours when price bounces to the BB middle band."
+            )
         else:
             lines.append("No open trades. Bot is waiting for entry conditions.")
             lines.append(f"Regimes: {regimes}")
@@ -2156,26 +2447,36 @@ def chat(body: ChatBody):
         total = len(forex_trades)
         wins_f = sum(1 for t in forex_trades if t.get("pnl_pct", 0) > 0)
         wins_g = sum(1 for t in gold_trades if t.get("pnl_pct", 0) > 0)
-        lines.append(f"Forex last {total} trades: {wins_f}/{total} wins ({wins_f/total*100:.0f}%)" if total else "No forex trades yet.")
+        lines.append(
+            f"Forex last {total} trades: {wins_f}/{total} wins ({wins_f / total * 100:.0f}%)"
+            if total
+            else "No forex trades yet."
+        )
         lines.extend(f"  {s}" for s in recent)
         if gold_trades:
             g_total = len(gold_trades)
-            lines.append(f"Gold last {g_total} trades: {wins_g}/{g_total} wins ({wins_g/g_total*100:.0f}%)")
+            lines.append(
+                f"Gold last {g_total} trades: {wins_g}/{g_total} wins ({wins_g / g_total * 100:.0f}%)"
+            )
             lines.extend(f"  {s}" for s in gold_recent)
     elif "strategy" in question or "config" in question:
         for pair, s in forex_strat.items():
             if isinstance(s, dict):
                 e = s.get("entry", {})
-                lines.append(f"  {pair}: {s.get('strategy_type')}, RSI<{e.get('mr_entry_rsi') or e.get('threshold','?')}, stop {s.get('stop_loss_pct','?')}%, floor {s.get('atr_floor_pct','none')}")
+                lines.append(
+                    f"  {pair}: {s.get('strategy_type')}, RSI<{e.get('mr_entry_rsi') or e.get('threshold', '?')}, stop {s.get('stop_loss_pct', '?')}%, floor {s.get('atr_floor_pct', 'none')}"
+                )
     else:
-        lines.append(f"Cycle {cycle}. {'No open trades.' if not open_summary else f'{len(forex_open)} open trade(s).'}")
+        lines.append(
+            f"Cycle {cycle}. {'No open trades.' if not open_summary else f'{len(forex_open)} open trade(s).'}"
+        )
         lines.append(f"Regimes: {regimes}")
 
     return {"answer": "\n".join(lines), "question": question}
 
 
 @app.get("/api/per-version/{bot_name}")
-def per_version_performance(bot_name: str, pair: Optional[str] = None):
+def per_version_performance(bot_name: str, pair: str | None = None):
     if bot_name not in VALID_BOTS:
         raise HTTPException(404, f"Unknown bot '{bot_name}'")
     # Only process trades for pairs that currently exist for this bot
@@ -2204,8 +2505,10 @@ def per_version_performance(bot_name: str, pair: Optional[str] = None):
         if r["id"] in CONTAMINATED_TRADE_IDS:
             continue
         # Safety net: drop gold-priced XAG/USD rows (see CONTAMINATED_* above).
-        if (r["pair"] == CONTAMINATED_PAIR
-                and (r.get("entry_price") or r.get("entry") or 0) > CONTAMINATED_ENTRY_MAX):
+        if (
+            r["pair"] == CONTAMINATED_PAIR
+            and (r.get("entry_price") or r.get("entry") or 0) > CONTAMINATED_ENTRY_MAX
+        ):
             continue
         p = r["pair"] or "?"
         if p not in valid_pairs:
@@ -2220,7 +2523,15 @@ def per_version_performance(bot_name: str, pair: Optional[str] = None):
             v = "?"
         pnl = r["pnl_pct"] if r["pnl_pct"] else 0
         if v not in versions:
-            versions[v] = {"trades": 0, "pnls": [], "wins": 0, "stops": 0, "targets": 0, "timeouts": 0, "pairs": set()}
+            versions[v] = {
+                "trades": 0,
+                "pnls": [],
+                "wins": 0,
+                "stops": 0,
+                "targets": 0,
+                "timeouts": 0,
+                "pairs": set(),
+            }
         versions[v]["trades"] += 1
         versions[v]["pnls"].append(pnl)
         if pnl > 0:
@@ -2234,7 +2545,15 @@ def per_version_performance(bot_name: str, pair: Optional[str] = None):
         versions[v]["pairs"].add(p)
         pkey = f"{v}::{p}"
         if pkey not in pair_versions:
-            pair_versions[pkey] = {"pair": p, "trades": 0, "pnls": [], "wins": 0, "stops": 0, "targets": 0, "timeouts": 0}
+            pair_versions[pkey] = {
+                "pair": p,
+                "trades": 0,
+                "pnls": [],
+                "wins": 0,
+                "stops": 0,
+                "targets": 0,
+                "timeouts": 0,
+            }
         pair_versions[pkey]["trades"] += 1
         pair_versions[pkey]["pnls"].append(pnl)
         if pnl > 0:
@@ -2256,7 +2575,11 @@ def per_version_performance(bot_name: str, pair: Optional[str] = None):
         change = ""
         if i > 0:
             prev_v = sorted_v[i - 1]
-            prev_avg = sum(versions[prev_v]["pnls"]) / len(versions[prev_v]["pnls"]) if versions[prev_v]["pnls"] else 0
+            prev_avg = (
+                sum(versions[prev_v]["pnls"]) / len(versions[prev_v]["pnls"])
+                if versions[prev_v]["pnls"]
+                else 0
+            )
             if avg > prev_avg:
                 change = "improved"
             elif avg < prev_avg:
@@ -2267,23 +2590,47 @@ def per_version_performance(bot_name: str, pair: Optional[str] = None):
                 p_avg = sum(pv["pnls"]) / len(pv["pnls"]) if pv["pnls"] else 0
                 p_wr = pv["wins"] / len(pv["pnls"]) * 100 if pv["pnls"] else 0
                 p_total = sum(pv["pnls"])
-                pair_rows.append({
-                    "pair": pv["pair"], "trades": pv["trades"], "win_rate": round(p_wr, 1),
-                    "wr_lower": wilson_score_interval(pv["wins"], len(pv["pnls"]))[0] if pv["pnls"] else 0,
-                    "wr_upper": wilson_score_interval(pv["wins"], len(pv["pnls"]))[1] if pv["pnls"] else 0,
-                    "low_confidence": len(pv["pnls"]) < 10,
-                    "avg_pnl": round(p_avg, 4), "total_pnl": round(p_total, 4),
-                    "stops": pv["stops"], "targets": pv["targets"], "timeouts": pv["timeouts"],
-                })
-        result.append({
-            "version": v, "trades": vs["trades"], "win_rate": round(wr, 1),
-            "wr_lower": wilson_score_interval(vs["wins"], len(vs["pnls"]))[0] if vs["pnls"] else 0,
-            "wr_upper": wilson_score_interval(vs["wins"], len(vs["pnls"]))[1] if vs["pnls"] else 0,
-            "low_confidence": len(vs["pnls"]) < 10,
-            "avg_pnl": round(avg, 4), "total_pnl": round(total, 4),
-            "stops": vs["stops"], "targets": vs["targets"], "timeouts": vs["timeouts"],
-            "pairs": sorted(vs["pairs"]), "trend": change, "pair_breakdown": pair_rows,
-        })
+                pair_rows.append(
+                    {
+                        "pair": pv["pair"],
+                        "trades": pv["trades"],
+                        "win_rate": round(p_wr, 1),
+                        "wr_lower": wilson_score_interval(pv["wins"], len(pv["pnls"]))[0]
+                        if pv["pnls"]
+                        else 0,
+                        "wr_upper": wilson_score_interval(pv["wins"], len(pv["pnls"]))[1]
+                        if pv["pnls"]
+                        else 0,
+                        "low_confidence": len(pv["pnls"]) < 10,
+                        "avg_pnl": round(p_avg, 4),
+                        "total_pnl": round(p_total, 4),
+                        "stops": pv["stops"],
+                        "targets": pv["targets"],
+                        "timeouts": pv["timeouts"],
+                    }
+                )
+        result.append(
+            {
+                "version": v,
+                "trades": vs["trades"],
+                "win_rate": round(wr, 1),
+                "wr_lower": wilson_score_interval(vs["wins"], len(vs["pnls"]))[0]
+                if vs["pnls"]
+                else 0,
+                "wr_upper": wilson_score_interval(vs["wins"], len(vs["pnls"]))[1]
+                if vs["pnls"]
+                else 0,
+                "low_confidence": len(vs["pnls"]) < 10,
+                "avg_pnl": round(avg, 4),
+                "total_pnl": round(total, 4),
+                "stops": vs["stops"],
+                "targets": vs["targets"],
+                "timeouts": vs["timeouts"],
+                "pairs": sorted(vs["pairs"]),
+                "trend": change,
+                "pair_breakdown": pair_rows,
+            }
+        )
     return {"bot": bot_name, "versions": result}
 
 
@@ -2295,11 +2642,12 @@ def per_version_performance(bot_name: str, pair: Optional[str] = None):
 # live_compat's route is registered first.
 # ═══════════════════════════════════════════════════════════════
 
+
 @app.get("/api/discovered")
 def discovered_dashboard():
     """Return all discovered indicators, degradation stats, and ensemble state per pair.
     Reads from both SQLite (Railway) and filesystem (dev) and merges results."""
-    print("[DEBUG] /api/discovered route called at", datetime.now(timezone.utc), flush=True)
+    print("[DEBUG] /api/discovered route called at", datetime.now(UTC), flush=True)
 
     pairs = {}
     deg_data = {}
@@ -2341,11 +2689,12 @@ def discovered_dashboard():
     if discovered_dir:
         deg_file = discovered_dir / "_live_deg.json"
         if deg_file.exists():
-            try: deg_data = json.loads(deg_file.read_text())
-            except: pass
+            with contextlib.suppress(BaseException):
+                deg_data = json.loads(deg_file.read_text())
         if not pairs:  # Only read filesystem if SQLite had nothing
             for f in sorted(discovered_dir.glob("*.json")):
-                if f.name == "_live_deg.json": continue
+                if f.name == "_live_deg.json":
+                    continue
                 try:
                     data = json.loads(f.read_text())
                     pair_name = data.get("pair", f.stem.replace("_", "/"))
@@ -2353,28 +2702,46 @@ def discovered_dashboard():
                     enriched = []
                     for ind in indicators:
                         es = ind.get("expr_str", "")
-                        enriched.append({
-                            "name": ind.get("name", "?"),
-                            "expr": es[:80],
-                            "fitness": round(ind.get("fitness", 0), 4),
-                            "win_rate": ind.get("win_rate", 0),
-                            "total_pnl": round(ind.get("total_pnl", 0), 4),
-                            "uses": [k for k in ["volume","dxy","vix","tnx","spx","oil","gold","btc","fvx","eem"] if k in es],
-                            "discovered_at": ind.get("discovered_at", "unknown"),
-                            "source": ind.get("source", "seed"),
-                        })
+                        enriched.append(
+                            {
+                                "name": ind.get("name", "?"),
+                                "expr": es[:80],
+                                "fitness": round(ind.get("fitness", 0), 4),
+                                "win_rate": ind.get("win_rate", 0),
+                                "total_pnl": round(ind.get("total_pnl", 0), 4),
+                                "uses": [
+                                    k
+                                    for k in [
+                                        "volume",
+                                        "dxy",
+                                        "vix",
+                                        "tnx",
+                                        "spx",
+                                        "oil",
+                                        "gold",
+                                        "btc",
+                                        "fvx",
+                                        "eem",
+                                    ]
+                                    if k in es
+                                ],
+                                "discovered_at": ind.get("discovered_at", "unknown"),
+                                "source": ind.get("source", "seed"),
+                            }
+                        )
                     if pair_name not in pairs:
                         pairs[pair_name] = enriched
-                except: pass
+                except Exception:
+                    pass
 
     ensemble = {}
     for pair, inds in pairs.items():
         if not inds:
             ensemble[pair] = {"status": "no_indicators", "signal": 0}
             continue
-        tw = sum((i["fitness"]*i["win_rate"]) for i in inds if i["fitness"]>0)
-        bw = sum((i["fitness"]*i["win_rate"]) for i in inds if i.get("win_rate",0.5)>0.5)
-        signal = ((bw - (tw-bw))/max(tw,0.001))
+        tw = sum((i["fitness"] * i["win_rate"]) for i in inds if i["fitness"] > 0)
+        bw = sum((i["fitness"] * i["win_rate"]) for i in inds if i.get("win_rate", 0.5) > 0.5)
+        signal = (bw - (tw - bw)) / max(tw, 0.001)
         ensemble[pair] = {
             "signal": round(signal, 3),
             "num_indicators": len(inds),
@@ -2398,21 +2765,31 @@ def discovered_dashboard():
 
 # Load findings_store — first try local copy (Railway deploy), then hermes-audit (dev)
 _AUDIT_STORE = Path(__file__).resolve().parent / "findings_store.py"
-_AUDIT_DIR = Path(__file__).resolve().parent if _AUDIT_STORE.exists() else Path(__file__).resolve().parent.parent / "hermes-audit"
+_AUDIT_DIR = (
+    Path(__file__).resolve().parent
+    if _AUDIT_STORE.exists()
+    else Path(__file__).resolve().parent.parent / "hermes-audit"
+)
 
 try:
     if _AUDIT_STORE.exists():
         from findings_store import (
-            list_findings, get_finding, update_finding_status,
-            get_summary_stats, list_runs, get_maturity_history,
-            get_latest_maturity_per_domain,
+            get_finding,
+            get_maturity_history,
+            get_summary_stats,
+            list_findings,
+            list_runs,
+            update_finding_status,
         )
     else:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hermes-audit"))
         from findings_store import (
-            list_findings, get_finding, update_finding_status,
-            get_summary_stats, list_runs, get_maturity_history,
-            get_latest_maturity_per_domain,
+            get_finding,
+            get_maturity_history,
+            get_summary_stats,
+            list_findings,
+            list_runs,
+            update_finding_status,
         )
     _AUDIT_AVAILABLE = True
     print("[AUDIT] findings_store loaded", flush=True)
@@ -2432,10 +2809,17 @@ def audit_list_findings(
 ):
     """List audit findings with optional filters."""
     if not _AUDIT_AVAILABLE:
-        return {"status": "error", "message": "Audit system not available (findings_store not found)"}
+        return {
+            "status": "error",
+            "message": "Audit system not available (findings_store not found)",
+        }
     results = list_findings(
-        status=status, domain=domain, severity=severity,
-        finding_type=type, limit=limit, offset=offset,
+        status=status,
+        domain=domain,
+        severity=severity,
+        finding_type=type,
+        limit=limit,
+        offset=offset,
     )
     return {"status": "ok", "count": len(results), "findings": results}
 
@@ -2450,8 +2834,8 @@ def cortex_dashboard():
         conn.close()
         r = {}
         for row in rows:
-            try: r[row["bot"]] = json.loads(row["cortex_json"])
-            except: pass
+            with contextlib.suppress(BaseException):
+                r[row["bot"]] = json.loads(row["cortex_json"])
         return r if r else {"status": "no_data"}
     except Exception as e:
         return {"error": str(e)}
@@ -2513,30 +2897,42 @@ def audit_summary():
     stats = get_summary_stats()
     # Add maturity history per domain
     maturity_history = {}
-    for domain in ["static-code", "strategy-logic", "data-logging-integrity",
-                   "risk-safety-boundaries", "performance-drift"]:
+    for domain in [
+        "static-code",
+        "strategy-logic",
+        "data-logging-integrity",
+        "risk-safety-boundaries",
+        "performance-drift",
+    ]:
         history = get_maturity_history(domain, limit=20)
         if history:
             maturity_history[domain] = [
-                {"score": h["score"], "intelligence_score": h["intelligence_score"],
-                 "compared_to_prior": h["compared_to_prior"],
-                 "created_at": h["created_at"]}
+                {
+                    "score": h["score"],
+                    "intelligence_score": h["intelligence_score"],
+                    "compared_to_prior": h["compared_to_prior"],
+                    "created_at": h["created_at"],
+                }
                 for h in history
             ]
     stats["maturity_history"] = maturity_history
 
     # Recent runs
     recent_runs = list_runs(limit=5)
-    stats["recent_runs"] = [
-        {
-            "id": r["id"],
-            "domains_run": json.loads(r.get("domains_run", "[]")),
-            "findings_count": r["findings_count"],
-            "critical_count": r["critical_count"],
-            "created_at": r["created_at"],
-        }
-        for r in recent_runs
-    ] if recent_runs else []
+    stats["recent_runs"] = (
+        [
+            {
+                "id": r["id"],
+                "domains_run": json.loads(r.get("domains_run", "[]")),
+                "findings_count": r["findings_count"],
+                "critical_count": r["critical_count"],
+                "created_at": r["created_at"],
+            }
+            for r in recent_runs
+        ]
+        if recent_runs
+        else []
+    )
     return {"status": "ok", "stats": stats}
 
 
@@ -2545,8 +2941,13 @@ def audit_maturity_history(domain: str):
     """Return maturity history for a specific domain."""
     if not _AUDIT_AVAILABLE:
         return {"status": "error", "message": "Audit system not available"}
-    valid_domains = ["static-code", "strategy-logic", "data-logging-integrity",
-                     "risk-safety-boundaries", "performance-drift"]
+    valid_domains = [
+        "static-code",
+        "strategy-logic",
+        "data-logging-integrity",
+        "risk-safety-boundaries",
+        "performance-drift",
+    ]
     if domain not in valid_domains:
         raise HTTPException(status_code=400, detail=f"Invalid domain. Valid: {valid_domains}")
     history = get_maturity_history(domain, limit=50)
@@ -2596,26 +2997,40 @@ def audit_trigger_run():
     if not _AUDIT_AVAILABLE:
         return {"status": "error", "message": "Audit system not available"}
     try:
-        import sys, uuid
-        from findings_store import create_audit_progress, update_audit_progress, get_audit_progress
-        
+        import sys
+        import uuid
+
+        from findings_store import create_audit_progress, update_audit_progress
+
         sys.path.insert(0, str(_AUDIT_DIR))
         from audit_runner import run_audit
-        
+
         run_id = str(uuid.uuid4())[:12]
         create_audit_progress(run_id, domains_total=5)
-        
+
         import threading
+
         def _run():
             try:
-                update_audit_progress(run_id, status="running", progress_pct=5, message="Starting audit...")
+                update_audit_progress(
+                    run_id, status="running", progress_pct=5, message="Starting audit..."
+                )
                 result = run_audit(domains=None, progress_id=run_id)
-                update_audit_progress(run_id, status="complete", progress_pct=100, 
-                                       domains_done=5, message=f"Complete — {result.get('total_findings', 0)} findings")
-                print(f"[AUDIT] Ad-hoc run {run_id} complete: {result.get('total_findings', 0)} findings", flush=True)
+                update_audit_progress(
+                    run_id,
+                    status="complete",
+                    progress_pct=100,
+                    domains_done=5,
+                    message=f"Complete — {result.get('total_findings', 0)} findings",
+                )
+                print(
+                    f"[AUDIT] Ad-hoc run {run_id} complete: {result.get('total_findings', 0)} findings",
+                    flush=True,
+                )
             except Exception as e:
                 update_audit_progress(run_id, status="error", message=str(e)[:200])
                 print(f"[AUDIT] Ad-hoc run {run_id} failed: {e}", flush=True)
+
         threading.Thread(target=_run, daemon=True).start()
         return {"status": "ok", "run_id": run_id, "message": "Audit started"}
     except ImportError as e:
@@ -2629,7 +3044,8 @@ def audit_get_progress(run_id: str):
     """Get current audit progress."""
     try:
         sys.path.insert(0, str(_AUDIT_DIR))
-        from findings_store import get_audit_progress, get_latest_audit_progress
+        from findings_store import get_audit_progress
+
         prog = get_audit_progress(run_id) or {}
         return {"status": "ok", "progress": prog}
     except Exception as e:
@@ -2648,21 +3064,23 @@ async def ask_question(req: AskRequest):
         return {"status": "error", "message": "Audit system not available"}
     try:
         sys.path.insert(0, str(_AUDIT_DIR))
-        from nli import quick_answer, answer
         import asyncio
+
+        from nli import answer, quick_answer
 
         if req.quick:
             ans = quick_answer(req.question)
             if ans:
                 return {"status": "ok", "answer": ans, "mode": "rule"}
-            return {"status": "ok", "answer": "No quick answer available for that question.", "mode": "rule"}
+            return {
+                "status": "ok",
+                "answer": "No quick answer available for that question.",
+                "mode": "rule",
+            }
 
         # Full LLM-powered answer — run in thread to avoid blocking event loop
         try:
-            r = await asyncio.wait_for(
-                asyncio.to_thread(answer, req.question),
-                timeout=25
-            )
+            r = await asyncio.wait_for(asyncio.to_thread(answer, req.question), timeout=25)
             return {
                 "status": "ok",
                 "answer": r.get("answer", "No answer generated"),
@@ -2671,8 +3089,12 @@ async def ask_question(req: AskRequest):
                 "confidence": r.get("confidence", "low"),
                 "mode": "llm",
             }
-        except asyncio.TimeoutError:
-            return {"status": "ok", "answer": "Query timed out. Try a simpler question or use --quick.", "mode": "llm"}
+        except TimeoutError:
+            return {
+                "status": "ok",
+                "answer": "Query timed out. Try a simpler question or use --quick.",
+                "mode": "llm",
+            }
     except ImportError as e:
         return {"status": "error", "message": f"NLI not available: {e}"}
 
@@ -2685,10 +3107,19 @@ def audit_generate_patch(finding_id: str):
     try:
         sys.path.insert(0, str(_AUDIT_DIR))
         from patch_generator import generate_patch
+
         # Check if we're on Railway (no local source files)
-        _bot_paths_check = list((_AUDIT_DIR.parent / "hermes-forex" / "hermes_forex").glob("*.py")) if (_AUDIT_DIR.parent / "hermes-forex").exists() else []
+        _bot_paths_check = (
+            list((_AUDIT_DIR.parent / "hermes-forex" / "hermes_forex").glob("*.py"))
+            if (_AUDIT_DIR.parent / "hermes-forex").exists()
+            else []
+        )
         if not _bot_paths_check:
-            return {"status": "error", "message": "Patch generation requires local filesystem access. Run the dashboard API locally to use this feature.", "patchable": False}
+            return {
+                "status": "error",
+                "message": "Patch generation requires local filesystem access. Run the dashboard API locally to use this feature.",
+                "patchable": False,
+            }
         result = generate_patch(finding_id)
         return {"status": "ok" if result.get("status") == "ok" else "error", **result}
     except ImportError as e:
@@ -2743,7 +3174,7 @@ def audit_correlate():
 class BulkActionRequest(BaseModel):
     action: str  # approve | reject | apply
     severity: str = None  # optional filter
-    domain: str = None     # optional filter
+    domain: str = None  # optional filter
     finding_type: str = None  # optional filter
 
 
@@ -2780,7 +3211,9 @@ def audit_bulk_action(req: BulkActionRequest):
         count = 0
         try:
             for f in findings:
-                new_status = {"approve": "approved", "reject": "rejected", "apply": "applied"}[req.action]
+                new_status = {"approve": "approved", "reject": "rejected", "apply": "applied"}[
+                    req.action
+                ]
                 conn.execute(
                     "UPDATE audit_findings SET status = ?, updated_at = ? WHERE id = ?",
                     (new_status, now, f["id"]),
@@ -2790,8 +3223,12 @@ def audit_bulk_action(req: BulkActionRequest):
         finally:
             conn.close()
 
-        return {"status": "ok", "action": req.action, "count": count,
-                "filters": {"severity": req.severity, "domain": req.domain, "type": req.finding_type}}
+        return {
+            "status": "ok",
+            "action": req.action,
+            "count": count,
+            "filters": {"severity": req.severity, "domain": req.domain, "type": req.finding_type},
+        }
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -2803,11 +3240,16 @@ def audit_update_progress(finding_id: str, req: ProgressRequest):
         return {"status": "error", "message": "Audit system not available"}
     try:
         import findings_store as store
+
         finding = store.update_finding_progress(finding_id, req.progress, req.assignee)
         if not finding:
             return {"status": "error", "message": "Finding not found"}
-        return {"status": "ok", "finding": finding,
-                "progress": finding["progress"], "finding_status": finding["status"]}
+        return {
+            "status": "ok",
+            "finding": finding,
+            "progress": finding["progress"],
+            "finding_status": finding["status"],
+        }
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -2857,6 +3299,7 @@ def spa_fallback(full_path: str):
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
 
 else:
@@ -2866,7 +3309,6 @@ else:
     def run() -> None:
         import uvicorn
         from fastapi.staticfiles import StaticFiles
-        from fastapi.responses import FileResponse
 
         dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
         if dist.exists():
@@ -2877,6 +3319,7 @@ else:
                 # /api/* routes are registered above and match first, so this
                 # catch-all only ever sees non-asset UI paths → serve index.html.
                 from fastapi.responses import FileResponse as _FR
+
                 html = dist / "index.html"
                 if html.exists():
                     return _FR(str(html))
@@ -2889,12 +3332,21 @@ else:
 # ── Data cleanup: remove gold pair trades/hypotheses erroneously stored under forex bot ──
 try:
     conn = get_conn()
-    dt = conn.execute("DELETE FROM trades WHERE bot='forex' AND pair IN ('XAU/USD', 'XAG/USD')").rowcount
-    dh = conn.execute("DELETE FROM hypotheses WHERE bot='forex' AND pair IN ('XAU/USD', 'XAG/USD')").rowcount
-    ds = conn.execute("DELETE FROM skips WHERE bot='forex' AND pair IN ('XAU/USD', 'XAG/USD')").rowcount
+    dt = conn.execute(
+        "DELETE FROM trades WHERE bot='forex' AND pair IN ('XAU/USD', 'XAG/USD')"
+    ).rowcount
+    dh = conn.execute(
+        "DELETE FROM hypotheses WHERE bot='forex' AND pair IN ('XAU/USD', 'XAG/USD')"
+    ).rowcount
+    ds = conn.execute(
+        "DELETE FROM skips WHERE bot='forex' AND pair IN ('XAU/USD', 'XAG/USD')"
+    ).rowcount
     if dt or dh or ds:
         conn.commit()
-        print(f"[CLEANUP] Removed {dt} trades + {dh} hypotheses + {ds} skips (gold pairs under forex)", flush=True)
+        print(
+            f"[CLEANUP] Removed {dt} trades + {dh} hypotheses + {ds} skips (gold pairs under forex)",
+            flush=True,
+        )
     purged = purge_legacy_dashboard_rows(conn)
     if any(purged.values()):
         print(

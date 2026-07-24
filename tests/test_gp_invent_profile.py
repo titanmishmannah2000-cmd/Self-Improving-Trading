@@ -45,12 +45,12 @@ def test_invent_profile_config_override(tmp_path, monkeypatch):
     cfg = tmp_path / "bots" / "crypto"
     cfg.mkdir(parents=True)
     (cfg / "config.yaml").write_text(
-        "bot:\n  name: crypto\npairs: [BTC/USD]\n"
-        "invent:\n  horizon: 8\n  timeout_s: 240\n",
+        "bot:\n  name: crypto\npairs: [BTC/USD]\ninvent:\n  horizon: 8\n  timeout_s: 240\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        "hermes_core.config.loader.repo_root", lambda: tmp_path,
+        "hermes_core.config.loader.repo_root",
+        lambda: tmp_path,
     )
     # invent_profile imports load_config from hermes_core.config
     monkeypatch.setattr(
@@ -69,21 +69,30 @@ def test_invent_profile_config_override(tmp_path, monkeypatch):
 
 def test_indicator_matches_regime():
     assert indicator_matches_regime(
-        {"interval": "1h", "horizon": 12}, interval="1h", horizon=12,
+        {"interval": "1h", "horizon": 12},
+        interval="1h",
+        horizon=12,
     )
     assert not indicator_matches_regime(
-        {"interval": "1d", "horizon": 60}, interval="1h", horizon=12,
+        {"interval": "1d", "horizon": 60},
+        interval="1h",
+        horizon=12,
     )
     assert not indicator_matches_regime(
-        {"interval": "1h", "horizon": 60}, interval="1h", horizon=12,
+        {"interval": "1h", "horizon": 60},
+        interval="1h",
+        horizon=12,
     )
 
 
 def test_has_votable_for_regime_ignores_wrong_horizon():
     inds = [
         {
-            "name": "(price-sma20)", "expr": "(price-sma20)",
-            "backtest_approved": True, "interval": "1d", "horizon": 60,
+            "name": "(price-sma20)",
+            "expr": "(price-sma20)",
+            "backtest_approved": True,
+            "interval": "1d",
+            "horizon": 60,
         },
     ]
     assert has_votable_for_regime(inds, interval="1d", horizon=10) is False
@@ -99,24 +108,48 @@ def test_ensemble_only_same_type_formulas_vote(tmp_path):
     path.parent.mkdir(parents=True, exist_ok=True)
     inds = [
         {
-            "pair": "EUR/USD", "name": "legacy_h60_a", "expr": "(price-sma20)",
-            "fitness": 0.5, "win_rate": 0.6, "oos_corr": 0.4,
-            "backtest_approved": True, "interval": "1d", "horizon": 60,
+            "pair": "EUR/USD",
+            "name": "legacy_h60_a",
+            "expr": "(price-sma20)",
+            "fitness": 0.5,
+            "win_rate": 0.6,
+            "oos_corr": 0.4,
+            "backtest_approved": True,
+            "interval": "1d",
+            "horizon": 60,
         },
         {
-            "pair": "EUR/USD", "name": "legacy_h60_b", "expr": "(ema20-sma20)",
-            "fitness": 0.5, "win_rate": 0.6, "oos_corr": 0.4,
-            "backtest_approved": True, "interval": "1d", "horizon": 60,
+            "pair": "EUR/USD",
+            "name": "legacy_h60_b",
+            "expr": "(ema20-sma20)",
+            "fitness": 0.5,
+            "win_rate": 0.6,
+            "oos_corr": 0.4,
+            "backtest_approved": True,
+            "interval": "1d",
+            "horizon": 60,
         },
         {
-            "pair": "EUR/USD", "name": "new_h10_a", "expr": "(price-sma20)",
-            "fitness": 0.5, "win_rate": 0.6, "oos_corr": 0.4,
-            "backtest_approved": True, "interval": "1d", "horizon": 10,
+            "pair": "EUR/USD",
+            "name": "new_h10_a",
+            "expr": "(price-sma20)",
+            "fitness": 0.5,
+            "win_rate": 0.6,
+            "oos_corr": 0.4,
+            "backtest_approved": True,
+            "interval": "1d",
+            "horizon": 10,
         },
         {
-            "pair": "EUR/USD", "name": "new_h10_b", "expr": "(ema20-sma20)",
-            "fitness": 0.5, "win_rate": 0.6, "oos_corr": 0.4,
-            "backtest_approved": True, "interval": "1d", "horizon": 10,
+            "pair": "EUR/USD",
+            "name": "new_h10_b",
+            "expr": "(ema20-sma20)",
+            "fitness": 0.5,
+            "win_rate": 0.6,
+            "oos_corr": 0.4,
+            "backtest_approved": True,
+            "interval": "1d",
+            "horizon": 10,
         },
     ]
     path.write_text(json.dumps(inds), encoding="utf-8")
@@ -124,8 +157,12 @@ def test_ensemble_only_same_type_formulas_vote(tmp_path):
 
     # Default forex profile = 1d/h10 → only new formulas vote.
     sig = entry_mod.gp_ensemble_signal(
-        "EUR/USD", daily, daily_prices=daily, promote=False,
-        invent_interval="1d", invent_horizon=10,
+        "EUR/USD",
+        daily,
+        daily_prices=daily,
+        promote=False,
+        invent_interval="1d",
+        invent_horizon=10,
     )
     assert sig is not None
     fired = set(sig.meta["gp_indicators"])
@@ -134,8 +171,12 @@ def test_ensemble_only_same_type_formulas_vote(tmp_path):
 
     # Asking for h60 regime excludes the new formulas.
     sig_old = entry_mod.gp_ensemble_signal(
-        "EUR/USD", daily, daily_prices=daily, promote=False,
-        invent_interval="1d", invent_horizon=60,
+        "EUR/USD",
+        daily,
+        daily_prices=daily,
+        promote=False,
+        invent_interval="1d",
+        invent_horizon=60,
     )
     assert sig_old is not None
     fired_old = set(sig_old.meta["gp_indicators"])
@@ -151,9 +192,15 @@ def test_discover_tags_interval_and_horizon(monkeypatch):
     prices = [100.0 + 0.15 * i for i in range(220)]
     # Tiny search — may admit 0; we only assert tags when something lands.
     inds = gp.discover(
-        "BTC/USD", prices,
-        generations=2, pop_size=6, top_k=2, horizon=12,
-        n_islands=1, interval="1h", seed=3,
+        "BTC/USD",
+        prices,
+        generations=2,
+        pop_size=6,
+        top_k=2,
+        horizon=12,
+        n_islands=1,
+        interval="1h",
+        seed=3,
     )
     for ind in inds:
         assert ind.get("interval") == "1h"

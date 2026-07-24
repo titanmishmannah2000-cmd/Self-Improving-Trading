@@ -22,20 +22,15 @@ Integrates with audit_runner.py:
 """
 
 import argparse
-import json
-import os
 import sqlite3
-from datetime import datetime, timezone, timedelta
 import subprocess
 import sys
-import time
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
-from findings_store import _get_conn, get_latest_run, list_findings
+from findings_store import _get_conn, get_latest_run
 
 ALL_DOMAINS = [
     "static-code",
@@ -58,6 +53,7 @@ PROJECTS = {
 
 # ── Check 1: Live Anomalies ──────────────────────────────────────────────
 
+
 def check_live_anomalies() -> dict:
     """Check for open anomalies in monitor_alerts. Returns decision context."""
     conn = _get_conn()
@@ -68,13 +64,13 @@ def check_live_anomalies() -> dict:
             critical = conn.execute(
                 """SELECT bot, metric, z_score FROM monitor_alerts
                    WHERE status = 'open' AND severity = 'critical' AND created_at >= ?""",
-                ((datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(),),
+                ((datetime.now(UTC) - timedelta(hours=24)).isoformat(),),
             ).fetchall()
 
             warnings = conn.execute(
                 """SELECT bot, metric, z_score FROM monitor_alerts
                    WHERE status = 'open' AND severity = 'warning' AND created_at >= ?""",
-                ((datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(),),
+                ((datetime.now(UTC) - timedelta(hours=24)).isoformat(),),
             ).fetchall()
         except sqlite3.OperationalError:
             critical, warnings = [], []
@@ -83,8 +79,13 @@ def check_live_anomalies() -> dict:
         domains_hit = set()
         for a in list(critical) + list(warnings):
             met = a["metric"]
-            if met in ("win_rate_pct", "avg_pnl_pct", "lifetime_pnl_pct",
-                       "pair_avg_pnl_pct", "pair_win_rate_pct"):
+            if met in (
+                "win_rate_pct",
+                "avg_pnl_pct",
+                "lifetime_pnl_pct",
+                "pair_avg_pnl_pct",
+                "pair_win_rate_pct",
+            ):
                 domains_hit.add("performance-drift")
             if met in ("stop_hit_rate_pct", "target_hit_rate_pct", "unrealised_pnl_pct"):
                 domains_hit.add("risk-safety-boundaries")
@@ -104,6 +105,7 @@ def check_live_anomalies() -> dict:
 
 
 # ── Check 2: Code Changes ────────────────────────────────────────────────
+
 
 def check_git_changes(since_hours: int = 24) -> dict:
     """Check git for recent changes across all projects.
@@ -129,16 +131,26 @@ def check_git_changes(since_hours: int = 24) -> dict:
         "*.css": {"static-code"},
     }
 
-    since_date = (datetime.now(timezone.utc) - timedelta(hours=since_hours)).strftime("%Y-%m-%d")
+    since_date = (datetime.now(UTC) - timedelta(hours=since_hours)).strftime("%Y-%m-%d")
 
     for name, path in PROJECTS.items():
         if not path.exists():
             continue
         try:
             result = subprocess.run(
-                ["git", "log", "--since", since_date, "--name-only", "--pretty=format:", "--relative"],
+                [
+                    "git",
+                    "log",
+                    "--since",
+                    since_date,
+                    "--name-only",
+                    "--pretty=format:",
+                    "--relative",
+                ],
                 cwd=str(path),
-                capture_output=True, text=True, timeout=15,
+                capture_output=True,
+                text=True,
+                timeout=15,
             )
             if result.returncode != 0:
                 continue
@@ -167,6 +179,7 @@ def check_git_changes(since_hours: int = 24) -> dict:
 
 # ── Check 3: Applied-but-unverified fixes ────────────────────────────────
 
+
 def check_unverified_fixes() -> dict:
     """Check if any applied findings haven't been verified by a subsequent audit."""
     conn = _get_conn()
@@ -177,7 +190,7 @@ def check_unverified_fixes() -> dict:
                WHERE f.status = 'applied'
                AND f.created_at >= ?
                ORDER BY f.updated_at DESC""",
-            ((datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),),
+            ((datetime.now(UTC) - timedelta(days=7)).isoformat(),),
         ).fetchall()
 
         # Check which domains have recent applied fixes
@@ -188,14 +201,17 @@ def check_unverified_fixes() -> dict:
         return {
             "unverified_count": len(applied),
             "domains_with_fixes": list(domains_with_fixes),
-            "recent_fixes": [{"id": r["id"], "domain": r["domain"],
-                              "description": r["description"][:80]} for r in applied],
+            "recent_fixes": [
+                {"id": r["id"], "domain": r["domain"], "description": r["description"][:80]}
+                for r in applied
+            ],
         }
     finally:
         conn.close()
 
 
 # ── Decision Engine ──────────────────────────────────────────────────────
+
 
 def decide_domains(verbose: bool = False, justify: bool = False) -> list[str]:
     """Decide which domains to audit. Returns a list of domain names.
@@ -219,7 +235,7 @@ def decide_domains(verbose: bool = False, justify: bool = False) -> list[str]:
 
     if last_run:
         last_ts = datetime.fromisoformat(last_run["created_at"].replace("Z", "+00:00"))
-        hours_since_last = (datetime.now(timezone.utc) - last_ts).total_seconds() / 3600
+        hours_since_last = (datetime.now(UTC) - last_ts).total_seconds() / 3600
 
     # Determine included domains
     included = set()
@@ -249,13 +265,17 @@ def decide_domains(verbose: bool = False, justify: bool = False) -> list[str]:
     if fixes["unverified_count"] > 0:
         for d in fixes["domains_with_fixes"]:
             included.add(d)
-            reasons.setdefault(d, []).append(f"{fixes['unverified_count']} applied fix(es) to verify")
+            reasons.setdefault(d, []).append(
+                f"{fixes['unverified_count']} applied fix(es) to verify"
+            )
 
     # Signal 4: Time since last audit
     if hours_since_last >= 48:
         included.update(ALL_DOMAINS)
         for d in ALL_DOMAINS:
-            reasons.setdefault(d, []).append(f"no audit in {hours_since_last:.0f}h (>48h threshold)")
+            reasons.setdefault(d, []).append(
+                f"no audit in {hours_since_last:.0f}h (>48h threshold)"
+            )
 
     # Signal 5: If nothing triggered but it's been more than 24h, run one domain
     if not included and hours_since_last >= 24:
@@ -265,32 +285,39 @@ def decide_domains(verbose: bool = False, justify: bool = False) -> list[str]:
     result = list(included) if included else []
 
     if verbose or justify:
-        print(f"\n{'='*40}")
-        print(f"SENTINEL DECISION — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
-        print(f"{'='*40}")
-        print(f"  Signals:")
-        print(f"    Anomalies:       {anomalies['critical_count']} critical, {anomalies['warning_count']} warning")
+        print(f"\n{'=' * 40}")
+        print(f"SENTINEL DECISION — {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}")
+        print(f"{'=' * 40}")
+        print("  Signals:")
+        print(
+            f"    Anomalies:       {anomalies['critical_count']} critical, {anomalies['warning_count']} warning"
+        )
         print(f"    Code changes:    {list(git_changes['projects_changed'])}")
         print(f"    Unverified fixes: {fixes['unverified_count']}")
         print(f"    Hours since last: {hours_since_last:.0f}h")
-        print(f"\n  Decision: {'SKIP (no audit needed)' if not result else f'Audit domains: {result}'}")
+        print(
+            f"\n  Decision: {'SKIP (no audit needed)' if not result else f'Audit domains: {result}'}"
+        )
         if justify and reasons:
-            print(f"\n  Justification:")
+            print("\n  Justification:")
             for d in sorted(reasons.keys()):
                 print(f"    {d}:")
                 for r in reasons[d]:
                     print(f"      - {r}")
-        print(f"{'='*40}\n")
+        print(f"{'=' * 40}\n")
 
     return result
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────
 
+
 def main():
     parser = argparse.ArgumentParser(description="Hermes Intelligent Sentinel (Layer 2)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Show signal details")
-    parser.add_argument("--justify", "-j", action="store_true", help="Explain every domain decision")
+    parser.add_argument(
+        "--justify", "-j", action="store_true", help="Explain every domain decision"
+    )
     parser.add_argument("--json", action="store_true", help="Output as JSON only")
     args = parser.parse_args()
 
@@ -298,11 +325,17 @@ def main():
 
     if args.json:
         import json as j
-        print(j.dumps({
-            "domains": domains,
-            "decision": "audit" if domains else "skip",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }, indent=2))
+
+        print(
+            j.dumps(
+                {
+                    "domains": domains,
+                    "decision": "audit" if domains else "skip",
+                    "timestamp": datetime.now(UTC).isoformat(),
+                },
+                indent=2,
+            )
+        )
     elif not domains:
         print("\n✅ Sentinel decision: SKIP — nothing to audit")
 

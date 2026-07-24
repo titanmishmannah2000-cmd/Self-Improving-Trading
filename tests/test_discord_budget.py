@@ -24,8 +24,12 @@ def test_d9_different_guard_not_shared():
 
 @patch("hermes_core.notify.discord.send_alert", return_value=True)
 def test_send_trade_alert_respects_budget(mock_send):
-    assert send_trade_alert("forex", "EUR/USD", "sl", -1.0,
-                            webhook_url="https://example.invalid/hook") is True
-    assert send_trade_alert("forex", "EUR/USD", "sl", -1.0,
-                            webhook_url="https://example.invalid/hook") is False
+    assert (
+        send_trade_alert("forex", "EUR/USD", "sl", -1.0, webhook_url="https://example.invalid/hook")
+        is True
+    )
+    assert (
+        send_trade_alert("forex", "EUR/USD", "sl", -1.0, webhook_url="https://example.invalid/hook")
+        is False
+    )
     assert mock_send.call_count == 1

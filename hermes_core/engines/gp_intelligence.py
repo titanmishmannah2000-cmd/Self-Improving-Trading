@@ -30,12 +30,12 @@ from pathlib import Path
 from hermes_core.state.paths import gp_state_path
 
 # ── gates ──────────────────────────────────────────────────────────────────
-DEFAULT_GP_SCORE = 0.0     # [GUARD L29] corrected from -0.3 (Problem 3)
-SCORE_GATE = 0.0           # entry allowed only if score >= this
-LOCKOUT_AFTER = 3          # consecutive losses -> locked [L29]
-CULL_WR = 0.40             # same-regime WR below this -> cull [Problem 4]
-CULL_MIN_SIGNALS = 50      # need this many same-regime signals before culling
-REGIME_MISMATCH_PENALTY = 0.5   # weight multiplier when used outside trained regime
+DEFAULT_GP_SCORE = 0.0  # [GUARD L29] corrected from -0.3 (Problem 3)
+SCORE_GATE = 0.0  # entry allowed only if score >= this
+LOCKOUT_AFTER = 3  # consecutive losses -> locked [L29]
+CULL_WR = 0.40  # same-regime WR below this -> cull [Problem 4]
+CULL_MIN_SIGNALS = 50  # need this many same-regime signals before culling
+REGIME_MISMATCH_PENALTY = 0.5  # weight multiplier when used outside trained regime
 
 # Optional test override (tests monkeypatch this module attribute).
 GP_STATE: Path | None = None
@@ -134,8 +134,9 @@ def should_suppress(pair: str, cond: dict | None = None) -> tuple[bool, str]:
         return True, f"locked: {LOCKOUT_AFTER}+ consecutive GP losses on {pair}"
     score = gp_entry_score(pair, cond)
     if score < SCORE_GATE:
-        return True, (f"gp_entry_score={score:.2f} < gate {SCORE_GATE} "
-                      f"(insufficient winning history)")
+        return True, (
+            f"gp_entry_score={score:.2f} < gate {SCORE_GATE} (insufficient winning history)"
+        )
     return False, "ok"
 
 
@@ -155,8 +156,7 @@ def weight_for(ind: dict, regime: str) -> float:
     return base
 
 
-def _update_indicator(registry: list[dict], ind_id: str, outcome: float,
-                      regime: str) -> list[dict]:
+def _update_indicator(registry: list[dict], ind_id: str, outcome: float, regime: str) -> list[dict]:
     """Mutate an indicator in the registry with a new outcome in `regime`.
 
     Tracks per-regime wins/signals. Returns the (possibly culled) registry.
@@ -182,8 +182,9 @@ def _update_indicator(registry: list[dict], ind_id: str, outcome: float,
             wr = bucket["wins"] / bucket["signals"]
             if wr < CULL_WR:
                 ind["culled"] = True
-                ind["cull_reason"] = (f"same-regime WR {wr:.2f} < {CULL_WR} "
-                                      f"over {bucket['signals']} signals")
+                ind["cull_reason"] = (
+                    f"same-regime WR {wr:.2f} < {CULL_WR} over {bucket['signals']} signals"
+                )
         return registry
     return registry
 
@@ -209,6 +210,7 @@ class GPIntelligence:
     def get_label(self, indicators: list[dict]) -> str:
         return get_label(indicators)
 
-    def update_indicator(self, registry: list[dict], ind_id: str,
-                         outcome: float, regime: str) -> list[dict]:
+    def update_indicator(
+        self, registry: list[dict], ind_id: str, outcome: float, regime: str
+    ) -> list[dict]:
         return _update_indicator(registry, ind_id, outcome, regime)

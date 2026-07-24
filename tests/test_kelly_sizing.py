@@ -47,7 +47,11 @@ def test_negative_edge_hits_floor():
 
 def test_apply_scales():
     out = apply_kelly_sizing(
-        0.40, enabled=True, wins=2, losses=20, rr_b=1.0,
+        0.40,
+        enabled=True,
+        wins=2,
+        losses=20,
+        rr_b=1.0,
     )
     assert out["size"] == pytest.approx(0.40 * MIN_MULT)
     assert out["kelly_mode"] == "soft"

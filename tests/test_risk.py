@@ -40,7 +40,7 @@ def test_size_neutral():
 
 def test_size_neutral_two_open():
     s = compute_position_size("NEUTRAL", 0.05, 2, cfg())
-    assert s == pytest.approx(0.15 * 0.7)   # extra 30% (2*15%) reduction
+    assert s == pytest.approx(0.15 * 0.7)  # extra 30% (2*15%) reduction
 
 
 def test_session_token_is_not_bull():
@@ -88,23 +88,27 @@ def test_atr_stop_floor():
     assert stp == pytest.approx(1.1000 - 0.0035 * 1.5)
     # Floor binding: tiny ATR distance, floor forces a wider (safer) stop
     bound = compute_atr_stop(1.1000, 0.0001, 1.5, 0.0008)
-    assert bound == pytest.approx(1.1000 - 0.0008)          # floor wins
-    assert bound >= 1.1000 - 0.0008                          # never tighter than floor
+    assert bound == pytest.approx(1.1000 - 0.0008)  # floor wins
+    assert bound >= 1.1000 - 0.0008  # never tighter than floor
 
 
 # --- [GUARD L40] param-range gate ------------------------------------------
 def test_param_gate_pass():
-    ok, reason = param_range_gate({
-        "stop_loss_pct": 1.5, "profit_target_pct": 3.0,
-        "position_size_r": 0.2, "entry_threshold": 40,
-    })
+    ok, reason = param_range_gate(
+        {
+            "stop_loss_pct": 1.5,
+            "profit_target_pct": 3.0,
+            "position_size_r": 0.2,
+            "entry_threshold": 40,
+        }
+    )
     assert ok is True and reason is None
 
 
 def test_param_gate_out_of_range():
     ok, reason = param_range_gate({"position_size_r": 0.9})  # within range -> ok
     assert ok is True
-    ok, reason = param_range_gate({"stop_loss_pct": 0.1})    # below 0.5 -> reject
+    ok, reason = param_range_gate({"stop_loss_pct": 0.1})  # below 0.5 -> reject
     assert ok is False and reason is not None
     ok, reason = param_range_gate({"profit_target_pct": 50.0})  # above 20 -> reject
     assert ok is False

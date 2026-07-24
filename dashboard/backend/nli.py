@@ -16,16 +16,13 @@ Supported questions:
 import json
 import os
 import sys
-from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Optional
 
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
 
-from findings_store import _get_conn, get_summary_stats, get_latest_run, list_findings
-from sentinel import check_live_anomalies, check_git_changes
-
+from findings_store import get_latest_run, get_summary_stats, list_findings
+from sentinel import check_git_changes, check_live_anomalies
 
 SYSTEM_PROMPT = """You are Hermes-Steward, the natural language interface for an algorithmic trading system. You answer questions about system health by synthesizing data from multiple sources.
 
@@ -67,15 +64,21 @@ def gather_context(question: str) -> dict:
     # Recent findings
     findings = list_findings(limit=30)
     ctx["recent_audit_findings"] = [
-        {"id": f["id"], "severity": f["severity"], "type": f["type"],
-         "domain": f["domain"], "description": f.get("description", "")[:150],
-         "status": f["status"]}
+        {
+            "id": f["id"],
+            "severity": f["severity"],
+            "type": f["type"],
+            "domain": f["domain"],
+            "description": f.get("description", "")[:150],
+            "status": f["status"],
+        }
         for f in findings
     ]
 
     # Open criticals
     ctx["open_critical"] = [
-        f for f in ctx["recent_audit_findings"]
+        f
+        for f in ctx["recent_audit_findings"]
         if f["severity"] == "CRITICAL" and f["status"] in ("pending", "approved")
     ]
 
@@ -87,32 +90,40 @@ def answer(question: str) -> dict:
     ctx = gather_context(question)
 
     # Build user prompt with context
-    context_json = json.dumps({
-        "summary": ctx["summary"],
-        "anomalies": {
-            "critical_count": ctx["anomalies"]["critical_count"],
-            "warning_count": ctx["anomalies"]["warning_count"],
-            "critical_metrics": ctx["anomalies"]["critical_metrics"],
+    context_json = json.dumps(
+        {
+            "summary": ctx["summary"],
+            "anomalies": {
+                "critical_count": ctx["anomalies"]["critical_count"],
+                "warning_count": ctx["anomalies"]["warning_count"],
+                "critical_metrics": ctx["anomalies"]["critical_metrics"],
+            },
+            "git_changes": {
+                "projects_changed": ctx["git_changes"]["projects_changed"],
+                "changed_files": ctx["git_changes"]["changed_files"],
+            },
+            "last_audit": {
+                "id": ctx["latest_run"]["id"] if ctx["latest_run"] else None,
+                "findings_count": ctx["latest_run"]["findings_count"] if ctx["latest_run"] else 0,
+                "critical_count": ctx["latest_run"]["critical_count"] if ctx["latest_run"] else 0,
+                "maturity_scores": json.loads(ctx["latest_run"]["maturity_scores"])
+                if ctx["latest_run"] and ctx["latest_run"].get("maturity_scores")
+                else {},
+                "created_at": ctx["latest_run"]["created_at"] if ctx["latest_run"] else None,
+            }
+            if ctx["latest_run"]
+            else "No audits yet",
+            "open_critical_findings": ctx["open_critical"],
         },
-        "git_changes": {
-            "projects_changed": ctx["git_changes"]["projects_changed"],
-            "changed_files": ctx["git_changes"]["changed_files"],
-        },
-        "last_audit": {
-            "id": ctx["latest_run"]["id"] if ctx["latest_run"] else None,
-            "findings_count": ctx["latest_run"]["findings_count"] if ctx["latest_run"] else 0,
-            "critical_count": ctx["latest_run"]["critical_count"] if ctx["latest_run"] else 0,
-            "maturity_scores": json.loads(ctx["latest_run"]["maturity_scores"]) if ctx["latest_run"] and ctx["latest_run"].get("maturity_scores") else {},
-            "created_at": ctx["latest_run"]["created_at"] if ctx["latest_run"] else None,
-        } if ctx["latest_run"] else "No audits yet",
-        "open_critical_findings": ctx["open_critical"],
-    }, default=str)
+        default=str,
+    )
 
     user_prompt = f"Question: {question}\n\nCurrent system context:\n{context_json}"
 
     # Call LLM
     try:
         import httpx
+
         api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         if not api_key:
             env_path = _HERE / ".env"
@@ -124,7 +135,13 @@ def answer(question: str) -> dict:
                         break
 
         if not api_key:
-            return {"answer": "System not configured: DEEPSEEK_API_KEY not set", "sources_used": [], "critical_items": [], "has_critical": False, "confidence": "low"}
+            return {
+                "answer": "System not configured: DEEPSEEK_API_KEY not set",
+                "sources_used": [],
+                "critical_items": [],
+                "has_critical": False,
+                "confidence": "low",
+            }
 
         response = httpx.post(
             "https://api.deepseek.com/v1/chat/completions",
@@ -143,27 +160,47 @@ def answer(question: str) -> dict:
         )
 
         if response.status_code != 200:
-            return {"answer": f"LLM error: {response.status_code}", "sources_used": ["llm"], "critical_items": [], "has_critical": False, "confidence": "low"}
+            return {
+                "answer": f"LLM error: {response.status_code}",
+                "sources_used": ["llm"],
+                "critical_items": [],
+                "has_critical": False,
+                "confidence": "low",
+            }
 
         result = response.json()
         content = result["choices"][0]["message"]["content"]
         return json.loads(content)
 
     except ImportError:
-        return {"answer": "httpx not available for LLM calls", "sources_used": [], "critical_items": [], "has_critical": False, "confidence": "low"}
+        return {
+            "answer": "httpx not available for LLM calls",
+            "sources_used": [],
+            "critical_items": [],
+            "has_critical": False,
+            "confidence": "low",
+        }
     except Exception as e:
-        return {"answer": f"Error: {e}", "sources_used": [], "critical_items": [], "has_critical": False, "confidence": "low"}
+        return {
+            "answer": f"Error: {e}",
+            "sources_used": [],
+            "critical_items": [],
+            "has_critical": False,
+            "confidence": "low",
+        }
 
 
 # Simple rule-based fallback for common questions without LLM
-def quick_answer(question: str) -> Optional[str]:
+def quick_answer(question: str) -> str | None:
     """Quick rule-based answers for common questions (no LLM needed)."""
     q = question.lower()
 
     if "what's wrong" in q or "what is wrong" in q or "whats wrong" in q or "issues" in q:
         ctx = gather_context("")
         if ctx["open_critical"]:
-            items = [f"• [{f['domain']}] {f['description'][:100]}" for f in ctx["open_critical"][:3]]
+            items = [
+                f"• [{f['domain']}] {f['description'][:100]}" for f in ctx["open_critical"][:3]
+            ]
             return f"🔴 {len(ctx['open_critical'])} critical issue(s) open:\n" + "\n".join(items)
         if ctx["anomalies"]["has_critical"]:
             return f"🟡 {ctx['anomalies']['critical_count']} critical anomaly(ies) detected in live metrics"
@@ -185,8 +222,10 @@ def quick_answer(question: str) -> Optional[str]:
     if "fix first" in q or "priority" in q:
         ctx = gather_context("")
         if ctx["open_critical"]:
-            items = [f"• [{f['domain']}] {f['description'][:100]}" for f in ctx["open_critical"][:3]]
-            return f"🔴 Fix these CRITICAL findings first:\n" + "\n".join(items)
+            items = [
+                f"• [{f['domain']}] {f['description'][:100]}" for f in ctx["open_critical"][:3]
+            ]
+            return "🔴 Fix these CRITICAL findings first:\n" + "\n".join(items)
         return "✅ No critical findings — all clear"
 
     if "regression" in q:
@@ -203,6 +242,7 @@ def quick_answer(question: str) -> Optional[str]:
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="Natural Language Interface (Layer 8)")
     parser.add_argument("question", type=str, nargs="?", help="Question to answer")
     parser.add_argument("--quick", action="store_true", help="Use rule-based only (no LLM)")

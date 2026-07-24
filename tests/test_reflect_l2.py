@@ -20,8 +20,12 @@ from hermes_core.engines import call_llm_consensus
 
 def _proposal(score: float, conf: float = 0.5) -> dict:
     return {
-        "pair": "EUR/USD", "variable": "stop_loss_pct", "old": 1.5, "new": 1.2,
-        "reason": "DD breach", "confidence": conf,
+        "pair": "EUR/USD",
+        "variable": "stop_loss_pct",
+        "old": 1.5,
+        "new": 1.2,
+        "reason": "DD breach",
+        "confidence": conf,
     }
 
 
@@ -34,12 +38,15 @@ def _no(_prompt: str) -> str:
 
 
 # ── corrected gate: 65 is the standard, 75 is unanimous ───────────────────
-@pytest.mark.parametrize("score,expected_decision", [
-    (55, False),   # blueprint's old 55 gate is a REGRESSION -> rejected here
-    (64, False),   # just below 65 -> L2 not invoked
-    (65, False),   # exactly 65 needs 2/3; with no votes it fails
-    (70, False),   # 65-74 needs 2/3; default fakes below
-])
+@pytest.mark.parametrize(
+    "score,expected_decision",
+    [
+        (55, False),  # blueprint's old 55 gate is a REGRESSION -> rejected here
+        (64, False),  # just below 65 -> L2 not invoked
+        (65, False),  # exactly 65 needs 2/3; with no votes it fails
+        (70, False),  # 65-74 needs 2/3; default fakes below
+    ],
+)
 def test_score_gate_boundaries(score, expected_decision):
     # no model callers -> zero votes -> fail-closed at every boundary
     res = call_llm_consensus(_proposal(score), score=score, callers={})
@@ -60,7 +67,7 @@ def test_score_75_needs_unanimous_3_of_3():
     res = call_llm_consensus(_proposal(77), score=77, callers=callers)
     assert res.required == 3
     assert res.votes_yes == 2
-    assert res.decision is False   # 2/3 is NOT enough at >=75
+    assert res.decision is False  # 2/3 is NOT enough at >=75
 
 
 def test_exit_gate_score77_2of3_rejected():
@@ -115,8 +122,7 @@ def test_all_models_fail_fail_closed():
 
 def test_confidence_below_040_blocks_apply():
     callers = {"deepseek": _yes, "gemini": _yes, "groq": _yes}
-    res = call_llm_consensus(_proposal(80, conf=0.30), score=80,
-                             confidence=0.30, callers=callers)
+    res = call_llm_consensus(_proposal(80, conf=0.30), score=80, confidence=0.30, callers=callers)
     assert res.votes_yes == 3
-    assert res.decision is False   # confidence 0.30 < 0.40 -> blocked
+    assert res.decision is False  # confidence 0.30 < 0.40 -> blocked
     assert any("confidence" in r for r in res.reasons)

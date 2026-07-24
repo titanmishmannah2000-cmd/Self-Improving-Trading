@@ -37,12 +37,17 @@ packages = ["hermes_core"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+extend-exclude = ["_*.py", "dashboard_backup_*"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+# E501: ruff format owns wrapping; remaining hits are long strings/URLs.
+# E402: intentional env/sys.path bootstrap before imports in bots/dashboard.
+ignore = ["E501", "E402"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101"]
+"dashboard/backend/tests/*" = ["S101"]
 
 [tool.mypy]
 python_version = "3.11"

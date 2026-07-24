@@ -48,7 +48,8 @@ def test_crypto_flat_ws_falls_through_to_yahoo(monkeypatch):
     flat_ws = [{"price": 65_000.0, "ts": float(i)} for i in range(80)]
     yahoo = [{"price": 65_000.0 + i * 10, "ts": float(i)} for i in range(80)]
     monkeypatch.setattr(
-        agg, "_external_history",
+        agg,
+        "_external_history",
         lambda pair, max_candles=300: yahoo if pair == "BTC/USD" else [],
     )
     a = agg.PriceAggregator(["BTC/USD"], sources=[])

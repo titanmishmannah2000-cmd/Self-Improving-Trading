@@ -51,9 +51,7 @@ def _ok_transport(req):
 
 
 def test_http_backend_sync_fetch_via_mock():
-    c = HttpPriceClient(
-        base_url="https://fake.test", transport=httpx.MockTransport(_ok_transport)
-    )
+    c = HttpPriceClient(base_url="https://fake.test", transport=httpx.MockTransport(_ok_transport))
     candle = c.fetch_sync("EUR/USD")
     assert candle is not None
     assert candle["price"] == 1.10
@@ -84,7 +82,8 @@ def test_loop_runs_with_real_default_fetch(monkeypatch, tmp_path):
     # forex EUR/USD is london_only; use a NY-agnostic path by forcing session via
     # a neutral pair is not available, so just assert no coroutine crash occurs.
     summary = run_cycle(
-        "forex", 1,
+        "forex",
+        1,
         health_registry=reg,
         now_fn=lambda: 10 * 3600.0,
         chart_context_fn=lambda p: "",

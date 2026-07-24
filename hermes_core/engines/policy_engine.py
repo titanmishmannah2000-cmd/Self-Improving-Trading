@@ -30,12 +30,12 @@ from hermes_core.env import get_env
 from hermes_core.state.paths import current_bot, policy_path
 
 # ── gates ──────────────────────────────────────────────────────────────────
-SUPPRESS_GP_MR_WR = 0.40     # [GUARD L35] MR strong enough to bench GP
-SUPPRESS_GP_GP_WR = 0.30     # GP weak enough to be benched by MR
-SUPPRESS_MR_GP_WR = 0.50     # GP strong enough to bench MR
+SUPPRESS_GP_MR_WR = 0.40  # [GUARD L35] MR strong enough to bench GP
+SUPPRESS_GP_GP_WR = 0.30  # GP weak enough to be benched by MR
+SUPPRESS_MR_GP_WR = 0.50  # GP strong enough to bench MR
 PRIORITY_DISCOVERY_EXILES = 2  # >=2 exiled fleet-wide -> discover
-PROBE_CORTEX_THRESHOLD = 5    # cortex <5 entries -> probe every 10
-ROLLBACK_MR_WR = 0.30         # MR WR < this + >=10 trades -> rollback flag
+PROBE_CORTEX_THRESHOLD = 5  # cortex <5 entries -> probe every 10
+ROLLBACK_MR_WR = 0.30  # MR WR < this + >=10 trades -> rollback flag
 ROLLBACK_MIN_TRADES = 10
 
 # Optional test override (tests monkeypatch this module attribute).
@@ -71,11 +71,11 @@ class Policy:
         allocation: dict | None = None,
         soft_weights: bool = False,
     ) -> None:
-        self.suppressions = suppressions          # {pair: set(entry_type)}
+        self.suppressions = suppressions  # {pair: set(entry_type)}
         self.priority_discovery = priority_discovery
         self.probe_interval = probe_interval
         self.rollback = rollback
-        self.allocation = allocation or {}        # {pair: {etype: weight_info}}
+        self.allocation = allocation or {}  # {pair: {etype: weight_info}}
         self.soft_weights = soft_weights
 
     def is_suppressed(self, pair: str, entry_type: str) -> bool:
@@ -113,9 +113,13 @@ class Policy:
 class PolicyEngine:
     """Evaluates and persists the live policy."""
 
-    def evaluate(self, cycle: int, pairs: list[str],
-                 cortex: Cortex | None = None,
-                 current_strategies: dict | None = None) -> Policy:
+    def evaluate(
+        self,
+        cycle: int,
+        pairs: list[str],
+        cortex: Cortex | None = None,
+        current_strategies: dict | None = None,
+    ) -> Policy:
         cortex = cortex or Cortex()
         suppressions: dict[str, set[str]] = {p: set() for p in pairs}
 
@@ -125,9 +129,13 @@ class PolicyEngine:
             mr_wr = cortex.entry_type_wr("mean_reversion", pair=pair)
             gp_wr = cortex.entry_type_wr("gp_ensemble", pair=pair)
             # GP suppressed only when MR is clearly better AND GP is poor
-            if (mr_wr is not None and mr_wr >= SUPPRESS_GP_MR_WR
-                    and gp_wr is not None and gp_wr < SUPPRESS_GP_GP_WR):
-                suppressions[pair].add("gp_ensemble")          # [GUARD L35]
+            if (
+                mr_wr is not None
+                and mr_wr >= SUPPRESS_GP_MR_WR
+                and gp_wr is not None
+                and gp_wr < SUPPRESS_GP_GP_WR
+            ):
+                suppressions[pair].add("gp_ensemble")  # [GUARD L35]
             # MR suppressed when GP is clearly better
             if gp_wr is not None and gp_wr >= SUPPRESS_MR_GP_WR:
                 suppressions[pair].add("mean_reversion")
@@ -140,25 +148,33 @@ class PolicyEngine:
 
         # Rollback remains fleet-level (overall MR health).
         mr_wr = cortex.entry_type_wr("mean_reversion")
-        n_trades = sum(1 for e in getattr(cortex, "_entries", [])
-                       if e.get("type") == "mean_reversion"
-                       and e.get("outcome") is not None)
-        rollback = (mr_wr is not None and mr_wr < ROLLBACK_MR_WR
-                    and n_trades >= ROLLBACK_MIN_TRADES)
+        n_trades = sum(
+            1
+            for e in getattr(cortex, "_entries", [])
+            if e.get("type") == "mean_reversion" and e.get("outcome") is not None
+        )
+        rollback = mr_wr is not None and mr_wr < ROLLBACK_MR_WR and n_trades >= ROLLBACK_MIN_TRADES
 
         soft = soft_weights_enabled()
         allocation: dict[str, dict] = {}
         for pair in pairs:
             try:
                 allocation[pair] = pair_expert_weights(
-                    pair, cortex, suppressions.get(pair, set()), enabled=soft,
+                    pair,
+                    cortex,
+                    suppressions.get(pair, set()),
+                    enabled=soft,
                 )
             except Exception:  # noqa: BLE001 — never break policy on alloc
                 allocation[pair] = {}
 
         policy = Policy(
-            suppressions, priority_discovery, probe_interval, rollback,
-            allocation=allocation, soft_weights=soft,
+            suppressions,
+            priority_discovery,
+            probe_interval,
+            rollback,
+            allocation=allocation,
+            soft_weights=soft,
         )
         _save_policy(policy.to_dict(), current_bot())
         return policy

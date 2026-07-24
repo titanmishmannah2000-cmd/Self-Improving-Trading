@@ -21,6 +21,7 @@ def _tmp_discovered(tmp_path, monkeypatch):
 
 def _structured(n=500, start=1.10, seed=3):
     import math
+
     rng = random.Random(seed)
     out = [start]
     for i in range(1, n):
@@ -61,12 +62,20 @@ def test_constant_polish_can_improve_or_keep():
 def test_map_elites_insert_keeps_best_per_cell():
     archive = {}
     weak = {
-        "oos_corr": 0.2, "complexity": 2, "behavior": "momentum",
-        "horizon": 60, "expr_str": "a", "niche_key": "momentum|1-3|h_long",
+        "oos_corr": 0.2,
+        "complexity": 2,
+        "behavior": "momentum",
+        "horizon": 60,
+        "expr_str": "a",
+        "niche_key": "momentum|1-3|h_long",
     }
     strong = {
-        "oos_corr": 0.5, "complexity": 2, "behavior": "momentum",
-        "horizon": 60, "expr_str": "b", "niche_key": "momentum|1-3|h_long",
+        "oos_corr": 0.5,
+        "complexity": 2,
+        "behavior": "momentum",
+        "horizon": 60,
+        "expr_str": "b",
+        "niche_key": "momentum|1-3|h_long",
     }
     gp._map_elites_insert(archive, weak)
     gp._map_elites_insert(archive, strong)
@@ -95,8 +104,14 @@ def test_prefer_niche_diverse_round_robin():
 
 def test_discovery_pulse_persisted():
     inds = gp.discover(
-        "EUR/USD", _structured(600),
-        generations=8, pop_size=16, seed=5, top_k=2, horizon=1, n_islands=1,
+        "EUR/USD",
+        _structured(600),
+        generations=8,
+        pop_size=16,
+        seed=5,
+        top_k=2,
+        horizon=1,
+        n_islands=1,
     )
     pulse = gp.load_discovery_pulse("EUR/USD")
     assert pulse is not None
@@ -113,7 +128,11 @@ def test_discovery_pulse_persisted():
 
 def test_niche_map_from_indicators():
     inds = [
-        {"complexity": 2, "horizon": 60, "niche": {"behavior": "momentum", "complexity_bin": "1-3", "horizon_bin": "h_long"}},
+        {
+            "complexity": 2,
+            "horizon": 60,
+            "niche": {"behavior": "momentum", "complexity_bin": "1-3", "horizon_bin": "h_long"},
+        },
         {"complexity": 5, "horizon": 60, "niche_key": "mean_revert|4-6|h_long"},
     ]
     nm = gp.niche_map_from_indicators(inds)

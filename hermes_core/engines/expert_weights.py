@@ -13,10 +13,10 @@ from __future__ import annotations
 # Types the meta-allocator knows about (momentum included for dashboard).
 EXPERT_TYPES = ("mean_reversion", "rsi_momentum", "gp_ensemble")
 
-SOFT_SUPPRESS_MULT = 0.25   # L35 "bench" → 25% size, still allow entry
-EXPLORE_FLOOR = 0.40        # thin-evidence experts stay at least this weight
-EXPLORE_MIN_N = 5           # closed outcomes before explore floor lifts
-MIN_WEIGHT = 0.05           # absolute floor — never zero (no hard ban in soft mode)
+SOFT_SUPPRESS_MULT = 0.25  # L35 "bench" → 25% size, still allow entry
+EXPLORE_FLOOR = 0.40  # thin-evidence experts stay at least this weight
+EXPLORE_MIN_N = 5  # closed outcomes before explore floor lifts
+MIN_WEIGHT = 0.05  # absolute floor — never zero (no hard ban in soft mode)
 
 
 def expert_weight(

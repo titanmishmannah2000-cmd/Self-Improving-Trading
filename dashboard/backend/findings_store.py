@@ -6,13 +6,12 @@ Three tables:
   - audit_maturity: maturity scores per domain per run (tracks improvement over time)
 """
 
+import contextlib
 import json
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
-
 
 DB_DIR = Path(__file__).parent / "audit_state"
 DB_PATH = DB_DIR / "audit.db"
@@ -56,15 +55,11 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_findings_run ON audit_findings(audit_run_id);
             CREATE INDEX IF NOT EXISTS idx_findings_severity ON audit_findings(severity);
         """)
-        # Migration: add progress column if missing (older DBs)
-        try:
+        # Migration: add progress/assignee columns if missing (older DBs)
+        with contextlib.suppress(sqlite3.OperationalError):
             conn.execute("ALTER TABLE audit_findings ADD COLUMN progress INTEGER DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass  # column already exists
-        try:
+        with contextlib.suppress(sqlite3.OperationalError):
             conn.execute("ALTER TABLE audit_findings ADD COLUMN assignee TEXT DEFAULT ''")
-        except sqlite3.OperationalError:
-            pass  # column already exists
         conn.commit()
 
         conn.executescript("""
@@ -94,7 +89,7 @@ def init_db():
 
             CREATE INDEX IF NOT EXISTS idx_maturity_domain ON audit_maturity(domain);
         """)
-        
+
         # Migration: add audit_progress table if missing
         try:
             conn.execute("SELECT 1 FROM audit_progress LIMIT 1")
@@ -119,8 +114,9 @@ def init_db():
 
 # ── Findings CRUD ──────────────────────────────────────────────────────────
 
+
 def _ts() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _new_id() -> str:
@@ -131,13 +127,13 @@ def insert_finding(
     domain: str,
     finding_type: str,
     severity: str,
-    location: Optional[str],
+    location: str | None,
     description: str,
-    trading_impact: Optional[str],
-    suggested_fix: Optional[str],
+    trading_impact: str | None,
+    suggested_fix: str | None,
     confidence: int,
     audit_run_id: str,
-    prior_finding_id: Optional[str] = None,
+    prior_finding_id: str | None = None,
 ) -> dict:
     """Insert one finding. Returns the full row as dict."""
     f_id = _new_id()
@@ -150,9 +146,21 @@ def insert_finding(
                 trading_impact, suggested_fix, confidence, status,
                 created_at, updated_at, audit_run_id, prior_finding_id)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)""",
-            (f_id, domain, finding_type, severity, location, description,
-             trading_impact, suggested_fix, confidence,
-             now, now, audit_run_id, prior_finding_id),
+            (
+                f_id,
+                domain,
+                finding_type,
+                severity,
+                location,
+                description,
+                trading_impact,
+                suggested_fix,
+                confidence,
+                now,
+                now,
+                audit_run_id,
+                prior_finding_id,
+            ),
         )
         conn.commit()
     finally:
@@ -169,21 +177,23 @@ def insert_findings_batch(findings: list[dict], audit_run_id: str) -> int:
         rows = []
         for f in findings:
             f_id = _new_id()
-            rows.append((
-                f_id,
-                f.get("domain", ""),
-                f.get("type", f.get("finding_type", "")),
-                f.get("severity", "N/A"),
-                f.get("location"),
-                f.get("description", ""),
-                f.get("trading_impact"),
-                f.get("suggested_fix"),
-                f.get("confidence", 0),
-                now,
-                now,
-                audit_run_id,
-                f.get("prior_finding_id"),
-            ))
+            rows.append(
+                (
+                    f_id,
+                    f.get("domain", ""),
+                    f.get("type", f.get("finding_type", "")),
+                    f.get("severity", "N/A"),
+                    f.get("location"),
+                    f.get("description", ""),
+                    f.get("trading_impact"),
+                    f.get("suggested_fix"),
+                    f.get("confidence", 0),
+                    now,
+                    now,
+                    audit_run_id,
+                    f.get("prior_finding_id"),
+                )
+            )
         conn.executemany(
             """INSERT INTO audit_findings
                (id, domain, type, severity, location, description,
@@ -201,6 +211,7 @@ def insert_findings_batch(findings: list[dict], audit_run_id: str) -> int:
 
 # ── Audit Progress ──
 
+
 def create_audit_progress(audit_run_id: str, domains_total: int = 5) -> dict:
     """Create a new audit progress entry. Returns the row as dict."""
     now = _ts()
@@ -211,9 +222,17 @@ def create_audit_progress(audit_run_id: str, domains_total: int = 5) -> dict:
             (audit_run_id, domains_total, now, now),
         )
         conn.commit()
-        return {"id": audit_run_id, "status": "pending", "progress_pct": 0,
-                "current_domain": "", "domains_total": domains_total, "domains_done": 0,
-                "message": "Queued", "created_at": now, "updated_at": now}
+        return {
+            "id": audit_run_id,
+            "status": "pending",
+            "progress_pct": 0,
+            "current_domain": "",
+            "domains_total": domains_total,
+            "domains_done": 0,
+            "message": "Queued",
+            "created_at": now,
+            "updated_at": now,
+        }
     finally:
         conn.close()
 
@@ -237,7 +256,7 @@ def update_audit_progress(audit_run_id: str, **kwargs) -> dict:
         conn.close()
 
 
-def get_audit_progress(audit_run_id: str) -> Optional[dict]:
+def get_audit_progress(audit_run_id: str) -> dict | None:
     """Get current audit progress."""
     conn = _get_conn()
     try:
@@ -247,32 +266,32 @@ def get_audit_progress(audit_run_id: str) -> Optional[dict]:
         conn.close()
 
 
-def get_latest_audit_progress() -> Optional[dict]:
+def get_latest_audit_progress() -> dict | None:
     """Get the most recent audit progress entry."""
     conn = _get_conn()
     try:
-        row = conn.execute("SELECT * FROM audit_progress ORDER BY created_at DESC LIMIT 1").fetchone()
-        return dict(row) if row else None
-    finally:
-        conn.close()
-
-
-def get_finding(finding_id: str) -> Optional[dict]:
-    conn = _get_conn()
-    try:
         row = conn.execute(
-            "SELECT * FROM audit_findings WHERE id = ?", (finding_id,)
+            "SELECT * FROM audit_progress ORDER BY created_at DESC LIMIT 1"
         ).fetchone()
         return dict(row) if row else None
     finally:
         conn.close()
 
 
+def get_finding(finding_id: str) -> dict | None:
+    conn = _get_conn()
+    try:
+        row = conn.execute("SELECT * FROM audit_findings WHERE id = ?", (finding_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
 def list_findings(
-    status: Optional[str] = None,
-    domain: Optional[str] = None,
-    severity: Optional[str] = None,
-    finding_type: Optional[str] = None,
+    status: str | None = None,
+    domain: str | None = None,
+    severity: str | None = None,
+    finding_type: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[dict]:
@@ -303,7 +322,7 @@ def list_findings(
         conn.close()
 
 
-def update_finding_status(finding_id: str, new_status: str) -> Optional[dict]:
+def update_finding_status(finding_id: str, new_status: str) -> dict | None:
     """Update status to approved | rejected | applied | in_progress. Returns updated row."""
     valid = {"approved", "rejected", "applied", "in_progress"}
     if new_status not in valid:
@@ -332,7 +351,7 @@ def update_finding_status(finding_id: str, new_status: str) -> Optional[dict]:
     return get_finding(finding_id)
 
 
-def update_finding_progress(finding_id: str, progress: int, assignee: str = "") -> Optional[dict]:
+def update_finding_progress(finding_id: str, progress: int, assignee: str = "") -> dict | None:
     """Update progress (0-100) and optional assignee. Returns updated row."""
     progress = max(0, min(100, progress))
     now = _ts()
@@ -362,6 +381,7 @@ def update_finding_progress(finding_id: str, progress: int, assignee: str = "") 
 
 # ── Audit Runs ─────────────────────────────────────────────────────────────
 
+
 def create_run(domains: list[str]) -> dict:
     """Create a new audit run record. Returns the run dict."""
     run_id = _new_id()
@@ -388,7 +408,7 @@ def finish_run(
     regressions: list[str],
     maturity_scores: dict,
     intelligence_maturity: dict,
-    summary_json: Optional[str] = None,
+    summary_json: str | None = None,
 ):
     """Update a run with final counts and metadata."""
     conn = _get_conn()
@@ -400,17 +420,23 @@ def finish_run(
                maturity_scores = ?, intelligence_maturity = ?,
                summary_json = ?
                WHERE id = ?""",
-            (findings_count, critical_count,
-             json.dumps(resolved_prior), json.dumps(regressions),
-             json.dumps(maturity_scores), json.dumps(intelligence_maturity),
-             summary_json, run_id),
+            (
+                findings_count,
+                critical_count,
+                json.dumps(resolved_prior),
+                json.dumps(regressions),
+                json.dumps(maturity_scores),
+                json.dumps(intelligence_maturity),
+                summary_json,
+                run_id,
+            ),
         )
         conn.commit()
     finally:
         conn.close()
 
 
-def get_run(run_id: str) -> Optional[dict]:
+def get_run(run_id: str) -> dict | None:
     conn = _get_conn()
     try:
         row = conn.execute("SELECT * FROM audit_runs WHERE id = ?", (run_id,)).fetchone()
@@ -430,18 +456,17 @@ def list_runs(limit: int = 10) -> list[dict]:
         conn.close()
 
 
-def get_latest_run() -> Optional[dict]:
+def get_latest_run() -> dict | None:
     conn = _get_conn()
     try:
-        row = conn.execute(
-            "SELECT * FROM audit_runs ORDER BY created_at DESC LIMIT 1"
-        ).fetchone()
+        row = conn.execute("SELECT * FROM audit_runs ORDER BY created_at DESC LIMIT 1").fetchone()
         return dict(row) if row else None
     finally:
         conn.close()
 
 
 # ── Maturity Tracking ─────────────────────────────────────────────────────
+
 
 def insert_maturity(
     domain: str,
@@ -460,17 +485,23 @@ def insert_maturity(
                (id, domain, score, intelligence_score, justification,
                 compared_to_prior, audit_run_id, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (m_id, domain, score, intelligence_score, justification,
-             compared_to_prior, audit_run_id, now),
+            (
+                m_id,
+                domain,
+                score,
+                intelligence_score,
+                justification,
+                compared_to_prior,
+                audit_run_id,
+                now,
+            ),
         )
         conn.commit()
     finally:
         conn.close()
     conn = _get_conn()
     try:
-        row = conn.execute(
-            "SELECT * FROM audit_maturity WHERE id = ?", (m_id,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM audit_maturity WHERE id = ?", (m_id,)).fetchone()
         return dict(row)
     finally:
         conn.close()
@@ -514,6 +545,7 @@ def get_latest_maturity_per_domain() -> dict:
 
 
 # ── Summary Stats ──────────────────────────────────────────────────────────
+
 
 def get_summary_stats() -> dict:
     """Return overview stats for the dashboard summary endpoint."""

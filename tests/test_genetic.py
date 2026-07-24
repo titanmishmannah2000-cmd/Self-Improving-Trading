@@ -34,6 +34,7 @@ def _structured(n=400, start=1.10, seed=3):
     """A price series with real structure (sine + slow trend) so a useful
     indicator can actually be discovered."""
     import math
+
     rng = random.Random(seed)
     out = [start]
     for i in range(1, n):
@@ -54,8 +55,12 @@ def _random_walk(n=400, start=1.10, seed=9):
 # ── blueprint Phase 13 success criteria ───────────────────────────────────
 def test_discover_oos():
     inds = gp.discover(
-        "EUR/USD", _structured(500),
-        generations=20, pop_size=24, seed=3, n_islands=1,
+        "EUR/USD",
+        _structured(500),
+        generations=20,
+        pop_size=24,
+        seed=3,
+        n_islands=1,
     )
     # at least one discovered indicator clears the OOS floor
     assert len(inds) >= 1
@@ -95,14 +100,14 @@ def test_random_low_rate():
             p, _c, _n = gp._permutation_pvalue(sig, prices, n_perm=200, seed=s)
             if p < 0.05:
                 admitted += 1
-    assert admitted < 3     # <5% -> the combined gate is real, not noise-passing
+    assert admitted < 3  # <5% -> the combined gate is real, not noise-passing
 
 
 def test_redundancy_reject():
     # an indicator perfectly correlated with an existing one must be rejected
     base = _structured()
     sig_a = gp._signal_for_expr(("add", "sma5", "sma20"), base)
-    sig_b = [x * 1.001 for x in sig_a]   # near-identical -> |r| ~ 1.0
+    sig_b = [x * 1.001 for x in sig_a]  # near-identical -> |r| ~ 1.0
     assert gp.redundancy_check(sig_b, [sig_a]) == "REJECTED"
     # an uncorrelated signal is fine
     sig_c = gp._signal_for_expr(("sub", "price", "sma5"), base)
@@ -123,17 +128,20 @@ def test_fitness_formula():
 
 def test_novelty_gate_rejects_duplicate():
     pop = [("add", "sma5", "sma20"), ("sub", "price", "sma5")]
-    dup = ("add", "sma5", "sma20")          # exact clone -> distance 0
+    dup = ("add", "sma5", "sma20")  # exact clone -> distance 0
     assert gp._novelty_ok(dup, pop) is False
-    fresh = ("mul", "rsi", "vol")           # new shape -> admitted
+    fresh = ("mul", "rsi", "vol")  # new shape -> admitted
     assert gp._novelty_ok(fresh, pop) is True
 
 
 def test_genetic_engine_wrapper():
     eng = gp.GeneticEngine()
     inds = eng.discover(
-        "GBP/JPY", _structured(500, seed=11),
-        generations=15, pop_size=20, n_islands=1,
+        "GBP/JPY",
+        _structured(500, seed=11),
+        generations=15,
+        pop_size=20,
+        n_islands=1,
     )
     assert isinstance(inds, list)
     assert eng.load("GBP/JPY") == inds or len(eng.load("GBP/JPY")) >= 1
@@ -146,6 +154,7 @@ def test_no_crypto_imports():
     descriptive prose in the docstring that merely names the prohibition.
     """
     import ast
+
     src = (gp.__file__ and Path(gp.__file__).read_text(encoding="utf-8")) or ""
     tree = ast.parse(src)
     code_tokens: set[str] = set()
@@ -158,5 +167,4 @@ def test_no_crypto_imports():
     for banned in ("onchain", "fng", "feargreed", "fear", "crypto", "btc"):
         assert banned not in code_tokens, f"crypto-linked import token: {banned}"
     # only market-data primitives are in the feature set
-    assert all(f in gp.FEATURES for f in
-               ("price", "ret", "sma5", "sma20", "rsi", "vol"))
+    assert all(f in gp.FEATURES for f in ("price", "ret", "sma5", "sma20", "rsi", "vol"))

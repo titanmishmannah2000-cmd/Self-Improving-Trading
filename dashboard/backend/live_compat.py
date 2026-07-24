@@ -27,9 +27,10 @@ Image seeds (lower priority / defaults only):
 All reads are fail-soft: missing files -> empty/[] , never a 500.
 """
 
+import contextlib
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -40,7 +41,8 @@ def _utcnow() -> str:
     compat price route falls back to this. (Was referenced but never
     defined -> NameError -> HTTP 500 on every price push. FIXED.)
     """
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
+
 
 # ----------------------------------------------------------------------------
 # Locate the bots' state directories.
@@ -53,14 +55,15 @@ def _utcnow() -> str:
 #   /app/bots/{bot}/state
 # ----------------------------------------------------------------------------
 
+
 def _candidate_state_roots() -> list[Path]:
     roots: list[Path] = []
     env = os.getenv("HERMES_STATE_ROOT") or os.getenv("HERMES_STATE")
     if env:
         roots.append(Path(env))
     repo = Path(__file__).resolve().parent.parent.parent  # dashboard/backend -> repo
-    roots.append(repo)            # {repo}/{bot}/state — matches state_root() fallback
-    roots.append(Path("/data"))   # Railway volume without env typo safety
+    roots.append(repo)  # {repo}/{bot}/state — matches state_root() fallback
+    roots.append(Path("/data"))  # Railway volume without env typo safety
     # Legacy / image seed trees — prefer only when canonical runtime is absent
     roots += [
         repo / "bots",
@@ -113,6 +116,7 @@ def _read_jsonl(path: Path) -> list[dict]:
 # /api/discovered  ->  {pairs:{pair:[ind]}, ensemble:{...}, total_indicators, total_pairs, degradation}
 # ----------------------------------------------------------------------------
 
+
 def _enrich_indicator(ind: dict, *, bot: str, pair: str) -> dict:
     """Normalize a discovered indicator for the dashboard tab.
 
@@ -129,7 +133,8 @@ def _enrich_indicator(ind: dict, *, bot: str, pair: str) -> dict:
     out.setdefault("name", out.get("expr", "?")[:40] or "?")
     if not isinstance(out.get("uses"), list):
         out["uses"] = [
-            k for k in ("volume", "dxy", "vix", "tnx", "spx", "oil", "gold", "btc", "fvx", "eem")
+            k
+            for k in ("volume", "dxy", "vix", "tnx", "spx", "oil", "gold", "btc", "fvx", "eem")
             if k in expr
         ]
     try:
@@ -156,15 +161,11 @@ def _enrich_indicator(ind: dict, *, bot: str, pair: str) -> dict:
         except (TypeError, ValueError):
             out.pop("max_dd", None)
     if out.get("complexity") is not None:
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             out["complexity"] = int(out["complexity"])
-        except (TypeError, ValueError):
-            pass
     if out.get("island_id") is not None:
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             out["island_id"] = int(out["island_id"])
-        except (TypeError, ValueError):
-            pass
     if isinstance(out.get("niche"), dict):
         out["niche"] = {
             k: out["niche"].get(k)
@@ -200,7 +201,7 @@ def _ensemble_for_pair(inds: list[dict]) -> dict:
 
     tw = sum((_f(i, "fitness") * _f(i, "win_rate")) for i in active if _f(i, "fitness") > 0)
     bw = sum((_f(i, "fitness") * _f(i, "win_rate")) for i in active if _f(i, "win_rate") > 0.5)
-    signal = ((bw - (tw - bw)) / max(tw, 0.001))
+    signal = (bw - (tw - bw)) / max(tw, 0.001)
     return {
         "signal": round(signal, 3),
         "num_indicators": len(active),
@@ -242,6 +243,7 @@ def _build_discovered(bot: str) -> dict:
     niche_map: dict = {}
     try:
         from dashboard.backend.main import get_conn
+
         conn = get_conn()
         row = conn.execute(
             "SELECT discovered_json FROM latest_state WHERE bot=?", (bot,)
@@ -269,9 +271,7 @@ def _build_discovered(bot: str) -> dict:
                     if str(pair).startswith("__"):
                         continue
                     if isinstance(inds, list):
-                        pairs[pair] = [
-                            _enrich_indicator(i, bot=bot, pair=pair) for i in inds
-                        ]
+                        pairs[pair] = [_enrich_indicator(i, bot=bot, pair=pair) for i in inds]
     except Exception:
         pass
     # Synthesize niche map from indicators when push lacked it.
@@ -285,6 +285,7 @@ def _build_discovered(bot: str) -> dict:
             }
             try:
                 from hermes_core.engines.genetic import niche_map_from_indicators
+
                 niche_map[pair] = niche_map_from_indicators(inds)
             except Exception:
                 pass
@@ -305,15 +306,15 @@ def _build_discovered(bot: str) -> dict:
 # /api/cortex  ->  {bot:{summary, exiled, indicators, policy}}
 # ----------------------------------------------------------------------------
 
+
 def _build_cortex(bot: str) -> dict:
     # Read from latest_state (SQLite). The bot pushes cortex as
     # {bot:{summary,exiled,indicators,policy,exile_detail}} (the exile file).
     try:
         from dashboard.backend.main import get_conn
+
         conn = get_conn()
-        row = conn.execute(
-            "SELECT cortex_json FROM latest_state WHERE bot=?", (bot,)
-        ).fetchone()
+        row = conn.execute("SELECT cortex_json FROM latest_state WHERE bot=?", (bot,)).fetchone()
         conn.close()
         if row and row["cortex_json"]:
             raw = json.loads(row["cortex_json"])
@@ -328,15 +329,15 @@ def _build_cortex(bot: str) -> dict:
 # /api/heartbeat/{bot}  ->  raw heartbeat json (or {})
 # ----------------------------------------------------------------------------
 
+
 def _build_heartbeat(bot: str) -> dict:
     # Read from latest_state (SQLite) — the only cross-service channel (each
     # Railway service has its own /data volume, so file reads were stale).
     try:
         from dashboard.backend.main import get_conn
+
         conn = get_conn()
-        row = conn.execute(
-            "SELECT heartbeat_json FROM latest_state WHERE bot=?", (bot,)
-        ).fetchone()
+        row = conn.execute("SELECT heartbeat_json FROM latest_state WHERE bot=?", (bot,)).fetchone()
         conn.close()
         if row and row["heartbeat_json"]:
             return json.loads(row["heartbeat_json"])
@@ -350,6 +351,7 @@ def _build_heartbeat(bot: str) -> dict:
 # Faithful to the original dashboard backend, which read these state files.
 # ---------------------------------------------------------------------------
 
+
 def _build_flatline(bot: str) -> list[dict]:
     """Flatline events for the Flatline tab.
 
@@ -359,10 +361,9 @@ def _build_flatline(bot: str) -> list[dict]:
     """
     try:
         from dashboard.backend.main import get_conn
+
         conn = get_conn()
-        row = conn.execute(
-            "SELECT flatlined_json FROM latest_state WHERE bot=?", (bot,)
-        ).fetchone()
+        row = conn.execute("SELECT flatlined_json FROM latest_state WHERE bot=?", (bot,)).fetchone()
         conn.close()
         if row and row["flatlined_json"]:
             raw = json.loads(row["flatlined_json"])
@@ -372,8 +373,11 @@ def _build_flatline(bot: str) -> list[dict]:
                 # Legacy shape: {pair: reason} or {events: [...]}
                 if isinstance(raw.get("events"), list):
                     return [x for x in raw["events"] if isinstance(x, dict)]
-                return [{"pair": k, **(v if isinstance(v, dict) else {"reason": v})}
-                        for k, v in raw.items() if k != "events"]
+                return [
+                    {"pair": k, **(v if isinstance(v, dict) else {"reason": v})}
+                    for k, v in raw.items()
+                    if k != "events"
+                ]
     except Exception:
         pass
     sdir = _bot_state_dir(bot)
@@ -388,13 +392,14 @@ def _build_flatline(bot: str) -> list[dict]:
 # Registration — must run BEFORE base routes are defined so these win.
 # ---------------------------------------------------------------------------
 
+
 def register(app, ingest_token_getter, valid_bots, on_price_broadcast=None):
     """Register compat routes on the FastAPI app.
 
     ingest_token_getter: callable returning current INGEST_TOKEN (may be '').
     valid_bots: set of valid bot names.
     """
-    from fastapi import Request, HTTPException
+    from fastapi import HTTPException, Request
 
     def _check_token(request: Request):
         tok = ingest_token_getter()
@@ -414,6 +419,7 @@ def register(app, ingest_token_getter, valid_bots, on_price_broadcast=None):
             prices = {}
         if not isinstance(prices, dict):
             from fastapi import HTTPException
+
             raise HTTPException(400, "prices must be a dict")
         ts = payload.get("ts") or _utcnow()
         store = {}
@@ -423,10 +429,8 @@ def register(app, ingest_token_getter, valid_bots, on_price_broadcast=None):
             except (TypeError, ValueError):
                 continue
         path = _price_store_path(bot)
-        try:
+        with contextlib.suppress(Exception):
             path.write_text(json.dumps(store), encoding="utf-8")
-        except Exception:
-            pass
         if on_price_broadcast and store:
             on_price_broadcast(bot, {k: v["price"] for k, v in store.items()})
         return {"status": "received", "bot": bot, "count": len(store), "n": len(store)}
@@ -515,8 +519,8 @@ def register(app, ingest_token_getter, valid_bots, on_price_broadcast=None):
         _check_token(request)
         try:
             payload = await request.json()
-        except Exception:
-            raise HTTPException(400, "Body must be valid JSON")
+        except Exception as err:
+            raise HTTPException(400, "Body must be valid JSON") from err
         return _post_price(bot_name, payload)
 
     @app.get("/api/price/{bot_name}")

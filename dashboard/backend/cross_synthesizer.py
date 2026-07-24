@@ -12,15 +12,14 @@ Topics detected:
   - Duplicate code between bots
 """
 
-import json
 import sys
-from datetime import datetime, timezone
-from pathlib import Path
 from collections import defaultdict
+from datetime import UTC, datetime
+from pathlib import Path
 
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
-from findings_store import _get_conn, insert_finding, get_latest_run, list_findings
+from findings_store import get_latest_run, insert_finding, list_findings
 
 # Topic keywords → group definitions
 TOPICS = {
@@ -58,9 +57,9 @@ TOPICS = {
 def synthesize(verbose: bool = True) -> list[dict]:
     """Group all findings by topic and identify systemic issues."""
     if verbose:
-        print(f"\n{'='*40}")
-        print(f"CROSS-FINDING SYNTHESIS — {datetime.now(timezone.utc).strftime('%Y-%m-%d UTC')}")
-        print(f"{'='*40}")
+        print(f"\n{'=' * 40}")
+        print(f"CROSS-FINDING SYNTHESIS — {datetime.now(UTC).strftime('%Y-%m-%d UTC')}")
+        print(f"{'=' * 40}")
 
     # Get all findings
     all_findings = list_findings(limit=200)
@@ -94,7 +93,7 @@ def synthesize(verbose: bool = True) -> list[dict]:
     stored = []
     for topic_id, findings in sorted(sprawls.items(), key=lambda x: -len(x[1])):
         topic = TOPICS[topic_id]
-        labels = list(set(f.get("type", "?") for f in findings))
+        list(set(f.get("type", "?") for f in findings))
         domains = list(set(f.get("domain", "?") for f in findings))
 
         # Build description
@@ -106,8 +105,7 @@ def synthesize(verbose: bool = True) -> list[dict]:
 
         description = (
             f"[Synthesis] {topic['label']} — {len(findings)} findings across "
-            f"{len(domains)} domain(s): {', '.join(domains)}\n" +
-            "\n".join(locations[:5])
+            f"{len(domains)} domain(s): {', '.join(domains)}\n" + "\n".join(locations[:5])
         )
 
         if len(locations) > 5:
@@ -120,7 +118,9 @@ def synthesize(verbose: bool = True) -> list[dict]:
         )
 
         latest_run = get_latest_run()
-        audit_run_id = latest_run["id"] if latest_run else f"synth-{datetime.now(timezone.utc).strftime('%Y%m%d')}"
+        audit_run_id = (
+            latest_run["id"] if latest_run else f"synth-{datetime.now(UTC).strftime('%Y%m%d')}"
+        )
 
         finding = insert_finding(
             domain="static-code",

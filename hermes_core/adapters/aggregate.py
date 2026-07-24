@@ -74,6 +74,7 @@ def _goldapi_spot(sym: str) -> float | None:
     """Live spot USD price for XAU/XAG from GoldAPI.io (free, no key)."""
     try:
         import httpx as _hx
+
         r = _hx.get(f"https://api.gold-api.com/price/{sym}", timeout=5.0)
         r.raise_for_status()
         price = r.json().get("price")
@@ -111,13 +112,15 @@ def _yf_history(pair: str, max_candles: int = 300) -> list[dict]:
             ratio = xau / xag  # current gold/silver ratio (~80)
             out = []
             for c in gold_h:
-                out.append({
-                    "price": c["price"] / ratio,
-                    "high": c.get("high", c["price"]) / ratio,
-                    "low": c.get("low", c["price"]) / ratio,
-                    "ts": c.get("ts"),
-                    "candle_ts": c.get("candle_ts"),
-                })
+                out.append(
+                    {
+                        "price": c["price"] / ratio,
+                        "high": c.get("high", c["price"]) / ratio,
+                        "low": c.get("low", c["price"]) / ratio,
+                        "ts": c.get("ts"),
+                        "candle_ts": c.get("candle_ts"),
+                    }
+                )
             return out
         except Exception:  # noqa: BLE001
             return []
@@ -161,14 +164,16 @@ def _frankfurter_fx_history(pair: str, max_candles: int = 300) -> list[dict]:
                 candle_ts = calendar.timegm((y, m, d, 16, 0, 0, 0, 0, 0))
             except Exception:  # noqa: BLE001
                 candle_ts = time.time()
-            out.append({
-                "pair": pair,
-                "price": price,
-                "high": price,
-                "low": price,
-                "ts": time.time(),
-                "candle_ts": float(candle_ts),
-            })
+            out.append(
+                {
+                    "pair": pair,
+                    "price": price,
+                    "high": price,
+                    "low": price,
+                    "ts": time.time(),
+                    "candle_ts": float(candle_ts),
+                }
+            )
         return out[-max_candles:]
     except Exception:  # noqa: BLE001 — fail-soft
         return []
@@ -180,9 +185,15 @@ def _yf_intraday_history(pair: str, max_candles: int = 300) -> list[dict]:
 
     for interval, period in (("5m", "60d"), ("15m", "60d"), ("1h", "60d")):
         try:
-            hist = seed_history_interval_sync(
-                pair, interval=interval, period=period, max_candles=max_candles,
-            ) or []
+            hist = (
+                seed_history_interval_sync(
+                    pair,
+                    interval=interval,
+                    period=period,
+                    max_candles=max_candles,
+                )
+                or []
+            )
         except Exception:  # noqa: BLE001
             hist = []
         if len(hist) >= HISTORY_MIN_BARS:
@@ -317,8 +328,7 @@ class AlphaVantageSource(_BaseSource):
     name = "alphavantage"
     URL = "https://www.alphavantage.co/query"
 
-    def __init__(self, api_key: str | None = None,
-                 client: httpx.AsyncClient | None = None):
+    def __init__(self, api_key: str | None = None, client: httpx.AsyncClient | None = None):
         super().__init__()
         self._key = api_key if api_key is not None else os.environ.get("ALPHA_VANTAGE_KEY")
         self._client = client
@@ -331,12 +341,15 @@ class AlphaVantageSource(_BaseSource):
         from_c, to_c = pair.split("/")
 
         async def _go() -> float | None:
-            r = await self._get_client().get(self.URL, params={
-                "function": "CURRENCY_EXCHANGE_RATE",
-                "from_currency": from_c,
-                "to_currency": to_c,
-                "apikey": self._key,
-            })
+            r = await self._get_client().get(
+                self.URL,
+                params={
+                    "function": "CURRENCY_EXCHANGE_RATE",
+                    "from_currency": from_c,
+                    "to_currency": to_c,
+                    "apikey": self._key,
+                },
+            )
             r.raise_for_status()
             data = r.json().get("Realtime Currency Exchange Rate", {})
             rate = data.get("5. Exchange Rate")
@@ -385,8 +398,7 @@ class MetalsSource(_BaseSource):
     name = "metals"
     URL = "https://api.metals.dev/v1/latest"
 
-    def __init__(self, api_key: str | None = None,
-                 client: httpx.AsyncClient | None = None):
+    def __init__(self, api_key: str | None = None, client: httpx.AsyncClient | None = None):
         super().__init__()
         self._key = api_key if api_key is not None else os.environ.get("METALS_API_KEY")
         self._client = client
@@ -395,11 +407,14 @@ class MetalsSource(_BaseSource):
 
     async def _fetch_metals(self) -> dict | None:
         client = self._get_client()
-        r = await client.get(self.URL, params={
-            "api_key": self._key,
-            "currency": "USD",
-            "unit": "troy_ounce",
-        })
+        r = await client.get(
+            self.URL,
+            params={
+                "api_key": self._key,
+                "currency": "USD",
+                "unit": "troy_ounce",
+            },
+        )
         r.raise_for_status()
         data = r.json().get("metals")
         return data if data else None  # None -> not cached, falls back to stale
@@ -447,7 +462,6 @@ class GoldApiSource(_BaseSource):
             # GoldAPI is reliable, but a cold-start TLS handshake in a fresh
             # container can occasionally fail the first attempt. Retry a couple
             # of times so metals don't flicker no_candle on container restart.
-            last_err: Exception | None = None
             for _attempt in range(3):
                 try:
                     client = self._get_client()
@@ -458,7 +472,7 @@ class GoldApiSource(_BaseSource):
                     if price is not None:
                         return float(price)
                 except Exception as _e:  # noqa: BLE001 — fail-soft; [GUARD L61]
-                    last_err = _e
+                    pass
             return None
 
         out = await self._cached(sym, _go)
@@ -479,6 +493,7 @@ class YfinanceSource(_BaseSource):
         # is still used for metals HISTORY seeding (seed_history_fn -> _yf_history).
         if pair in _METAL_PAIRS:
             return None
+
         # yfinance is async under the hood; calling its sync wrapper from inside
         # our aggregator's asyncio.run nests event loops -> "coroutine never
         # awaited". Run it in a worker thread with its own loop. [GUARD L61]
@@ -652,7 +667,8 @@ class PriceAggregator:
         """Append ``candle`` to the rolling live buffer (caller holds ``_lock``)."""
         hist = self._tick_history.setdefault(pair, [])
         append_bucketed_tick(
-            hist, candle,
+            hist,
+            candle,
             move_min_pct=TICK_MOVE_MIN_PCT,
             sample_min_s=TICK_SAMPLE_MIN_S,
             max_len=TICK_HISTORY_MAX,
@@ -715,9 +731,7 @@ class PriceAggregator:
         import concurrent.futures
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(lambda: asyncio.run(self._fetch_async(pair))).result(
-                timeout=30.0
-            )
+            return pool.submit(lambda: asyncio.run(self._fetch_async(pair))).result(timeout=30.0)
 
     def seed_history_fn(self, pair: str, max_candles: int = 300) -> list[dict]:
         """Multi-bar history for indicator seeding (oldest-first). [GUARD L61]

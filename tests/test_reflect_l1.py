@@ -27,11 +27,16 @@ STRAT_FLOOR = {"stop_loss_pct": 0.5, "profit_target_pct": 3.0}
 def _trades(pnls, base=1.1000):
     out = []
     for i, p in enumerate(pnls):
-        out.append({
-            "pair": "EUR/USD", "cycle": i, "reason": "tp" if p > 0 else "sl",
-            "entry_price": base, "exit_price": base * (1 + p / 100.0),
-            "pnl_pct": p,
-        })
+        out.append(
+            {
+                "pair": "EUR/USD",
+                "cycle": i,
+                "reason": "tp" if p > 0 else "sl",
+                "entry_price": base,
+                "exit_price": base * (1 + p / 100.0),
+                "pnl_pct": p,
+            }
+        )
     return out
 
 
@@ -39,7 +44,9 @@ def _trades(pnls, base=1.1000):
 def _tmp_hypotheses(tmp_path, monkeypatch):
     log = tmp_path / "forex" / "state" / "hypotheses.jsonl"
     monkeypatch.setattr(
-        rf, "hypotheses_path", lambda bot=None: log,
+        rf,
+        "hypotheses_path",
+        lambda bot=None: log,
     )
     yield log
 

@@ -69,8 +69,13 @@ BOT_INVENT_DEFAULTS: dict[str, dict[str, Any]] = {
 }
 
 _INT_KEYS = {
-    "max_candles", "horizon", "generations", "pop_size", "n_islands",
-    "timeout_s", "min_bars",
+    "max_candles",
+    "horizon",
+    "generations",
+    "pop_size",
+    "n_islands",
+    "timeout_s",
+    "min_bars",
 }
 _STR_KEYS = {"interval", "period"}
 
@@ -103,6 +108,7 @@ def invent_profile(bot: str | None = None, *, pair: str | None = None) -> dict[s
 
     try:
         from hermes_core.config import load_config
+
         cfg = load_config(name)
         override = cfg.get("invent") if isinstance(cfg, dict) else None
         if isinstance(override, dict):

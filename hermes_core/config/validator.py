@@ -33,9 +33,7 @@ def _validate_ranges(strategy: dict) -> list[str]:
             errors.append(f"{param}={val!r} (not numeric)")
             continue
         if v < lo or v > hi:
-            errors.append(
-                f"{param}={v} outside safe range [{lo}, {hi}]"
-            )
+            errors.append(f"{param}={v} outside safe range [{lo}, {hi}]")
     return errors
 
 
@@ -43,20 +41,14 @@ def _validate_enums(strategy: dict) -> list[str]:
     errors: list[str] = []
     stype = strategy.get("strategy_type")
     if stype is not None and stype not in ALLOWED_STRATEGY_TYPES:
-        errors.append(
-            f"strategy_type={stype!r} not in {ALLOWED_STRATEGY_TYPES}"
-        )
+        errors.append(f"strategy_type={stype!r} not in {ALLOWED_STRATEGY_TYPES}")
     session = (strategy.get("entry") or {}).get("session_filter")
     if session is not None and session not in ALLOWED_SESSION_FILTERS:
-        errors.append(
-            f"entry.session_filter={session!r} not in {ALLOWED_SESSION_FILTERS}"
-        )
+        errors.append(f"entry.session_filter={session!r} not in {ALLOWED_SESSION_FILTERS}")
     return errors
 
 
-def validate_strategy_params(
-    strategy: dict, raise_on_fail: bool = True
-) -> tuple[bool, list[str]]:
+def validate_strategy_params(strategy: dict, raise_on_fail: bool = True) -> tuple[bool, list[str]]:
     """Hard gate: validate ALL strategy params are within safe ranges/enums.
 
     Returns (valid, errors). When ``raise_on_fail`` is True (default) a non-empty

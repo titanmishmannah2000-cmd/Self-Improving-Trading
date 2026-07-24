@@ -10,6 +10,7 @@ service in Railway), so no per-service start command is needed:
 This avoids relying on the non-standard railway.json services{} block (Railway
 ignores it) while keeping one Dockerfile / one image for everything. [GUARD L62]
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -23,9 +24,11 @@ def main() -> None:
     role = (sys.argv[1] if len(sys.argv) > 1 else os.environ.get("HERMES_BOT_NAME", "")).strip()
     if role == "dashboard":
         from dashboard.backend.main import run
+
         run()
     elif role in VALID_BOTS:
         from bots._runner import run_bot
+
         asyncio.run(run_bot(role))
     else:
         raise SystemExit(

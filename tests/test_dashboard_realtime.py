@@ -168,9 +168,11 @@ def test_wal_mode_and_concurrent_writes_do_not_lock(tmp_path, monkeypatch):
     def push(bot):
         try:
             for _ in range(20):
-                r = c.post(f"/api/price/{bot}",
-                           json={"prices": {f"{bot}-x": 1.0}},
-                           headers={"X-Ingest-Token": "secret-token"})
+                r = c.post(
+                    f"/api/price/{bot}",
+                    json={"prices": {f"{bot}-x": 1.0}},
+                    headers={"X-Ingest-Token": "secret-token"},
+                )
                 assert r.status_code == 200
         except BaseException as e:  # noqa: BLE001 — capture, don't crash thread
             errors.append(e)
@@ -201,4 +203,3 @@ def test_healthz_503_when_db_unreachable(monkeypatch):
     r = c.get("/healthz")
     assert r.status_code == 503
     assert r.json()["status"] == "unhealthy"
-

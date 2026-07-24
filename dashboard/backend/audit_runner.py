@@ -22,9 +22,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 # ── Auto-load .env from same directory ──
 _env_path = Path(__file__).parent / ".env"
@@ -36,13 +34,18 @@ if _env_path.exists():
                 _k, _v = _line.split("=", 1)
                 os.environ.setdefault(_k, _v)
 
-from findings_store import (
-    create_run, finish_run, insert_findings_batch,
-    insert_maturity, get_latest_run, list_findings,
-    init_db, get_summary_stats,
-)
 from data_collector import (
-    ALL_DOMAINS, collect_domain, COLLECTORS,
+    ALL_DOMAINS,
+    collect_domain,
+)
+from findings_store import (
+    create_run,
+    finish_run,
+    get_latest_run,
+    get_summary_stats,
+    init_db,
+    insert_findings_batch,
+    insert_maturity,
 )
 
 # ── LLM Caller ─────────────────────────────────────────────────────────────
@@ -116,13 +119,11 @@ OUTPUT SCHEMA:
 def _get_api_key() -> str:
     key = os.environ.get("DEEPSEEK_API_KEY")
     if not key:
-        raise RuntimeError(
-            "DEEPSEEK_API_KEY not set. Run: export DEEPSEEK_API_KEY='sk-...'"
-        )
+        raise RuntimeError("DEEPSEEK_API_KEY not set. Run: export DEEPSEEK_API_KEY='sk-...'")
     return key
 
 
-def _call_llm(domain_data: dict, prior_audit_json: Optional[str] = None) -> dict:
+def _call_llm(domain_data: dict, prior_audit_json: str | None = None) -> dict:
     """Call DeepSeek V4 Flash with the collected domain data. Returns parsed JSON."""
     import httpx
 
@@ -137,7 +138,10 @@ def _call_llm(domain_data: dict, prior_audit_json: Optional[str] = None) -> dict
     # If change context is available, add a summary of what changed
     change_context = domain_data.get("change_context", "")
     if change_context:
-        files_section = f"[CHANGE CONTEXT — only these files changed since last audit]\n{change_context}\n\n" + files_section
+        files_section = (
+            f"[CHANGE CONTEXT — only these files changed since last audit]\n{change_context}\n\n"
+            + files_section
+        )
 
     logs_section = ""
     for source, content in sorted(domain_data.get("logs", {}).items()):
@@ -167,6 +171,7 @@ def _call_llm(domain_data: dict, prior_audit_json: Optional[str] = None) -> dict
     # Inject user feedback context (Layer 6)
     try:
         from feedback_learner import get_prompt_context
+
         fb_context = get_prompt_context(domain)
         if fb_context:
             user_prompt += f"{fb_context}\n\n"
@@ -208,12 +213,10 @@ def _call_llm(domain_data: dict, prior_audit_json: Optional[str] = None) -> dict
     )
 
     if response.status_code != 200:
-        raise RuntimeError(
-            f"DeepSeek API error {response.status_code}: {response.text[:500]}"
-        )
+        raise RuntimeError(f"DeepSeek API error {response.status_code}: {response.text[:500]}")
 
     result = response.json()
-    content = (result.get("choices", [{}])[0].get("message", {}).get("content", ""))
+    content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
     if not content:
         raise RuntimeError("DeepSeek returned empty content")
 
@@ -224,14 +227,15 @@ def _call_llm(domain_data: dict, prior_audit_json: Optional[str] = None) -> dict
         print(f"  ⚠  LLM returned invalid JSON: {e}")
         print(f"  Raw response (first 500 chars): {content[:500]}")
         # Try to salvage - wrap in retry
-        raise RuntimeError(f"Invalid JSON from LLM: {e}")
+        raise RuntimeError(f"Invalid JSON from LLM: {e}") from e
 
     return parsed
 
 
 # ── Prior Audit Tracking ──────────────────────────────────────────────────
 
-def _get_prior_audit_json(domain: str) -> Optional[str]:
+
+def _get_prior_audit_json(domain: str) -> str | None:
     """Get the most recent audit JSON for this domain from the latest run that included it."""
     latest = get_latest_run()
     if not latest:
@@ -261,11 +265,12 @@ def _get_prior_audit_json(domain: str) -> Optional[str]:
 
 # ── Main Runner ───────────────────────────────────────────────────────────
 
+
 def run_audit(
-    domains: Optional[list[str]] = None,
+    domains: list[str] | None = None,
     dry_run: bool = False,
     verbose: bool = False,
-    progress_id: Optional[str] = None,
+    progress_id: str | None = None,
 ) -> dict:
     """Run the audit pipeline. Returns a summary dict.
 
@@ -292,10 +297,10 @@ def run_audit(
     # Create run record
     run = create_run(domains)
     run_id = run["id"]
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"AUDIT RUN {run_id}")
     print(f"Domains: {', '.join(domains)}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     all_findings = []
     total_critical = 0
@@ -306,22 +311,28 @@ def run_audit(
     domain_summaries = {}
 
     for i, domain in enumerate(domains):
-        print(f"\n{'─'*40}")
+        print(f"\n{'─' * 40}")
         print(f"Domain: {domain}")
-        print(f"{'─'*40}")
+        print(f"{'─' * 40}")
 
         # Update progress
         if progress_id:
             pct = int((i / len(domains)) * 85) + 5  # 5-90% range
             try:
                 from findings_store import update_audit_progress
-                update_audit_progress(progress_id, progress_pct=pct, current_domain=domain,
-                                       domains_done=i, message=f"Auditing {domain}...")
+
+                update_audit_progress(
+                    progress_id,
+                    progress_pct=pct,
+                    current_domain=domain,
+                    domains_done=i,
+                    message=f"Auditing {domain}...",
+                )
             except Exception:
                 pass
 
         # 1. Collect data
-        print(f"  Collecting data...")
+        print("  Collecting data...")
         domain_data = collect_domain(domain)
         if verbose:
             n_files = len(domain_data.get("files", {}))
@@ -329,15 +340,15 @@ def run_audit(
             print(f"  {n_files} files, {n_logs} log sources collected")
 
         if dry_run:
-            print(f"  [DRY RUN] Skipping LLM call")
+            print("  [DRY RUN] Skipping LLM call")
             continue
 
         # 2. Get prior audit
         prior_json = _get_prior_audit_json(domain)
         if prior_json:
-            print(f"  Prior audit found for this domain")
+            print("  Prior audit found for this domain")
         else:
-            print(f"  No prior audit — first audit for this domain")
+            print("  No prior audit — first audit for this domain")
 
         # 3. Call LLM
         try:
@@ -410,17 +421,17 @@ def run_audit(
     )
 
     # 11. Print summary
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"AUDIT COMPLETE — Run {run_id}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"  Domains audited: {len(domains)}")
     print(f"  Total findings:  {len(all_findings)}")
     print(f"  CRITICAL:        {total_critical}")
     print(f"  Resolved prior:  {len(resolved_prior_all)}")
     print(f"  Regressions:     {len(regressions_all)}")
     print(f"  Maturity scores: {json.dumps(maturity_scores)}")
-    print(f"\n  To review findings: view dashboard or check audit_state/audit.db")
-    print(f"{'='*60}\n")
+    print("\n  To review findings: view dashboard or check audit_state/audit.db")
+    print(f"{'=' * 60}\n")
 
     return {
         "run_id": run_id,
@@ -436,26 +447,35 @@ def run_audit(
 
 # ── CLI Entry Point ───────────────────────────────────────────────────────
 
+
 def main():
     parser = argparse.ArgumentParser(description="Hermes Self-Audit Engine")
     parser.add_argument(
-        "--domain", "-d", action="append", choices=ALL_DOMAINS,
+        "--domain",
+        "-d",
+        action="append",
+        choices=ALL_DOMAINS,
         help="Audit a specific domain (repeatable). Default: all domains.",
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Collect data but skip LLM calls (for testing collectors).",
     )
     parser.add_argument(
-        "--verbose", "-v", action="store_true",
+        "--verbose",
+        "-v",
+        action="store_true",
         help="Print detailed progress during data collection.",
     )
     parser.add_argument(
-        "--force", action="store_true",
+        "--force",
+        action="store_true",
         help="Bypass sentinel and run all domains.",
     )
     parser.add_argument(
-        "--summary", action="store_true",
+        "--summary",
+        action="store_true",
         help="Show current audit summary stats and exit.",
     )
 
@@ -475,6 +495,7 @@ def main():
     else:
         try:
             from sentinel import decide_domains
+
             domains = decide_domains(verbose=True)
             if not domains:
                 print("\n✅ Sentinel: no audit needed. Use --force to run anyway.\n")
@@ -492,7 +513,7 @@ def main():
     result = run_audit(domains, dry_run=args.dry_run, verbose=args.verbose)
 
     # Print compact JSON result
-    print(f"\n--- RESULT JSON ---")
+    print("\n--- RESULT JSON ---")
     print(json.dumps(result, indent=2))
 
 

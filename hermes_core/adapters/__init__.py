@@ -43,8 +43,12 @@ __all__ = [
 ]
 
 
-def make_default_fetch(backend: str | None = None, api_url: str | None = None,
-                       api_key: str | None = None, pairs: list[str] | None = None):
+def make_default_fetch(
+    backend: str | None = None,
+    api_url: str | None = None,
+    api_key: str | None = None,
+    pairs: list[str] | None = None,
+):
     """Return a synchronous ``fetch_fn(pair, *, force=False)`` for the loop.
 
     backend: "aggregate" (default), "yfinance", or "http". Selection is env-driven

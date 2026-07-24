@@ -23,7 +23,7 @@ TRAIL_STRONG = 1.8
 TRAIL_WEAK = 1.1
 WR_STRONG = 0.58
 WR_WEAK = 0.42
-GIVEBACK_HIGH = 0.40   # avg fraction of peak given back → protect earlier
+GIVEBACK_HIGH = 0.40  # avg fraction of peak given back → protect earlier
 GIVEBACK_LOW = 0.15
 
 
@@ -58,8 +58,11 @@ def apply_exit_intel(
     reasons: list[str] = []
     edge = {"wins": 0, "losses": 0, "n": 0, "avg_win": None, "avg_loss": None}
     exc = {
-        "n": 0, "avg_mfe": None, "avg_mae": None,
-        "avg_giveback": None, "avg_giveback_frac": None,
+        "n": 0,
+        "avg_mfe": None,
+        "avg_mae": None,
+        "avg_giveback": None,
+        "avg_giveback_frac": None,
     }
     try:
         if cortex is not None:
@@ -76,7 +79,7 @@ def apply_exit_intel(
 
     n = int(edge.get("n") or 0)
     wins = int(edge.get("wins") or 0)
-    losses = int(edge.get("losses") or 0)
+    int(edge.get("losses") or 0)
     if n < EVIDENCE_MIN:
         return {
             **base,
@@ -106,9 +109,12 @@ def apply_exit_intel(
         trail = TRAIL_STRONG
         partial = True
         reasons.append("strong_edge")
-    elif wr <= WR_WEAK or (avg_win is not None and avg_loss is not None
-                           and float(avg_loss or 0) > 0
-                           and float(avg_win or 0) < float(avg_loss) * 0.85):
+    elif wr <= WR_WEAK or (
+        avg_win is not None
+        and avg_loss is not None
+        and float(avg_loss or 0) > 0
+        and float(avg_win or 0) < float(avg_loss) * 0.85
+    ):
         be = BE_WEAK
         trail = TRAIL_WEAK
         partial = False
@@ -146,8 +152,6 @@ def apply_exit_intel(
         "exit_intel_n": n,
         "exit_intel_reasons": reasons or ["soft"],
         "wr": round(wr, 4),
-        "avg_giveback_frac": (
-            round(float(gf), 4) if gf is not None else None
-        ),
+        "avg_giveback_frac": (round(float(gf), 4) if gf is not None else None),
         "excursion_n": n_exc,
     }

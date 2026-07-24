@@ -102,19 +102,23 @@ def run(bot: str | None = None) -> Report:
             stub = False
             if isinstance(ts_raw, str) and ts_raw.startswith("2026-07-17"):
                 stub = True
-            checks.append(_check(
-                "heartbeat_fresh",
-                (not stub) and age < HEARTBEAT_MAX_AGE_S,
-                f"age={age:.0f}s stub={stub} cycle={hb_data.get('cycle')}",
-            ))
+            checks.append(
+                _check(
+                    "heartbeat_fresh",
+                    (not stub) and age < HEARTBEAT_MAX_AGE_S,
+                    f"age={age:.0f}s stub={stub} cycle={hb_data.get('cycle')}",
+                )
+            )
             if b == "gold":
                 cycle = int(hb_data.get("cycle") or 0)
-                checks.append(_check(
-                    "gold_cycle_advancing",
-                    cycle >= 1,
-                    f"cycle={cycle}",
-                    critical=False,
-                ))
+                checks.append(
+                    _check(
+                        "gold_cycle_advancing",
+                        cycle >= 1,
+                        f"cycle={cycle}",
+                        critical=False,
+                    )
+                )
         except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
             checks.append(_check("heartbeat_fresh", False, str(exc)))
     else:
@@ -137,20 +141,24 @@ def run(bot: str | None = None) -> Report:
 
     # Feed skip mix
     feed = feed_error_rate(state_dir / "skips.jsonl")
-    checks.append(_check(
-        "feed_skip_mix",
-        bool(feed.get("ok")),
-        f"rate={feed.get('rate')} feed_n={feed.get('feed_n')}/{feed.get('n')}",
-        critical=False,
-    ))
+    checks.append(
+        _check(
+            "feed_skip_mix",
+            bool(feed.get("ok")),
+            f"rate={feed.get('rate')} feed_n={feed.get('feed_n')}/{feed.get('n')}",
+            critical=False,
+        )
+    )
 
     idle = idle_skip_slo(state_dir / "skips.jsonl")
-    checks.append(_check(
-        "not_effectively_paused",
-        not bool(idle.get("effectively_paused")),
-        str(idle.get("detail")),
-        critical=False,
-    ))
+    checks.append(
+        _check(
+            "not_effectively_paused",
+            not bool(idle.get("effectively_paused")),
+            str(idle.get("detail")),
+            critical=False,
+        )
+    )
 
     # Discovery pulse admitted (soft)
     disc = state_dir / "discovered"
@@ -173,16 +181,19 @@ def run(bot: str | None = None) -> Report:
                     for v in data.values():
                         if isinstance(v, dict):
                             admitted_any = max(
-                                admitted_any, int(v.get("admitted") or 0),
+                                admitted_any,
+                                int(v.get("admitted") or 0),
                             )
             except (OSError, json.JSONDecodeError, TypeError, ValueError):
                 pass
-    checks.append(_check(
-        "gp_admitted",
-        admitted_any > 0,
-        f"admitted_any={admitted_any} best_oos={best_oos}",
-        critical=False,
-    ))
+    checks.append(
+        _check(
+            "gp_admitted",
+            admitted_any > 0,
+            f"admitted_any={admitted_any} best_oos={best_oos}",
+            critical=False,
+        )
+    )
 
     # Shadow num_active
     shadow_n = 0
@@ -199,52 +210,67 @@ def run(bot: str | None = None) -> Report:
                     shadow_active += 1
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             pass
-    checks.append(_check(
-        "gp_shadow_active",
-        shadow_active > 0,
-        f"active_rows={shadow_active}/{shadow_n}",
-        critical=False,
-    ))
+    checks.append(
+        _check(
+            "gp_shadow_active",
+            shadow_active > 0,
+            f"active_rows={shadow_active}/{shadow_n}",
+            critical=False,
+        )
+    )
 
     # Promote gate under bot_state_dir
     gate = state_dir / "gp_promote_gate.json"
-    checks.append(_check(
-        "promote_gate_path",
-        True,
-        str(gate) + (" exists" if gate.exists() else " missing_ok"),
-        critical=False,
-    ))
+    checks.append(
+        _check(
+            "promote_gate_path",
+            True,
+            str(gate) + (" exists" if gate.exists() else " missing_ok"),
+            critical=False,
+        )
+    )
 
     # Halt status (informational — halted is not a soak fail by itself)
     halted, halt_reason = entries_halted(b)
-    checks.append(_check(
-        "halt_switch_readable",
-        True,
-        f"halted={halted} {halt_reason}",
-        critical=False,
-    ))
+    checks.append(
+        _check(
+            "halt_switch_readable",
+            True,
+            f"halted={halted} {halt_reason}",
+            critical=False,
+        )
+    )
 
     # Strategy files
     for pair in pairs:
         live = strategy_yaml_path(pair, b)
-        seed = repo_root() / "bots" / b / "state" / "strategies" / (
-            pair.replace("/", "_").replace("-", "_") + ".yaml"
+        seed = (
+            repo_root()
+            / "bots"
+            / b
+            / "state"
+            / "strategies"
+            / (pair.replace("/", "_").replace("-", "_") + ".yaml")
         )
         present = live.exists() or seed.exists()
-        checks.append(_check(
-            f"strategy_{pair}",
-            present,
-            str(live if live.exists() else seed),
-        ))
+        checks.append(
+            _check(
+                f"strategy_{pair}",
+                present,
+                str(live if live.exists() else seed),
+            )
+        )
 
     for rel in ("hypotheses.jsonl", "flatline_log.jsonl", "policy.json"):
         p = state_dir / rel
-        checks.append(_check(
-            f"artifact_{rel}",
-            True,
-            "optional" if not p.exists() else "ok",
-            critical=False,
-        ))
+        checks.append(
+            _check(
+                f"artifact_{rel}",
+                True,
+                "optional" if not p.exists() else "ok",
+                critical=False,
+            )
+        )
 
     # Hypotheses pollution
     hyp = state_dir / "hypotheses.jsonl"
@@ -262,26 +288,33 @@ def run(bot: str | None = None) -> Report:
                     polluted += 1
                     continue
                 reason = str(rec.get("reason") or "")
-                if "max_dd 2.00%" in reason or "max_dd 2.0%" in reason:
-                    polluted += 1
-                elif rec.get("variable") == "rsi_period" and rec.get("reasoning") == "improve WR":
+                if (
+                    "max_dd 2.00%" in reason
+                    or "max_dd 2.0%" in reason
+                    or rec.get("variable") == "rsi_period"
+                    and rec.get("reasoning") == "improve WR"
+                ):
                     polluted += 1
         except OSError as exc:
             checks.append(_check("hypotheses_clean", False, str(exc)))
         else:
-            checks.append(_check(
-                "hypotheses_clean",
-                polluted == 0,
-                f"polluted={polluted}/{total}" if total else "empty",
-            ))
+            checks.append(
+                _check(
+                    "hypotheses_clean",
+                    polluted == 0,
+                    f"polluted={polluted}/{total}" if total else "empty",
+                )
+            )
 
     # Archive / orphan isolation
     bad_refs = _archive_pollution_refs(state_dir)
-    checks.append(_check(
-        "archive_isolated",
-        len(bad_refs) == 0,
-        "ok" if not bad_refs else ",".join(bad_refs[:5]),
-    ))
+    checks.append(
+        _check(
+            "archive_isolated",
+            len(bad_refs) == 0,
+            "ok" if not bad_refs else ",".join(bad_refs[:5]),
+        )
+    )
 
     # Live prices stubs under bots/*/state
     stub_live = repo_root() / "bots" / b / "state" / f"live_prices_{b}.json"
@@ -296,24 +329,26 @@ def run(bot: str | None = None) -> Report:
                     stub_bad = True
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             stub_bad = True
-    checks.append(_check(
-        "no_live_price_stubs",
-        not stub_bad,
-        str(stub_live) if stub_bad else "ok",
-        critical=False,
-    ))
-
-    critical_ok = all(
-        c["passed"] for c in checks if c.get("critical", True)
+    checks.append(
+        _check(
+            "no_live_price_stubs",
+            not stub_bad,
+            str(stub_live) if stub_bad else "ok",
+            critical=False,
+        )
     )
+
+    critical_ok = all(c["passed"] for c in checks if c.get("critical", True))
     # Go/no-go: criticals + heartbeat + price sanity + trades file + archive
     must = {
-        "config_load", "state_dir", "heartbeat_fresh", "price_sanity",
-        "trades_file", "archive_isolated",
+        "config_load",
+        "state_dir",
+        "heartbeat_fresh",
+        "price_sanity",
+        "trades_file",
+        "archive_isolated",
     }
-    go = all(
-        c["passed"] for c in checks if c["name"] in must
-    )
+    go = all(c["passed"] for c in checks if c["name"] in must)
     return Report(bot=b, ok=critical_ok, go_nogo=go, checks=checks)
 
 
@@ -336,6 +371,7 @@ class SelfAudit:
 
 def main() -> None:
     import pprint
+
     pprint.pp(run_all())
 
 

@@ -13,6 +13,9 @@ plus token rejection and explicit empty-tab handling.
 
 from __future__ import annotations
 
+import contextlib
+from datetime import UTC
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -40,18 +43,21 @@ def _tmp_backend(tmp_path, monkeypatch):
     # production DB has but init_db()'s base schema omits.
     conn = m.get_conn()
     for _col in ("discovered_json", "cortex_json", "flatlined_json", "open_trades_json"):
-        try:
+        with contextlib.suppress(Exception):
             conn.execute(f"ALTER TABLE latest_state ADD COLUMN {_col} TEXT DEFAULT '{{}}'")
-        except Exception:
-            pass
     conn.commit()
     conn.close()
     yield
 
 
 VALID_RECORD = {
-    "id": "T1", "pair": "EUR/USD", "entry_price": 1.10, "exit_price": 1.11,
-    "pnl_pct": 0.9, "strategy_type": "gp_ensemble", "entry_regime": "BULL",
+    "id": "T1",
+    "pair": "EUR/USD",
+    "entry_price": 1.10,
+    "exit_price": 1.11,
+    "pnl_pct": 0.9,
+    "strategy_type": "gp_ensemble",
+    "entry_regime": "BULL",
 }
 TOKEN = {"X-Ingest-Token": "secret-token"}
 
@@ -116,7 +122,7 @@ def test_persist_restart():
     # ingest, then simulate a restart by building a fresh client (same DB file)
     c = client
     c.post("/api/ingest/forex", json=dict(VALID_RECORD, id="Y"), headers=TOKEN)
-    c2 = m.test_client()   # new handler, same on-disk SQLite
+    c2 = m.test_client()  # new handler, same on-disk SQLite
     trades = c2.get("/api/trades/forex").json()
     assert any(t["id"] == "Y" for t in trades)
 
@@ -137,7 +143,7 @@ def test_unknown_bot_read_returns_empty_not_500():
 def test_empty_tab_explicit_not_500():
     c = client
     assert c.get("/api/trades/forex").status_code == 200
-    assert c.get("/api/trades/forex").json() == []   # no data yet, explicit []
+    assert c.get("/api/trades/forex").json() == []  # no data yet, explicit []
 
 
 def test_daily_and_lifetime_summary_not_500():
@@ -163,9 +169,10 @@ def test_gp_open_trade_surfaces_in_overview():
 
     Self-contained: own temp DB + direct overview() call (no shared fixture).
     """
-    import tempfile as _tf
     import json
-    from datetime import datetime, timezone
+    import tempfile as _tf
+    from datetime import datetime
+
     import dashboard.backend.main as mm
 
     d = _tf.mkdtemp()
@@ -173,27 +180,39 @@ def test_gp_open_trade_surfaces_in_overview():
     mm.init_db()
     conn = mm.get_conn()
     for _col in ("discovered_json", "cortex_json", "flatlined_json", "open_trades_json"):
-        try:
+        with contextlib.suppress(Exception):
             conn.execute(f"ALTER TABLE latest_state ADD COLUMN {_col} TEXT DEFAULT '{{}}'")
-        except Exception:
-            pass
 
-    ts = datetime.now(timezone.utc).isoformat()
+    ts = datetime.now(UTC).isoformat()
     gp_open = {
-        "id": "gold:XAU/USD:1700000000", "bot": "gold", "pair": "XAU/USD",
-        "entry_type": "gp_ensemble", "entry_price": 4000.0, "size": 0.1,
-        "entry_ts": ts, "stop_loss_pct": 1.5, "profit_target_pct": 3.0,
-        "held_cycles": 3, "unrealised_pct": 0.32,
+        "id": "gold:XAU/USD:1700000000",
+        "bot": "gold",
+        "pair": "XAU/USD",
+        "entry_type": "gp_ensemble",
+        "entry_price": 4000.0,
+        "size": 0.1,
+        "entry_ts": ts,
+        "stop_loss_pct": 1.5,
+        "profit_target_pct": 3.0,
+        "held_cycles": 3,
+        "unrealised_pct": 0.32,
     }
     conn.execute(
         """INSERT INTO latest_state
            (bot, strategy_json, goal_json, heartbeat_json, open_trades_json,
             discovered_json, cortex_json, flatlined_json, received_at)
            VALUES (?,?,?,?,?,?,?,?,?)""",
-        ("gold",
-         '{"XAU/USD": {"strategy_type": "rsi_momentum"}}',
-         "{}", '{"prices": {"XAU/USD": 4013.0}}',
-         json.dumps([gp_open]), "{}", "{}", "{}", ts),
+        (
+            "gold",
+            '{"XAU/USD": {"strategy_type": "rsi_momentum"}}',
+            "{}",
+            '{"prices": {"XAU/USD": 4013.0}}',
+            json.dumps([gp_open]),
+            "{}",
+            "{}",
+            "{}",
+            ts,
+        ),
     )
     conn.commit()
     o = mm.overview()
@@ -209,7 +228,7 @@ def test_discovered_api_excludes_suppress_from_ensemble_and_exposes_health():
     fitness×WR lean, and degradation counts come from the same indicator list.
     """
     import json
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     disc = {
         "EUR/USD": [
@@ -239,7 +258,7 @@ def test_discovered_api_excludes_suppress_from_ensemble_and_exposes_health():
             },
         ],
     }
-    ts = datetime.now(timezone.utc).isoformat()
+    ts = datetime.now(UTC).isoformat()
     conn = m.get_conn()
     conn.execute(
         """INSERT INTO latest_state
@@ -319,13 +338,17 @@ def test_ingest_hypotheses_normalize_old_new_and_skip_reason():
 
 def test_per_version_uses_entry_type_when_strategy_version_missing():
     import json
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    ts = datetime.now(timezone.utc).isoformat()
+    ts = datetime.now(UTC).isoformat()
     conn = m.get_conn()
     raw = {
-        "id": "v1", "pair": "EUR/USD", "exit_reason": "profit_target",
-        "pnl_pct": 1.2, "entry_type": "gp_ensemble", "entry_price": 1.1,
+        "id": "v1",
+        "pair": "EUR/USD",
+        "exit_reason": "profit_target",
+        "pnl_pct": 1.2,
+        "entry_type": "gp_ensemble",
+        "entry_price": 1.1,
     }
     conn.execute(
         "INSERT INTO trades (id, bot, pair, entry_price, entry_ts, exit_reason, pnl_pct, raw_json) "
@@ -382,16 +405,24 @@ def test_purge_legacy_hermes_trades_keeps_this_project_only():
            (bot, strategy_json, goal_json, heartbeat_json, open_trades_json,
             discovered_json, cortex_json, flatlined_json, received_at)
            VALUES (?,?,?,?,?,?,?,?,?)""",
-        ("forex", json.dumps({"EUR/USD": {}, "GBP/USD": {}}), "{}", "{}", "[]",
-         "{}", "{}", "{}", epoch),
+        (
+            "forex",
+            json.dumps({"EUR/USD": {}, "GBP/USD": {}}),
+            "{}",
+            "{}",
+            "[]",
+            "{}",
+            "{}",
+            "{}",
+            epoch,
+        ),
     )
     conn.execute(
         """INSERT INTO latest_state
            (bot, strategy_json, goal_json, heartbeat_json, open_trades_json,
             discovered_json, cortex_json, flatlined_json, received_at)
            VALUES (?,?,?,?,?,?,?,?,?)""",
-        ("gold", json.dumps({"XAU/USD": {}}), "{}", "{}", "[]",
-         "{}", "{}", "{}", epoch),
+        ("gold", json.dumps({"XAU/USD": {}}), "{}", "{}", "[]", "{}", "{}", "{}", epoch),
     )
     conn.commit()
     conn.close()
@@ -407,9 +438,9 @@ def test_purge_legacy_hermes_trades_keeps_this_project_only():
 def test_overview_closed_trades_is_lifetime_not_recent_window():
     """Live pulse must use lifetime unique closed count, not len(recent_trades)."""
     import json
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    ts = datetime.now(timezone.utc).isoformat()
+    ts = datetime.now(UTC).isoformat()
     conn = m.get_conn()
     # Seed strategy so EUR/USD is a valid pair for forex.
     conn.execute(
@@ -417,8 +448,17 @@ def test_overview_closed_trades_is_lifetime_not_recent_window():
            (bot, strategy_json, goal_json, heartbeat_json, open_trades_json,
             discovered_json, cortex_json, flatlined_json, received_at)
            VALUES (?,?,?,?,?,?,?,?,?)""",
-        ("forex", json.dumps({"EUR/USD": {}, "GBP/USD": {}}), "{}", "{}", "[]",
-         "{}", "{}", "{}", ts),
+        (
+            "forex",
+            json.dumps({"EUR/USD": {}, "GBP/USD": {}}),
+            "{}",
+            "{}",
+            "[]",
+            "{}",
+            "{}",
+            "{}",
+            ts,
+        ),
     )
     for tid, pair, entry, reason in [
         ("c1", "EUR/USD", 1.1, "stop_loss"),
@@ -448,7 +488,7 @@ def test_overview_open_trades_not_filtered_by_age_and_no_ghost_fallback():
     """
     import json
     import tempfile as _tf
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     import dashboard.backend.main as mm
 
@@ -457,35 +497,66 @@ def test_overview_open_trades_not_filtered_by_age_and_no_ghost_fallback():
     mm.init_db()
     conn = mm.get_conn()
     for _col in ("discovered_json", "cortex_json", "flatlined_json", "open_trades_json"):
-        try:
+        with contextlib.suppress(Exception):
             conn.execute(f"ALTER TABLE latest_state ADD COLUMN {_col} TEXT DEFAULT '{{}}'")
-        except Exception:
-            pass
 
-    old_ts = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+    old_ts = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
     opens = [
-        {"id": "forex:EUR/USD:1", "pair": "EUR/USD", "entry_type": "gp_ensemble",
-         "entry_ts": old_ts, "entry_price": 1.1, "held_cycles": 100},
-        {"id": "forex:GBP/USD:1", "pair": "GBP/USD", "entry_type": "gp_ensemble",
-         "entry_ts": old_ts, "entry_price": 1.3, "held_cycles": 80},
-        {"id": "forex:AUD/USD:1", "pair": "AUD/USD", "entry_type": "mean_reversion",
-         "entry_ts": old_ts, "entry_price": 0.7, "held_cycles": 50},
+        {
+            "id": "forex:EUR/USD:1",
+            "pair": "EUR/USD",
+            "entry_type": "gp_ensemble",
+            "entry_ts": old_ts,
+            "entry_price": 1.1,
+            "held_cycles": 100,
+        },
+        {
+            "id": "forex:GBP/USD:1",
+            "pair": "GBP/USD",
+            "entry_type": "gp_ensemble",
+            "entry_ts": old_ts,
+            "entry_price": 1.3,
+            "held_cycles": 80,
+        },
+        {
+            "id": "forex:AUD/USD:1",
+            "pair": "AUD/USD",
+            "entry_type": "mean_reversion",
+            "entry_ts": old_ts,
+            "entry_price": 0.7,
+            "held_cycles": 50,
+        },
     ]
     # Ghost: trades row with no exit — must NOT appear as a live open.
     conn.execute(
         "INSERT INTO trades (id, bot, pair, entry_price, entry_ts, exit_reason, raw_json) "
         "VALUES (?,?,?,?,?,?,?)",
-        ("ghost", "forex", "GBP/JPY", 1.5, old_ts, None,
-         json.dumps({"id": "ghost", "pair": "GBP/JPY", "entry_type": "gp_ensemble"})),
+        (
+            "ghost",
+            "forex",
+            "GBP/JPY",
+            1.5,
+            old_ts,
+            None,
+            json.dumps({"id": "ghost", "pair": "GBP/JPY", "entry_type": "gp_ensemble"}),
+        ),
     )
     conn.execute(
         """INSERT INTO latest_state
            (bot, strategy_json, goal_json, heartbeat_json, open_trades_json,
             discovered_json, cortex_json, flatlined_json, received_at)
            VALUES (?,?,?,?,?,?,?,?,?)""",
-        ("forex", json.dumps({"EUR/USD": {}, "GBP/USD": {}, "AUD/USD": {}, "GBP/JPY": {}}),
-         "{}", "{}", json.dumps(opens), "{}", "{}", "{}",
-         datetime.now(timezone.utc).isoformat()),
+        (
+            "forex",
+            json.dumps({"EUR/USD": {}, "GBP/USD": {}, "AUD/USD": {}, "GBP/JPY": {}}),
+            "{}",
+            "{}",
+            json.dumps(opens),
+            "{}",
+            "{}",
+            "{}",
+            datetime.now(UTC).isoformat(),
+        ),
     )
     conn.commit()
     o = mm.overview()

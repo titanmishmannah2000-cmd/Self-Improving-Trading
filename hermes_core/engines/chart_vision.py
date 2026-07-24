@@ -35,7 +35,9 @@ from hermes_core.state.paths import chart_cache_dir
 # ── config ────────────────────────────────────────────────────────────────
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-2.5-flash"
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+GEMINI_URL = (
+    f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+)
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -44,6 +46,7 @@ CACHE_INTERVAL_S = 3600  # 60 minutes
 
 def _cache_dir() -> Path:
     return chart_cache_dir()
+
 
 # bot symbol -> yfinance ticker (used by the real fetch path)
 SYMBOL_MAP = {
@@ -160,8 +163,13 @@ def generate_chart_png(df, symbol: str):  # pragma: no cover - needs mplfinance
             mpf.make_addplot(df["Close"].ewm(span=50).mean(), color="yellow", width=0.8),
         ]
         mpf.plot(
-            df, type="candle", style=style, title=f"\n{symbol} — 1H Chart",
-            ylabel="Price", volume=True, addplot=add_plots,
+            df,
+            type="candle",
+            style=style,
+            title=f"\n{symbol} — 1H Chart",
+            ylabel="Price",
+            volume=True,
+            addplot=add_plots,
             savefig=dict(fname=str(cache_path), dpi=150, bbox_inches="tight"),
             returnfig=False,
         )
@@ -199,16 +207,17 @@ def analyze_chart_gemini(png_path, symbol: str) -> str | None:
     except OSError:
         return None
     payload = {
-        "contents": [{
-            "parts": [
-                {"text": CHART_PROMPT},
-                {"inline_data": {"mime_type": "image/png", "data": img_b64}},
-            ]
-        }]
+        "contents": [
+            {
+                "parts": [
+                    {"text": CHART_PROMPT},
+                    {"inline_data": {"mime_type": "image/png", "data": img_b64}},
+                ]
+            }
+        ]
     }
     try:
-        resp = httpx.post(GEMINI_URL, json=payload,
-                          params={"key": GEMINI_API_KEY}, timeout=30)
+        resp = httpx.post(GEMINI_URL, json=payload, params={"key": GEMINI_API_KEY}, timeout=30)
         if resp.status_code == 429:
             return "CHART: unavailable (rate limited)"
         resp.raise_for_status()
@@ -232,22 +241,23 @@ def analyze_chart_groq(png_path, symbol: str) -> str | None:
         return None
     payload = {
         "model": GROQ_MODEL,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": CHART_PROMPT},
-                {"type": "image_url",
-                 "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
-            ],
-        }],
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": CHART_PROMPT},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
+                ],
+            }
+        ],
         "max_tokens": 300,
         "temperature": 0.3,
     }
     try:
         resp = httpx.post(
-            GROQ_URL, json=payload,
-            headers={"Authorization": f"Bearer {GROQ_API_KEY}",
-                     "Content-Type": "application/json"},
+            GROQ_URL,
+            json=payload,
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
             timeout=30,
         )
         resp.raise_for_status()

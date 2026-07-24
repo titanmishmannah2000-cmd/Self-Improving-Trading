@@ -13,24 +13,25 @@ import math
 
 from hermes_core.env import get_env
 
-PRIOR_ALPHA = 1.0          # Beta(1,1) uniform prior
+PRIOR_ALPHA = 1.0  # Beta(1,1) uniform prior
 PRIOR_BETA = 1.0
-KELLY_FRACTION = 0.25      # quarter-Kelly safety
-MIN_MULT = 0.15            # never starve completely when edge is weak
+KELLY_FRACTION = 0.25  # quarter-Kelly safety
+MIN_MULT = 0.15  # never starve completely when edge is weak
 MAX_MULT = 1.0
-REF_KELLY = KELLY_FRACTION # map f=0.25 → mult≈1.0
+REF_KELLY = KELLY_FRACTION  # map f=0.25 → mult≈1.0
 
 
 def kelly_sizing_enabled() -> bool:
     return get_env("KELLY_SIZING", "0") == "1"
 
 
-def bayesian_p(wins: int, losses: int,
-               alpha: float = PRIOR_ALPHA, beta: float = PRIOR_BETA) -> float:
+def bayesian_p(
+    wins: int, losses: int, alpha: float = PRIOR_ALPHA, beta: float = PRIOR_BETA
+) -> float:
     """Posterior mean of Beta(alpha+wins, beta+losses)."""
     w = max(0, int(wins))
-    l = max(0, int(losses))
-    return (w + float(alpha)) / (w + l + float(alpha) + float(beta))
+    losses_n = max(0, int(losses))
+    return (w + float(alpha)) / (w + losses_n + float(alpha) + float(beta))
 
 
 def bayesian_ci(
@@ -146,8 +147,11 @@ def apply_kelly_sizing(
             "reasons": ["disabled"],
         }
     info = kelly_size_mult(
-        wins=wins, losses=losses,
-        avg_win=avg_win, avg_loss=avg_loss, rr_b=rr_b,
+        wins=wins,
+        losses=losses,
+        avg_win=avg_win,
+        avg_loss=avg_loss,
+        rr_b=rr_b,
     )
     sized = max(0.0, base * float(info["kelly_mult"]))
     return {

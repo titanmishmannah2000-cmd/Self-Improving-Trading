@@ -15,7 +15,10 @@ from hermes_core.engines.regime_sizing import (
 
 def test_disabled_passthrough():
     out = apply_regime_sizing(
-        0.4, enabled=False, regime="trend", fast_regime="down",
+        0.4,
+        enabled=False,
+        regime="trend",
+        fast_regime="down",
     )
     assert out["size"] == pytest.approx(0.4)
     assert out["regime_mult"] == 1.0

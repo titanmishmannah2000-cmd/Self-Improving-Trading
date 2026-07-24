@@ -6,8 +6,8 @@ trade cycle.
 
 from __future__ import annotations
 
+import contextlib
 import json
-import os
 import time
 from pathlib import Path
 from typing import Any
@@ -54,10 +54,8 @@ def write_halt(bot: str, reason: str) -> None:
 
 
 def clear_halt(bot: str) -> None:
-    try:
+    with contextlib.suppress(OSError):
         halt_path(bot).unlink(missing_ok=True)
-    except OSError:
-        pass
 
 
 def ensure_state_files(bot: str) -> Path:
@@ -66,10 +64,8 @@ def ensure_state_files(bot: str) -> Path:
     for name in _STATE_TOUCH_FILES:
         p = d / name
         if not p.exists():
-            try:
+            with contextlib.suppress(OSError):
                 p.touch()
-            except OSError:
-                pass
     (d / "discovered").mkdir(parents=True, exist_ok=True)
     (d / "cortex").mkdir(parents=True, exist_ok=True)
     (d / "strategies").mkdir(parents=True, exist_ok=True)
@@ -122,8 +118,9 @@ def price_sanity_pair(pair: str, price: float | None) -> tuple[bool, str]:
     return True, ""
 
 
-def price_sanity_book(prices: dict[str, float] | None,
-                      price_history: dict[str, list] | None = None) -> tuple[bool, str]:
+def price_sanity_book(
+    prices: dict[str, float] | None, price_history: dict[str, list] | None = None
+) -> tuple[bool, str]:
     """Detect synthetic FX ladders / cross-pair identical stubs."""
     prices = prices or {}
     if not prices:
@@ -184,8 +181,7 @@ def feed_error_rate(skips_path: Path, *, window: int = 200) -> dict[str, Any]:
     return {"n": n, "feed_n": feed_n, "rate": round(rate, 4), "ok": ok}
 
 
-def idle_skip_slo(skips_path: Path, *, hours: float = 6.0,
-                  window: int = 500) -> dict[str, Any]:
+def idle_skip_slo(skips_path: Path, *, hours: float = 6.0, window: int = 500) -> dict[str, Any]:
     """Detect 'effectively paused': recent skips are all idle/feed with fresh activity."""
     now = time.time()
     cutoff = now - hours * 3600.0
@@ -212,7 +208,8 @@ def idle_skip_slo(skips_path: Path, *, hours: float = 6.0,
     if len(reasons) < 20:
         return {"effectively_paused": False, "detail": f"few_recent={len(reasons)}"}
     badish = sum(
-        1 for r in reasons
+        1
+        for r in reasons
         if r == "no_signal" or r.startswith(_FEED_SKIP_PREFIXES) or r.startswith("bb_bandwidth")
     )
     paused = badish == len(reasons)

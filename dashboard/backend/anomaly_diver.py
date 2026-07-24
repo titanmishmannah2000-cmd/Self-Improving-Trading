@@ -11,12 +11,12 @@ are logged but don't create dashboard noise.
 import json
 import os
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
-from findings_store import _get_conn, insert_finding, get_latest_run, _ts
+from findings_store import _get_conn, get_latest_run, insert_finding
 
 DIVE_PROMPT = """You are Hermes-Sentinel. A statistical check flagged a possible anomaly in a live trading system. Your job is to judge whether this is a genuine problem or normal market variance.
 
@@ -41,7 +41,7 @@ def check_open_anomalies(verbose: bool = True) -> list[dict]:
                AND (ma.finding_id IS NULL OR af.status IS NULL)
                AND ma.created_at >= ?
                ORDER BY ma.z_score DESC LIMIT 5""",
-            ((datetime.now(timezone.utc) - timedelta(hours=48)).isoformat(),),
+            ((datetime.now(UTC) - timedelta(hours=48)).isoformat(),),
         ).fetchall()
         return [dict(r) for r in rows]
     finally:
@@ -64,6 +64,7 @@ def deep_dive(anomaly: dict) -> dict:
 
     try:
         import httpx
+
         api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         if not api_key:
             env_path = _HERE / ".env"
@@ -98,15 +99,20 @@ def deep_dive(anomaly: dict) -> dict:
     except Exception as e:
         print(f"[DIVER] LLM error: {e}")
 
-    return {"confirmed": True, "explanation": "Could not analyze — erring on side of alert", "recommended_severity": "MEDIUM", "should_escalate": False}
+    return {
+        "confirmed": True,
+        "explanation": "Could not analyze — erring on side of alert",
+        "recommended_severity": "MEDIUM",
+        "should_escalate": False,
+    }
 
 
 def run_deep_dive(verbose: bool = True) -> list[dict]:
     """Check open anomalies and deep-dive each one."""
     if verbose:
-        print(f"\n{'='*40}")
-        print(f"ANOMALY DEEP DIVE — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
-        print(f"{'='*40}")
+        print(f"\n{'=' * 40}")
+        print(f"ANOMALY DEEP DIVE — {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
+        print(f"{'=' * 40}")
 
     anomalies = check_open_anomalies()
     if not anomalies:
@@ -129,20 +135,24 @@ def run_deep_dive(verbose: bool = True) -> list[dict]:
             if verdict.get("confirmed"):
                 severity = verdict.get("recommended_severity", "MEDIUM")
                 if verbose:
-                    print(f"     → ✅ Confirmed ({severity}): {verdict.get('explanation', '')[:80]}")
+                    print(
+                        f"     → ✅ Confirmed ({severity}): {verdict.get('explanation', '')[:80]}"
+                    )
 
                 latest_run = get_latest_run()
-                audit_run_id = latest_run["id"] if latest_run else f"dive-{int(datetime.now(timezone.utc).timestamp())}"
+                audit_run_id = (
+                    latest_run["id"] if latest_run else f"dive-{int(datetime.now(UTC).timestamp())}"
+                )
 
                 finding = insert_finding(
                     domain="performance-drift",
                     finding_type="RISK",
                     severity=severity,
                     location=f"anomaly_diver/{anomaly['bot']}/{anomaly['metric']}",
-                    description=f"[Live] {anomaly['bot']}/{anomaly.get('pair','all')} {anomaly['metric']} is {anomaly['direction']} baseline: observed={anomaly['observed_value']}, expected={anomaly['baseline_mean']}±{anomaly['baseline_std']} (z={anomaly['z_score']:+.1f}). Verdict: {verdict.get('explanation', '')[:150]}",
+                    description=f"[Live] {anomaly['bot']}/{anomaly.get('pair', 'all')} {anomaly['metric']} is {anomaly['direction']} baseline: observed={anomaly['observed_value']}, expected={anomaly['baseline_mean']}±{anomaly['baseline_std']} (z={anomaly['z_score']:+.1f}). Verdict: {verdict.get('explanation', '')[:150]}",
                     trading_impact=f"Metric deviated {abs(anomaly['z_score']):.1f}σ from baseline. {verdict.get('explanation', '')[:100]}",
                     suggested_fix=f"Cause: {verdict.get('likely_cause', 'unknown')}. Investigate {anomaly['bot']} {anomaly['metric']}.",
-                    confidence=min(90, int(abs(anomaly['z_score']) * 25)),
+                    confidence=min(90, int(abs(anomaly["z_score"]) * 25)),
                     audit_run_id=audit_run_id,
                 )
                 results.append(finding)

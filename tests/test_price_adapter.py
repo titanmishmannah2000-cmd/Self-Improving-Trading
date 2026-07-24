@@ -72,8 +72,9 @@ async def test_seed_history_count():
 
 async def test_yfinance_timeout_returns_none():
     # speed up: collapse the retry backoff so the test doesn't sleep ~14s
-    with patch("yfinance.download", side_effect=TimeoutError), patch(
-        "hermes_core.adapters.price.asyncio.sleep", new=AsyncMock()
+    with (
+        patch("yfinance.download", side_effect=TimeoutError),
+        patch("hermes_core.adapters.price.asyncio.sleep", new=AsyncMock()),
     ):
         r = await price.fetch("EUR/USD")
     assert r is None  # graceful, no exception

@@ -170,6 +170,4 @@ class HttpPriceClient:
             return asyncio.run(self.seed_history(pair, max_candles=max_candles))
         except RuntimeError:
             loop = asyncio.get_event_loop()
-            return loop.run_until_complete(
-                self.seed_history(pair, max_candles=max_candles)
-            )
+            return loop.run_until_complete(self.seed_history(pair, max_candles=max_candles))
