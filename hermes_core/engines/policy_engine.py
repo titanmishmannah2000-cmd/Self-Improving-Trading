@@ -21,12 +21,12 @@ suppression set + a per-pair ``allocation`` map for the dashboard.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from hermes_core.engines.decision_cortex import Cortex
 from hermes_core.engines.expert_weights import pair_expert_weights
 from hermes_core.env import get_env
+from hermes_core.state.atomic_json import atomic_write_json, load_json
 from hermes_core.state.paths import current_bot, policy_path
 
 # ── gates ──────────────────────────────────────────────────────────────────
@@ -51,7 +51,7 @@ def _policy_file(bot: str | None = None) -> Path:
 def _save_policy(policy: dict, bot: str | None = None) -> None:
     path = _policy_file(bot)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(policy, indent=2), encoding="utf-8")
+    atomic_write_json(path, policy, indent=2)
 
 
 def soft_weights_enabled() -> bool:
@@ -143,7 +143,14 @@ class PolicyEngine:
         exiled = cortex.get_exiled_indicators()
         priority_discovery = len(exiled) >= PRIORITY_DISCOVERY_EXILES
 
-        n_entries = len(cortex._entries) if hasattr(cortex, "_entries") else 0
+        # Closed outcomes only — open/hypothesis rows must not skew probe cadence.
+        if hasattr(cortex, "closed_outcome_count"):
+            n_entries = int(cortex.closed_outcome_count())
+        else:
+            n_entries = sum(
+                1 for e in getattr(cortex, "_entries", [])
+                if e.get("outcome") is not None and not e.get("partial")
+            )
         probe_interval = 10 if n_entries < PROBE_CORTEX_THRESHOLD else 50
 
         # Rollback remains fleet-level (overall MR health).
@@ -151,9 +158,15 @@ class PolicyEngine:
         n_trades = sum(
             1
             for e in getattr(cortex, "_entries", [])
-            if e.get("type") == "mean_reversion" and e.get("outcome") is not None
+            if e.get("type") == "mean_reversion"
+            and e.get("outcome") is not None
+            and not e.get("partial")
         )
-        rollback = mr_wr is not None and mr_wr < ROLLBACK_MR_WR and n_trades >= ROLLBACK_MIN_TRADES
+        rollback = (
+            mr_wr is not None
+            and mr_wr < ROLLBACK_MR_WR
+            and n_trades >= ROLLBACK_MIN_TRADES
+        )
 
         soft = soft_weights_enabled()
         allocation: dict[str, dict] = {}
@@ -176,16 +189,15 @@ class PolicyEngine:
             allocation=allocation,
             soft_weights=soft,
         )
-        _save_policy(policy.to_dict(), current_bot())
+        # Persist under the cortex bot — never current_bot() alone (CLI/env mismatch).
+        bot_for_save = getattr(cortex, "_bot", None) or current_bot()
+        _save_policy(policy.to_dict(), bot_for_save)
         return policy
 
     def get_policy(self, bot: str | None = None) -> Policy | None:
         path = _policy_file(bot)
-        if not path.exists():
-            return None
-        try:
-            d = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        d = load_json(path, default=None)
+        if not isinstance(d, dict):
             return None
         return Policy(
             {p: set(t) for p, t in d.get("suppressions", {}).items()},

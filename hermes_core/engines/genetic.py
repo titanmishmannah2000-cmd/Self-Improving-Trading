@@ -1420,14 +1420,13 @@ def apply_live_feedback(pair: str, cortex) -> int:
     try:
         if cortex is None:
             return 0
-        # The cortex passed by the discovery thread is loaded ONCE at startup
-        # and never re-reads the on-disk memory the trade loop writes to. So
-        # read the authoritative persisted stats fresh here (fail-soft: fall
-        # back to the passed instance if a fresh load is unavailable).
+        # Always reload from the SAME bot the trade loop writes — never
+        # HERMES_BOT_NAME alone (CLI override / .env mismatch contaminates).
+        bot = getattr(cortex, "_bot", None)
         try:
             from hermes_core.engines.decision_cortex import Cortex
 
-            stats_source = Cortex()
+            stats_source = Cortex(bot=bot) if bot else Cortex()
         except Exception:
             stats_source = cortex
         own = [

@@ -310,15 +310,20 @@ def _process_exit(
             },
         )
         with contextlib.suppress(Exception):
+            is_gp = bool(pos.get("gp_indicators")) or entry_type in (
+                "gp_ensemble", "shadow",
+            )
+            _record_type = "gp_ensemble" if is_gp else entry_type
             cortex.record_outcome(
                 pair,
-                entry_type,
+                _record_type,
                 pnl,
                 mfe_pct=_exc.get("mfe_pct"),
                 mae_pct=_exc.get("mae_pct"),
                 giveback_pct=_exc.get("giveback_pct"),
                 giveback_frac=_exc.get("giveback_frac"),
                 mfe_capture=_exc.get("mfe_capture"),
+                partial=True,
             )
         pos["size"] = remain
         pos["partial_done"] = True

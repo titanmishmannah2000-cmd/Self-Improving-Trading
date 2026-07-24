@@ -19,7 +19,8 @@ from hermes_core.engines.soak_controls import (
     idle_skip_slo,
     price_sanity_book,
 )
-from hermes_core.state.paths import bot_state_dir, current_bot
+from hermes_core.state.atomic_json import load_json
+from hermes_core.state.paths import bot_state_dir, cortex_dir, current_bot, policy_path
 
 HEARTBEAT_MAX_AGE_S = 10 * 60  # soak go/no-go: 10 minutes
 VALID_BOTS = ("forex", "gold", "crypto")
@@ -80,6 +81,113 @@ def _archive_pollution_refs(state_dir: Path) -> list[str]:
     return bad
 
 
+_SEED_EXILE_MARKERS = ("stale_macd",)
+_STUB_PNL = {1.0, -1.0}
+
+
+def _cortex_soak_checks(b: str, state_dir: Path) -> list[dict]:
+    """Go/no-go checks for Decision Cortex 30-day soak readiness."""
+    checks: list[dict] = []
+    cdir = cortex_dir(b)
+    mem_path = cdir / "cortex_memory.json"
+    exile_path = cdir / "indicator_exile.json"
+    live_policy = policy_path(b)
+    stub_policy = cdir / "policy.json"
+    tracker = cdir / "indicator_tracker.json"
+
+    corrupt = list(cdir.glob("*.corrupt-*")) if cdir.exists() else []
+    checks.append(_check(
+        "cortex_no_corrupt",
+        len(corrupt) == 0,
+        f"{len(corrupt)} quarantine file(s)" if corrupt else "ok",
+    ))
+
+    if mem_path.exists():
+        mem = load_json(mem_path, default=None, quarantine=False)
+        ok_mem = isinstance(mem, dict) and isinstance(mem.get("entries", []), list)
+        checks.append(_check(
+            "cortex_memory_valid",
+            ok_mem,
+            "ok" if ok_mem else "invalid shape or JSON",
+        ))
+        if ok_mem:
+            entries = mem.get("entries") or []
+            stub_n = sum(
+                1 for e in entries
+                if e.get("outcome") is not None
+                and not e.get("partial")
+                and float(e.get("pnl", 0) or 0) in _STUB_PNL
+                and e.get("mfe_pct") is None
+            )
+            checks.append(_check(
+                "cortex_memory_not_stub_heavy",
+                stub_n < 10 or stub_n < max(1, len(entries) // 2),
+                f"stubish_pm1={stub_n}/{len(entries)}",
+                critical=False,
+            ))
+            opens = sum(
+                1 for e in entries
+                if e.get("outcome") is None
+                and e.get("type") not in ("hypothesis", "discovery")
+            )
+            closed = sum(
+                1 for e in entries
+                if e.get("outcome") is not None and not e.get("partial")
+            )
+            checks.append(_check(
+                "cortex_opens_bounded",
+                opens <= max(20, closed + 5),
+                f"open={opens} closed={closed}",
+                critical=False,
+            ))
+    else:
+        checks.append(_check("cortex_memory_valid", True, "missing (ok pre-trade)"))
+        checks.append(_check(
+            "cortex_memory_not_stub_heavy", True, "no memory yet", critical=False,
+        ))
+        checks.append(_check(
+            "cortex_opens_bounded", True, "no memory yet", critical=False,
+        ))
+
+    if exile_path.exists():
+        ex = load_json(exile_path, default=None, quarantine=False)
+        ok_ex = isinstance(ex, dict)
+        checks.append(_check("cortex_exile_valid", ok_ex, "ok" if ok_ex else "invalid"))
+        if ok_ex:
+            seed_hit = [k for k in _SEED_EXILE_MARKERS if k in ex]
+            checks.append(_check(
+                "cortex_exile_no_seed_stub",
+                len(seed_hit) == 0,
+                f"seed={seed_hit}" if seed_hit else "ok",
+            ))
+    else:
+        checks.append(_check("cortex_exile_valid", True, "missing (ok)"))
+        checks.append(_check("cortex_exile_no_seed_stub", True, "missing (ok)"))
+
+    checks.append(_check(
+        "cortex_stub_policy_absent",
+        not stub_policy.exists(),
+        str(stub_policy) if stub_policy.exists() else "ok",
+    ))
+    checks.append(_check(
+        "cortex_stub_tracker_absent",
+        not tracker.exists(),
+        str(tracker) if tracker.exists() else "ok",
+    ))
+    if live_policy.exists():
+        pol = load_json(live_policy, default=None, quarantine=False)
+        ok_pol = isinstance(pol, dict) and "suppressions" in pol
+        checks.append(_check(
+            "policy_json_valid",
+            ok_pol,
+            "ok" if ok_pol else "missing suppressions key / invalid",
+        ))
+    else:
+        checks.append(_check("policy_json_valid", True, "missing (ok pre-policy)"))
+
+    return checks
+
+
 def run(bot: str | None = None) -> Report:
     """Run on-demand self-audit for one bot. Returns a structured report."""
     b = bot or current_bot()
@@ -132,7 +240,7 @@ def run(bot: str | None = None) -> Report:
     else:
         checks.append(_check("heartbeat_fresh", False, "missing heartbeat.json"))
 
-    # Price sanity from heartbeat — empty prices with configured pairs is a fail
+    # Price sanity from heartbeat ΓÇö empty prices with configured pairs is a fail
     # (bots must publish real quotes each cycle).
     hb_prices = hb_data.get("prices") if isinstance(hb_data, dict) else None
     ok_px, px_reason = price_sanity_book(
@@ -239,7 +347,7 @@ def run(bot: str | None = None) -> Report:
         )
     )
 
-    # Halt status (informational — halted is not a soak fail by itself)
+    # Halt status (informational ΓÇö halted is not a soak fail by itself)
     halted, halt_reason = entries_halted(b)
     checks.append(
         _check(
@@ -347,8 +455,10 @@ def run(bot: str | None = None) -> Report:
         )
     )
 
+    checks.extend(_cortex_soak_checks(b, state_dir))
+
     critical_ok = all(c["passed"] for c in checks if c.get("critical", True))
-    # Go/no-go: criticals + heartbeat + price sanity + trades + archive + pause
+    # Go/no-go: criticals + heartbeat + price sanity + trades + archive + pause + cortex
     must = {
         "config_load",
         "state_dir",
@@ -357,6 +467,10 @@ def run(bot: str | None = None) -> Report:
         "trades_file",
         "archive_isolated",
         "not_effectively_paused",
+        "cortex_no_corrupt",
+        "cortex_exile_no_seed_stub",
+        "cortex_stub_policy_absent",
+        "cortex_stub_tracker_absent",
     }
     go = all(c["passed"] for c in checks if c["name"] in must)
     return Report(bot=b, ok=critical_ok, go_nogo=go, checks=checks)

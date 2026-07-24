@@ -13,17 +13,19 @@ Governance (blueprint ENGINE 8 / Phase 15):
   * best_entry_type() always returns a known, valid type.
 
 Persistence:
-  state/cortex/indicator_exile.json  — exiled indicator set (survives restart)
+  {HERMES_STATE_ROOT}/{bot}/state/cortex/indicator_exile.json
+  {HERMES_STATE_ROOT}/{bot}/state/cortex/cortex_memory.json
+  Live policy (not under cortex/): {bot}/state/policy.json
 """
 
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import time
 from pathlib import Path
 
+from hermes_core.state.atomic_json import atomic_write_json, load_json
 from hermes_core.state.paths import cortex_dir, current_bot
 
 # ── gates ──────────────────────────────────────────────────────────────────
@@ -34,6 +36,8 @@ EXILE_DECAY_ENTRIES = 100  # reconsider exiled indicators every 100 entries
 # Wall-clock escape so an early-soak exile streak cannot empty GP forever.
 EXILE_WALL_CLOCK_S = int(os.getenv("EXILE_DECAY_S", str(7 * 86400)))
 VALID_ENTRY_TYPES = ("mean_reversion", "gp_ensemble")
+# Cap closed+open rows kept on disk (30-day soak hygiene). Opens always kept.
+MEMORY_MAX_ENTRIES = 5000
 
 # Optional test overrides (tests monkeypatch these module attributes).
 CORTEX_DIR: Path | None = None
@@ -50,35 +54,55 @@ def _cortex_paths(bot: str | None = None) -> tuple[Path, Path, Path]:
 
 def _load_exiles(bot: str | None = None) -> dict:
     _, exile_path, _ = _cortex_paths(bot)
-    if exile_path.exists():
-        try:
-            return json.loads(exile_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return {}
-    return {}
+    raw = load_json(exile_path, default={})
+    return raw if isinstance(raw, dict) else {}
 
 
 def _save_exiles(data: dict, bot: str | None = None) -> None:
     base, exile_path, _ = _cortex_paths(bot)
     base.mkdir(parents=True, exist_ok=True)
-    exile_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    atomic_write_json(exile_path, data, indent=2)
 
 
 def _load_memory(bot: str | None = None) -> dict:
-    """Persisted entry/outcome history (D2): survives restart + per-cycle reset."""
+    """Persisted entry/outcome history (D2): survives restart + per-cycle reset.
+
+    Corrupt files are quarantined (``*.corrupt-<ts>``) — never silently treated
+    as empty then overwritten without an audit trail.
+    """
     _, _, memory_path = _cortex_paths(bot)
-    if memory_path.exists():
-        try:
-            return json.loads(memory_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return {}
-    return {"entries": [], "indicator_stats": {}}
+    raw = load_json(memory_path, default=None)
+    if raw is None:
+        return {"entries": [], "indicator_stats": {}}
+    if not isinstance(raw, dict):
+        return {"entries": [], "indicator_stats": {}}
+    entries = raw.get("entries")
+    stats = raw.get("indicator_stats")
+    return {
+        "entries": entries if isinstance(entries, list) else [],
+        "indicator_stats": stats if isinstance(stats, dict) else {},
+    }
 
 
 def _save_memory(data: dict, bot: str | None = None) -> None:
     base, _, memory_path = _cortex_paths(bot)
     base.mkdir(parents=True, exist_ok=True)
-    memory_path.write_text(json.dumps(data), encoding="utf-8")
+    atomic_write_json(memory_path, data)
+
+
+def _trim_entries(entries: list[dict], *, max_n: int = MEMORY_MAX_ENTRIES) -> list[dict]:
+    """Keep all open rows + newest closed rows within ``max_n`` total."""
+    if len(entries) <= max_n:
+        return entries
+    opens = [e for e in entries if e.get("outcome") is None
+             and e.get("type") not in ("hypothesis", "discovery")]
+    closed = [e for e in entries if e.get("outcome") is not None]
+    other = [e for e in entries
+             if e.get("type") in ("hypothesis", "discovery")]
+    budget = max(0, max_n - len(opens))
+    kept_closed = closed[-budget:] if budget else []
+    # Preserve relative order: trimmed closed, then opens, then other tail.
+    return kept_closed + opens + other[-min(100, len(other)):]
 
 
 class Cortex:
@@ -93,10 +117,36 @@ class Cortex:
         mem = _load_memory(self._bot)
         self._entries: list[dict] = mem.get("entries", [])
         self._indicator_stats: dict[str, dict] = mem.get("indicator_stats", {})
+        # File is source of truth for L36; sync memory flags after load.
+        self._sync_exile_flags_from_file()
+
+    def _sync_exile_flags_from_file(self) -> None:
+        exiles = _load_exiles(self._bot)
+        exile_ids = set(exiles.keys())
+        for ind_id, st in self._indicator_stats.items():
+            st["exiled"] = ind_id in exile_ids
+        for ind_id in exile_ids:
+            st = self._indicator_stats.setdefault(
+                ind_id,
+                {"attempts": 0, "wins": 0, "pnl": 0.0, "exiled": True,
+                 "gp": {"attempts": 0, "wins": 0, "pnl": 0.0}},
+            )
+            st["exiled"] = True
 
     def _flush(self) -> None:
+        self._entries = _trim_entries(self._entries)
         _save_memory(
-            {"entries": self._entries, "indicator_stats": self._indicator_stats}, self._bot
+            {"entries": self._entries, "indicator_stats": self._indicator_stats},
+            self._bot,
+        )
+
+    def closed_outcome_count(self) -> int:
+        """Closed non-partial outcomes (policy probe_interval / evidence)."""
+        return sum(
+            1 for e in self._entries
+            if e.get("outcome") is not None
+            and not e.get("partial")
+            and e.get("type") not in ("hypothesis", "discovery")
         )
 
     # ── recording ──────────────────────────────────────────────────────────
@@ -115,6 +165,7 @@ class Cortex:
         giveback_pct: float | None = None,
         giveback_frac: float | None = None,
         mfe_capture: float | None = None,
+        partial: bool = False,
     ) -> None:
         row = {
             "pair": pair,
@@ -122,6 +173,8 @@ class Cortex:
             "outcome": 1 if pnl > 0 else 0,
             "pnl": float(pnl),
         }
+        if partial:
+            row["partial"] = True
         if mfe_pct is not None:
             row["mfe_pct"] = float(mfe_pct)
         if mae_pct is not None:
@@ -135,7 +188,30 @@ class Cortex:
         elif mfe_pct is not None and float(mfe_pct) > 1e-9:
             with contextlib.suppress(TypeError, ValueError, ZeroDivisionError):
                 row["mfe_capture"] = round(float(pnl) / float(mfe_pct), 4)
-        self._entries.append(row)
+        # Fill matching open row (newest first) so entries_open does not grow
+        # forever. Partials never close an open row — full close does.
+        # Shadow opens are credited as gp_ensemble on close (same GP evidence).
+        def _open_matches(open_type: str | None, close_type: str) -> bool:
+            if open_type == close_type:
+                return True
+            gpish = {"gp_ensemble", "shadow"}
+            return (open_type in gpish) and (close_type in gpish)
+
+        filled = False
+        if not partial:
+            for i in range(len(self._entries) - 1, -1, -1):
+                e = self._entries[i]
+                if (
+                    e.get("outcome") is None
+                    and e.get("pair") == pair
+                    and _open_matches(e.get("type"), entry_type)
+                    and e.get("type") not in ("hypothesis", "discovery")
+                ):
+                    e.update(row)
+                    filled = True
+                    break
+        if not filled:
+            self._entries.append(row)
         self._flush()
 
     def record_hypothesis(self, pair: str, text: str) -> None:
@@ -151,12 +227,14 @@ class Cortex:
         """Win-rate for ``entry_type``, optionally scoped to one ``pair``.
 
         Per-pair WRs stop a bad pair from benching GP (or MR) fleet-wide.
+        Partial closes are excluded (full close is the policy/sizing truth).
         """
         outcomes = [
             e
             for e in self._entries
             if e.get("type") == entry_type
             and e.get("outcome") is not None
+            and not e.get("partial")
             and (pair is None or e.get("pair") == pair)
         ]
         if not outcomes:
@@ -167,7 +245,7 @@ class Cortex:
     def evidence_n(self, pair: str, entry_type: str) -> int:
         """Closed-outcome count for (pair, entry_type) — HIF Phase-1 probe gate.
 
-        Only rows with a recorded outcome count; open/unscored entries do not.
+        Only full (non-partial) rows with a recorded outcome count.
         """
         return sum(
             1
@@ -175,12 +253,14 @@ class Cortex:
             if e.get("pair") == pair
             and e.get("type") == entry_type
             and e.get("outcome") is not None
+            and not e.get("partial")
         )
 
     def edge_stats(self, pair: str, entry_type: str) -> dict:
         """Wins/losses + avg win/loss PnL for Kelly (HIF Phase-5).
 
         Missing pnl on an outcome is ignored for averages but still counts W/L.
+        Partials excluded.
         """
         outcomes = [
             e
@@ -188,6 +268,7 @@ class Cortex:
             if e.get("pair") == pair
             and e.get("type") == entry_type
             and e.get("outcome") is not None
+            and not e.get("partial")
         ]
         wins = sum(1 for e in outcomes if int(e.get("outcome") or 0) == 1)
         losses = len(outcomes) - wins
@@ -365,8 +446,12 @@ class Cortex:
     # ── best entry type (router) ────────────────────────────────────────────
     def best_entry_type(self, pair: str | None = None) -> str:
         """Return the entry type with the higher known win-rate, falling back to
-        a valid default. Never returns an unknown type."""
-        wrs = {t: self.entry_type_wr(t) for t in VALID_ENTRY_TYPES}
+        a valid default. Never returns an unknown type.
+
+        When ``pair`` is set, WRs are scoped to that pair (a bleeding pair must
+        not set the fleet-wide "best" style).
+        """
+        wrs = {t: self.entry_type_wr(t, pair=pair) for t in VALID_ENTRY_TYPES}
         known = {t: w for t, w in wrs.items() if w is not None}
         if not known:
             return "mean_reversion"  # safe default when no data yet
@@ -378,6 +463,7 @@ class Cortex:
     ) -> None:
         """Track a GP indicator's outcome; auto-exile / reinstate per gates.
 
+        Exile/reinstate use the GP-entry sub-block (B9), not blended overall WR.
         `entry_type` (optional) lets us separate GP-ensemble credit from any
         other credit so the dashboard can show per-indicator GP-entry WR (B9).
         """
@@ -401,23 +487,36 @@ class Cortex:
             gp["pnl"] = float(gp.get("pnl", 0.0)) + float(pnl)
             if pnl > 0:
                 gp["wins"] += 1
-        wr = st["wins"] / st["attempts"]
+        # L36 gates on GP attempts only (doc contract); fall back to overall
+        # only when no GP sub-block exists yet.
+        gp = st.get("gp") or {}
+        gate_attempts = int(gp.get("attempts") or 0) or int(st.get("attempts") or 0)
+        gate_wins = int(gp.get("wins") or 0) if gp.get("attempts") else int(st.get("wins") or 0)
+        wr = (gate_wins / gate_attempts) if gate_attempts else 0.0
+        # File is source of truth for whether currently exiled.
         exiles = _load_exiles(self._bot)
-        if st["exiled"]:
-            # decay reconsider: entries cadence OR wall-clock escape
+        currently = ind_id in exiles or bool(st.get("exiled"))
+        st["exiled"] = currently
+        if currently:
+            # decay reconsider: GP cadence OR wall-clock escape
             aged = False
             rec = exiles.get(ind_id) or {}
             ts = rec.get("exiled_at")
             if ts is not None and (time.time() - float(ts)) >= max(1, int(EXILE_WALL_CLOCK_S)):
                 aged = True
-            if (st["attempts"] % EXILE_DECAY_ENTRIES == 0 and wr >= REINSTATE_WR) or aged:
+            if (
+                gate_attempts > 0
+                and gate_attempts % EXILE_DECAY_ENTRIES == 0
+                and wr >= REINSTATE_WR
+            ) or aged:
                 st["exiled"] = False
                 exiles.pop(ind_id, None)
-        elif st["attempts"] >= EXILE_MIN_ATTEMPTS and wr < EXILE_WR:
+        elif gate_attempts >= EXILE_MIN_ATTEMPTS and wr < EXILE_WR:
             st["exiled"] = True
             exiles[ind_id] = {
-                "exiled_at_attempts": st["attempts"],
+                "exiled_at_attempts": gate_attempts,
                 "wr": round(wr, 3),
+                "gp": True,
                 "exiled_at": time.time(),
             }
         _save_exiles(exiles, self._bot)
@@ -449,8 +548,12 @@ class Cortex:
         prev.setdefault("exiled_at", time.time())
         exiles[ind_id] = prev
         _save_exiles(exiles, self._bot)
-        if ind_id in self._indicator_stats:
-            self._indicator_stats[ind_id]["exiled"] = True
+        st = self._indicator_stats.setdefault(
+            ind_id, {"attempts": 0, "wins": 0, "pnl": 0.0, "exiled": True,
+                     "gp": {"attempts": 0, "wins": 0, "pnl": 0.0}},
+        )
+        st["exiled"] = True
+        self._flush()
 
     def get_exiled_indicators(self) -> list[str]:
         return sorted(_load_exiles(self._bot).keys())
@@ -476,7 +579,7 @@ class Cortex:
         by_pair: dict[str, dict] = {}
         for e in self._entries:
             outcome = e.get("outcome")
-            if outcome is None:
+            if outcome is None or e.get("partial"):
                 continue
             t = e.get("type")
             p = e.get("pair")
@@ -516,7 +619,7 @@ class Cortex:
 
         probe_by_key: dict[str, dict] = {}
         for e in self._entries:
-            if e.get("outcome") is None:
+            if e.get("outcome") is None or e.get("partial"):
                 continue
             p, t = e.get("pair"), e.get("type")
             if not p or not t or t in ("hypothesis", "discovery"):
@@ -541,8 +644,15 @@ class Cortex:
         return {
             "summary": {
                 # Closed outcomes only — UI labels this "completed".
-                "entries_total": sum(1 for e in self._entries if e.get("outcome") is not None),
-                "entries_open": sum(1 for e in self._entries if e.get("outcome") is None),
+                "entries_total": sum(
+                    1 for e in self._entries
+                    if e.get("outcome") is not None and not e.get("partial")
+                ),
+                "entries_open": sum(
+                    1 for e in self._entries
+                    if e.get("outcome") is None
+                    and e.get("type") not in ("hypothesis", "discovery")
+                ),
                 "exiled_indicators": len(self.get_exiled_indicators()),
                 "indicators_tracked": len(indicators),
                 "best_entry_type": self.best_entry_type(),
@@ -560,12 +670,17 @@ class Cortex:
                 "by_key": probe_by_key,
             },
             "gates": {
-                "exile": f"GP indicator WR < {EXILE_WR:.0%} after ≥{EXILE_MIN_ATTEMPTS} attempts → exiled",
-                "reinstate": f"After {EXILE_DECAY_ENTRIES} entries, reinstate if WR ≥ {REINSTATE_WR:.0%}",
-                "best_entry": "Router picks the entry type with the higher known win-rate",
+                "exile": f"GP indicator WR < {EXILE_WR:.0%} after ≥{EXILE_MIN_ATTEMPTS} GP attempts → exiled",
+                "reinstate": f"After {EXILE_DECAY_ENTRIES} GP entries, reinstate if WR ≥ {REINSTATE_WR:.0%}",
+                "best_entry": "Router picks the entry type with the higher known per-pair win-rate",
                 "probe": (
                     f"HIF Phase-1: when PROBE_SIZING=1 and closed evidence "
-                    f"< {PROBE_EVIDENCE_MIN} for (pair, entry_type) → 25% probe size"
+                    f"< {PROBE_EVIDENCE_MIN} for (pair, entry_type) → 25% probe size. "
+                    f"Missing cortex evidence fails open to full size."
+                ),
+                "priority_discovery": (
+                    "Dashboard/ops signal only: ≥2 exiled indicators — invent "
+                    "scheduling is not auto-accelerated from this flag yet"
                 ),
                 "excursion": (
                     "Edge quality: avg MFE / giveback_frac / mfe_capture "

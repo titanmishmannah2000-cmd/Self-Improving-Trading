@@ -44,7 +44,9 @@ Last updated: 2026-07-19
 
   state/  (per bot):  trades.jsonl, gp_shadow.jsonl, gp_state.json
   state/discovered/{pair}.json   ← GP indicators (read by dashboard /api/discovered)
-  {state_root}/cortex/*.json     ← cortex entry+indicator memory (cortex_memory.json, indicator_exile.json)
+  {state_root}/{bot}/state/cortex/*.json  ← cortex_memory.json, indicator_exile.json
+                                   (NOT bots/{bot}/state/cortex seed stubs)
+  {state_root}/{bot}/state/policy.json   ← live L35 policy (PolicyEngine)
                                    NB: uses state_root() = HERMES_STATE_ROOT (/data volume in prod),
                                    NOT repo_root() — must persist across redeploys for GP live feedback.
 ```

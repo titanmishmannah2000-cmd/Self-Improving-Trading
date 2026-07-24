@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import sys
 import threading
 import time
@@ -110,12 +111,8 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
         )
     except Exception:
         heartbeat = {}
-    # Discovered + cortex are written by the genetic/cortex engines under
-    # repo_root()/state/{discovered,cortex}/. Use the SAME repo_root() the
-    # engines use (from hermes_core.config) so the read path matches the write
-    # path even under a non-editable install (where __file__ parents[2] !=
-    # the package root). /api/discovered expects a flat {pair:[inds]} map
-    # (it iterates discovered_json.items() directly), so keep it flat here.
+    # Discovered + cortex live under HERMES_STATE_ROOT/{bot}/state/
+    # (discovered/, cortex/). Use bot_state_dir so ingest matches writers.
     # NOTE: because indicators are SHARED across pairs (SHARED_INDICATOR_GROUPS),
     # a pair's own file may not exist — its indicators live in the group's
     # anchor pair file. Use the shared-inclusive loader so every configured
@@ -421,6 +418,9 @@ async def run_bot(bot_name: str) -> None:
     # `python -m bots.crypto.main` into a forex run.
     cli = sys.argv[1] if len(sys.argv) > 1 else None
     bot = cli or bot_name or get_env("HERMES_BOT_NAME", "forex")
+    # Keep process env aligned with the resolved bot so PolicyEngine /
+    # apply_live_feedback / current_bot() cannot write another bot's state.
+    os.environ["HERMES_BOT_NAME"] = bot
     # Seed volume strategies from image defaults (never overwrites existing).
     with contextlib.suppress(Exception):
         from hermes_core.config import ensure_bot_strategies_seeded

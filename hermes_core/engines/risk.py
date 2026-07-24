@@ -116,7 +116,9 @@ def apply_probe_sizing(
     """Apply HIF Phase-1 probe sizing. Never blocks; may only shrink size.
 
     ``evidence_n is None`` means cortex missing / unread → fail-open to **full**
-    (same capital as today). Thin evidence (< evidence_min) → probe fraction.
+    size (same capital as today). This is intentional for soak: never block an
+    entry because cortex I/O failed; probe only shrinks when evidence is known
+    and thin (< evidence_min).
     """
     base = float(base_size)
     base_clamped = min(max(0.0, base), MAX_POSITION_SIZE)
