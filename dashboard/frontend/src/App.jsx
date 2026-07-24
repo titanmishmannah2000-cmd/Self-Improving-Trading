@@ -2492,7 +2492,7 @@ export default function App() {
                   pair={pair}
                   data={pairData[pair]}
                   strategy={strategyParams?.pairs?.[pair]?.strategy_type || "rsi_momentum"}
-                  regime={liveRegimes[pair] || "—"}
+                  regime={liveRegimes[pair] || pairData[pair]?.openTrades?.[0]?.entry_regime || "—"}
                   livePrice={livePrices[pair]}
                   onSelect={handleSelectPair}
                   isSelected={selectedPair === pair}
@@ -2514,7 +2514,7 @@ export default function App() {
                   pair={pair}
                   data={pairData[pair]}
                   strategy={strategyParams?.pairs?.[pair]?.strategy_type || "rsi_momentum"}
-                  regime={liveRegimes[pair] || "—"}
+                  regime={liveRegimes[pair] || pairData[pair]?.openTrades?.[0]?.entry_regime || "—"}
                   livePrice={livePrices[pair]}
                   onSelect={handleSelectPair}
                   isSelected={selectedPair === pair}
@@ -2536,7 +2536,7 @@ export default function App() {
                   pair={pair}
                   data={pairData[pair]}
                   strategy={strategyParams?.pairs?.[pair]?.strategy_type || "rsi_momentum"}
-                  regime={liveRegimes[pair] || "—"}
+                  regime={liveRegimes[pair] || pairData[pair]?.openTrades?.[0]?.entry_regime || "—"}
                   livePrice={livePrices[pair]}
                   onSelect={handleSelectPair}
                   isSelected={selectedPair === pair}

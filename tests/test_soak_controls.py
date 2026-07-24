@@ -338,3 +338,48 @@ def test_soak_clock_refuses_red_audit(tmp_path, monkeypatch):
     rc = clock.main(["forex"])
     assert rc == 1
     assert not (tmp_path / "forex" / "state" / "soak_started.json").exists()
+
+
+def test_regime_updates_while_in_trade(tmp_path, monkeypatch):
+    """Open positions skip the entry path; regime must still land in heartbeat."""
+    import json
+
+    monkeypatch.setenv("HERMES_STATE_ROOT", str(tmp_path))
+    monkeypatch.delenv("HALT_ENTRIES", raising=False)
+    ensure_state_files("gold")
+    clear_halt("gold")
+
+    open_positions = {
+        "XAU/USD": {
+            "side": "long",
+            "entry_price": 4000.0,
+            "size": 0.1,
+            "stop": 3950.0,
+            "target": 4100.0,
+            "entry_cycle": 1,
+            "bars_held": 0,
+            "signal": "test",
+            "entry_type": "rsi_momentum",
+            "entry_regime": "trend",
+        }
+    }
+    # Only XAU open; feed both metals so gold config pairs work.
+    prices = {"XAU/USD": 4050.0, "XAG/USD": 58.0}
+
+    def feed(pair):
+        p = prices[pair]
+        return {"price": p, "high": p + 1, "low": p - 1, "candle_ts": 1_700_000_000, "ts": 1}
+
+    hist = [{"price": 4000.0 + i * 0.5} for i in range(80)]
+    run_cycle(
+        "gold",
+        10,
+        fetch_fn=feed,
+        history_fn=lambda pair: hist,
+        now_fn=lambda: 12 * 3600,
+        open_positions=open_positions,
+    )
+    hb = json.loads((tmp_path / "gold" / "state" / "heartbeat.json").read_text(encoding="utf-8"))
+    assert hb.get("regimes", {}).get("XAU/USD") in {"trend", "range"}
+    # Sticky in-memory copy for next cycle
+    assert getattr(run_cycle, "_regimes", {}).get("XAU/USD") in {"trend", "range"}

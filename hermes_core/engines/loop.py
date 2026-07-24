@@ -472,6 +472,7 @@ def _try_manage_open(
     price_history: dict,
     health_registry: dict,
     consecutive_failures: int,
+    regimes: dict | None = None,
 ) -> tuple[bool, float, int]:
     """Manage an open position even when entry guards would skip.
 
@@ -507,6 +508,18 @@ def _try_manage_open(
         prices = []
     if not prices:
         prices = [mark_f]
+
+    # Keep dashboard Regime live while a pair is in a trade. The entry path
+    # that normally writes regimes[pair] is skipped after EXIT-BEFORE-GUARD.
+    if regimes is not None:
+        with contextlib.suppress(Exception):
+            from hermes_core.indicators import compute_all
+
+            ind = compute_all(prices)
+            regimes[pair] = ind.get("regime") or pos.get("entry_regime") or "range"
+            health_registry["indicators"] = True
+        if pair not in regimes:
+            regimes[pair] = pos.get("entry_regime") or pos.get("regime_label") or "range"
 
     pos["held_cycles"] = pos.get("held_cycles", 0) + 1
     pos["unrealised_pct"] = (mark_f - pos["entry_price"]) / pos["entry_price"] * 100.0
@@ -1386,6 +1399,7 @@ def run_cycle(
                 price_history=price_history,
                 health_registry=health_registry,
                 consecutive_failures=consecutive_failures,
+                regimes=regimes,
             )
             if _lp:
                 last_price = _lp
