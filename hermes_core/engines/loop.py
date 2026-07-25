@@ -46,6 +46,7 @@ from hermes_core.engines.expert_weights import apply_expert_weight, expert_weigh
 from hermes_core.engines.genetic import discover as gp_discover
 from hermes_core.engines.guards import bb_bandwidth_guard, flat_price_guard
 from hermes_core.engines.kelly_sizing import apply_kelly_sizing, kelly_sizing_enabled
+from hermes_core.engines.market_hours import is_bot_market_closed, live_book_is_flat
 from hermes_core.engines.mom_range_guard import (
     apply_mom_range_guard,
     gp_agree_bullish,
@@ -473,6 +474,7 @@ def _try_manage_open(
     health_registry: dict,
     consecutive_failures: int,
     regimes: dict | None = None,
+    market_closed: bool = False,
 ) -> tuple[bool, float, int]:
     """Manage an open position even when entry guards would skip.
 
@@ -480,19 +482,50 @@ def _try_manage_open(
     True the caller must ``continue`` (entry path skipped).
     """
     mark = price
+    quote_unchanged = False
     if mark is None:
         mark = pos.get("last_mark") or pos.get("entry_price")
-        mark_fails[pair] = int(mark_fails.get(pair) or 0) + 1
+        # Weekend: L01 ages out recycled quotes — keep last mark, do not
+        # escalate toward data_halt_exit (hold through the gap).
+        if not market_closed:
+            mark_fails[pair] = int(mark_fails.get(pair) or 0) + 1
     else:
-        mark_fails[pair] = 0
-        pos["last_mark"] = float(mark)
-        last = float(mark)
-        summary["prices"][pair] = last
-        ph = price_history.setdefault(pair, [])
-        ph.append(last)
-        if len(ph) > 60:
-            del ph[: len(ph) - 60]
-        health_registry.setdefault("price_adapter", True)
+        try:
+            mark_f0 = float(mark)
+        except (TypeError, ValueError):
+            mark_f0 = None
+        prev_mark = pos.get("last_mark")
+        try:
+            prev_f = float(prev_mark) if prev_mark is not None else None
+        except (TypeError, ValueError):
+            prev_f = None
+        # Recycled identical quotes (weekend FX / flat GoldAPI silver) are not
+        # a fresh mark — do not reset mark_fails or append duplicate ticks.
+        quote_unchanged = (
+            mark_f0 is not None
+            and prev_f is not None
+            and prev_f > 0
+            and abs(mark_f0 - prev_f) / prev_f < 1e-9
+        )
+        if mark_f0 is None:
+            mark = pos.get("last_mark") or pos.get("entry_price")
+            mark_fails[pair] = int(mark_fails.get(pair) or 0) + 1
+        elif quote_unchanged:
+            if not market_closed:
+                mark_fails[pair] = int(mark_fails.get(pair) or 0) + 1
+            mark = prev_f
+            summary["prices"][pair] = float(prev_f)
+        else:
+            mark_fails[pair] = 0
+            pos["last_mark"] = float(mark_f0)
+            last = float(mark_f0)
+            summary["prices"][pair] = last
+            ph = price_history.setdefault(pair, [])
+            ph.append(last)
+            if len(ph) > 60:
+                del ph[: len(ph) - 60]
+            health_registry.setdefault("price_adapter", True)
+            mark = mark_f0
 
     if mark is None:
         return True, 0.0, consecutive_failures
@@ -521,7 +554,9 @@ def _try_manage_open(
         if pair not in regimes:
             regimes[pair] = pos.get("entry_regime") or pos.get("regime_label") or "range"
 
-    pos["held_cycles"] = pos.get("held_cycles", 0) + 1
+    # Weekend recycled quotes must not burn time_exit held_cycles.
+    if not (market_closed and quote_unchanged):
+        pos["held_cycles"] = pos.get("held_cycles", 0) + 1
     pos["unrealised_pct"] = (mark_f - pos["entry_price"]) / pos["entry_price"] * 100.0
     with contextlib.suppress(Exception):
         from hermes_core.engines.exit import (
@@ -554,7 +589,7 @@ def _try_manage_open(
 
     from hermes_core.engines.exit import Exit
 
-    if int(mark_fails.get(pair) or 0) >= DATA_HALT_EXIT_AFTER:
+    if (not market_closed) and int(mark_fails.get(pair) or 0) >= DATA_HALT_EXIT_AFTER:
         force = Exit(reason="data_halt_exit", price=mark_f)
         _process_exit(
             bot,
@@ -1215,6 +1250,12 @@ def run_cycle(
     price_history = dict(getattr(run_cycle, "_price_history", {}) or {})
     oversold_pairs = 0  # RSI-confluence count, accumulated across pairs this cycle
     # consecutive_failures is carried in (persists across cycles for the L24 breaker)
+    try:
+        _now_ts = float(now_fn())
+    except Exception:  # noqa: BLE001
+        _now_ts = time.time()
+    market_closed = bool(is_bot_market_closed(bot, _now_ts))
+    summary["market_closed"] = market_closed
     with contextlib.suppress(Exception):  # bootstrap must never block the cycle
         ensure_state_files(bot)
     try:
@@ -1400,6 +1441,7 @@ def run_cycle(
                 health_registry=health_registry,
                 consecutive_failures=consecutive_failures,
                 regimes=regimes,
+                market_closed=bool(summary.get("market_closed")),
             )
             if _lp:
                 last_price = _lp
@@ -1697,6 +1739,10 @@ def run_cycle(
             # Check before no_signal logging so idle SLO is not polluted by halt.
             if _halted:
                 _log_skip(bot, pair, cycle, _halt_reason or "halt")
+                summary["skips"] += 1
+                continue
+            if summary.get("market_closed"):
+                _log_skip(bot, pair, cycle, "market_closed")
                 summary["skips"] += 1
                 continue
             if sig is None:
@@ -2075,6 +2121,14 @@ def run_cycle(
 
     # --- heartbeat every cycle without exception --------------------------
     status = "ok" if consecutive_failures == 0 else "degraded"
+    # Holiday / feed-freeze backup: calendar open but every live tick buffer flat.
+    if not market_closed and live_book_is_flat(
+        price_history,
+        min_pairs=max(1, len(pairs) // 2),
+    ):
+        market_closed = True
+        summary["market_closed"] = True
+        summary["market_closed_reason"] = "flat_book"
     _book_ok, _book_reason = price_sanity_book(
         summary.get("prices") or {},
         price_history,
@@ -2092,6 +2146,7 @@ def run_cycle(
         status=status,
         health=dict(health_registry),
         chart_contexts=chart_contexts,
+        market_closed=market_closed,
         regimes=regimes,
         prices=summary.get("prices") or {},
         price_history=price_history,

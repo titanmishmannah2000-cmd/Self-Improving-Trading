@@ -309,10 +309,10 @@ def test_single_source_low_confidence():
 
 
 def test_single_source_refreshes_across_cycles():
-    """XAG-style single-source must not starve after STALE_S (no_candle loop).
+    """XAG-style single-source: unchanged spot must not refresh ts (L01 age).
 
-    Regression: low_conf + prefer-last_good returned a stale candle whose ts
-    failed [L01], so silver blinked no_candle forever after the first minute.
+    Metals may stay flat for hours (GoldAPI daily). Within the metals unchanged
+    window we keep the same candle; we must not stamp a new ts every poll.
     """
     import time as _time
 
@@ -323,11 +323,30 @@ def test_single_source_refreshes_across_cycles():
     )
     c1 = agg.fetch_fn("XAG/USD")
     assert c1 is not None and abs(c1["price"] - 59.0) < 1e-9
-    _time.sleep(0.06)  # older than stale_s
+    _time.sleep(0.06)
     c2 = agg.fetch_fn("XAG/USD")
-    assert c2 is not None, "single-source must keep emitting fresh candles"
+    assert c2 is not None, "metals unchanged spot must stay available intra-day"
     assert abs(c2["price"] - 59.0) < 1e-9
-    assert float(c2["ts"]) > float(c1["ts"])
+    assert float(c2["ts"]) == float(c1["ts"])
+
+
+def test_unchanged_fx_ages_out_without_refreshing_ts(monkeypatch):
+    """FX identical re-prints must age out so weekend freezes become no_candle."""
+    import hermes_core.adapters.aggregate as agg_mod
+
+    monkeypatch.setattr(agg_mod, "UNCHANGED_STALE_FX_S", 0.05)
+    agg = PriceAggregator(
+        ["EUR/USD"],
+        sources=_fake_sources(frank=1.10, alpha=None, yf=None),
+        stale_s=60.0,
+    )
+    c1 = agg.fetch_fn("EUR/USD")
+    assert c1 is not None
+    import time as _time
+
+    _time.sleep(0.06)
+    c2 = agg.fetch_fn("EUR/USD")
+    assert c2 is None
 
 
 def test_disagreement_prefers_fresh_last_good():

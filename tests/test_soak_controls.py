@@ -383,3 +383,33 @@ def test_regime_updates_while_in_trade(tmp_path, monkeypatch):
     assert hb.get("regimes", {}).get("XAU/USD") in {"trend", "range"}
     # Sticky in-memory copy for next cycle
     assert getattr(run_cycle, "_regimes", {}).get("XAU/USD") in {"trend", "range"}
+
+
+def test_fx_weekend_sets_market_closed_and_blocks_entries(tmp_path, monkeypatch):
+    """Friday after 22:00 UTC → market_closed heartbeat + no new entries."""
+    import json
+    from datetime import UTC, datetime
+
+    monkeypatch.setenv("HERMES_STATE_ROOT", str(tmp_path))
+    monkeypatch.delenv("HALT_ENTRIES", raising=False)
+    ensure_state_files("forex")
+    clear_halt("forex")
+
+    # 2026-07-24 Friday 23:00 UTC
+    friday_closed = datetime(2026, 7, 24, 23, 0, tzinfo=UTC).timestamp()
+    feed = FakeFeed()
+    hist = [{"price": 1.08 + i * 0.0001} for i in range(80)]
+    summary = run_cycle(
+        "forex",
+        1,
+        fetch_fn=feed,
+        history_fn=lambda pair: hist,
+        now_fn=lambda: friday_closed,
+        open_positions={},
+    )
+    assert summary.get("market_closed") is True
+    assert summary.get("entries") == []
+    hb = json.loads((tmp_path / "forex" / "state" / "heartbeat.json").read_text(encoding="utf-8"))
+    assert hb.get("market_closed") is True
+    skips = (tmp_path / "forex" / "state" / "skips.jsonl").read_text(encoding="utf-8")
+    assert "market_closed" in skips

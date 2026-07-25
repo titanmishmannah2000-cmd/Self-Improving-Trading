@@ -39,6 +39,10 @@ from hermes_core.adapters.ws_price import STALE_S_MAX, PriceStream
 
 # [L01] stale window for a cached consensus candle (seconds).
 STALE_S_MAX_LOCAL = STALE_S_MAX
+# Unchanged re-prints (same spot, new poll) must not refresh ts forever.
+# FX weekend/holiday freezes age out quickly; metals GoldAPI may be flat for hours.
+UNCHANGED_STALE_FX_S = STALE_S_MAX_LOCAL
+UNCHANGED_STALE_METALS_S = 6 * 3600.0
 CONSENSUS_PCT = 0.01  # sources must agree within 1% or consensus is rejected
 SOURCE_TIMEOUT = 3.0  # per-source httpx timeout (seconds)
 # Indicator seeding needs a real multi-bar series. Prefer yfinance 5m (live
@@ -649,6 +653,29 @@ class PriceAggregator:
             if prev_age <= self.stale_s:
                 return prev
         now = time.time()
+        # Unchanged consensus must NOT refresh candle_ts/ts. Free FX sources
+        # re-print Friday's close all weekend; GoldAPI may re-print the same
+        # silver spot for hours. Refreshing ``now`` reset L01 forever.
+        prev = self._last_good.get(pair)
+        if prev is not None:
+            try:
+                prev_price = float(prev.get("price") or 0.0)
+            except (TypeError, ValueError):
+                prev_price = 0.0
+            if prev_price > 0 and abs(consensus - prev_price) / prev_price < 1e-9:
+                try:
+                    age = now - float(prev.get("ts") or now)
+                except (TypeError, ValueError):
+                    age = 0.0
+                if pair in _METAL_PAIRS:
+                    limit = UNCHANGED_STALE_METALS_S
+                elif pair in _CRYPTO_PAIRS:
+                    limit = self.stale_s
+                else:
+                    limit = UNCHANGED_STALE_FX_S
+                if age > limit:
+                    return None
+                return prev
         candle = {
             "pair": pair,
             "price": consensus,
@@ -688,6 +715,18 @@ class PriceAggregator:
         """Alias so the aggregator object is itself a drop-in fetch_fn."""
         return self.fetch_fn(pair, force=force)
 
+    def _stale_limit(self, pair: str) -> float:
+        """Effective staleness bound for the outer [L01] guard.
+
+        Metals may legitimately sit unchanged for hours (GoldAPI daily
+        refresh) — the unchanged-price check in ``_fetch_async`` already caps
+        that window at ``UNCHANGED_STALE_METALS_S``, so this guard must not
+        clamp a still-valid recycled candle back down to ``stale_s``.
+        """
+        if pair in _METAL_PAIRS:
+            return max(self.stale_s, UNCHANGED_STALE_METALS_S)
+        return self.stale_s
+
     def fetch_fn(self, pair: str, *, force: bool = False) -> dict | None:
         """Synchronous, drop-in for the poll loop. Returns latest consensus candle.
 
@@ -714,7 +753,7 @@ class PriceAggregator:
             return None
         if _is_synthetic_fx_quote(pair, candle):
             return None
-        if (time.time() - float(candle.get("ts", 0))) > self.stale_s:
+        if (time.time() - float(candle.get("ts", 0))) > self._stale_limit(pair):
             return None  # [L01] stale
         return candle
 
