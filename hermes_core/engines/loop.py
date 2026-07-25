@@ -1393,18 +1393,29 @@ def run_cycle(
             candle = fetch_fn(pair)
         except Exception as exc:  # noqa: BLE001
             fetch_failed = True
-            consecutive_failures += 1
-            summary["errors"] += 1
+            if not market_closed:
+                consecutive_failures += 1
+                summary["errors"] += 1
             health_registry["price_adapter"] = False
-            _log_skip(bot, pair, cycle, f"fetch_error:{exc!r}")
-            traceback.print_exc()
+            _log_skip(
+                bot,
+                pair,
+                cycle,
+                "market_closed" if market_closed else f"fetch_error:{exc!r}",
+            )
+            if not market_closed:
+                traceback.print_exc()
             candle = None
 
         if candle is None and pos is None:
             if not fetch_failed:
-                consecutive_failures += 1
-                summary["errors"] += 1
-                _log_skip(bot, pair, cycle, "no_candle")
+                if market_closed:
+                    _log_skip(bot, pair, cycle, "market_closed")
+                    summary["skips"] += 1
+                else:
+                    consecutive_failures += 1
+                    summary["errors"] += 1
+                    _log_skip(bot, pair, cycle, "no_candle")
             continue
 
         price: float | None = None
@@ -1414,9 +1425,13 @@ def run_cycle(
             except (TypeError, ValueError, KeyError):
                 price = None
             if price is None and pos is None:
-                consecutive_failures += 1
-                summary["errors"] += 1
-                _log_skip(bot, pair, cycle, "no_candle")
+                if market_closed:
+                    _log_skip(bot, pair, cycle, "market_closed")
+                    summary["skips"] += 1
+                else:
+                    consecutive_failures += 1
+                    summary["errors"] += 1
+                    _log_skip(bot, pair, cycle, "no_candle")
                 continue
 
         # EXIT-BEFORE-GUARD: always manage opens (even on fetch failure).
@@ -2120,6 +2135,9 @@ def run_cycle(
         summary["skip_shadow_promote"] = {"enabled": False}
 
     # --- heartbeat every cycle without exception --------------------------
+    # Weekend / holiday: expected empty FX candles must not leave L24 open.
+    if market_closed:
+        consecutive_failures = 0
     status = "ok" if consecutive_failures == 0 else "degraded"
     # Holiday / feed-freeze backup: calendar open but every live tick buffer flat.
     if not market_closed and live_book_is_flat(
