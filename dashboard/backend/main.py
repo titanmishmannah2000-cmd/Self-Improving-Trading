@@ -68,6 +68,30 @@ def _is_contaminated_trade(r) -> bool:
     return bool(pair == CONTAMINATED_PAIR and (entry or 0) > CONTAMINATED_ENTRY_MAX)
 
 
+def _is_ghost_trade_row(r) -> bool:
+    """True for malformed ingest stubs like ``-EUR/USD`` (no real id / timestamps).
+
+    These were synthesized by ``upsert_trades`` when ``id`` and ``entry_ts`` were
+    both missing: ``f"{entry_ts}-{pair}"`` → ``"-EUR/USD"``. They inflate
+    lifetime ``open_trades`` (null exit_reason) and pollute recent-trade feeds.
+    """
+    if isinstance(r, dict):
+        tid = r.get("id")
+        entry_ts = r.get("entry_ts")
+        exit_ts = r.get("exit_ts")
+    else:
+        tid = r["id"] if "id" in r.keys() else None
+        entry_ts = r["entry_ts"] if "entry_ts" in r.keys() else None
+        exit_ts = r["exit_ts"] if "exit_ts" in r.keys() else None
+    tid_s = str(tid or "").strip()
+    if not tid_s or tid_s.startswith("-"):
+        return True
+    # Incomplete stubs: no timestamps at all (cannot be a real open or close).
+    if not entry_ts and not exit_ts:
+        return True
+    return False
+
+
 def _count_closed_trades(conn, bot: str, valid_pairs: list | None = None) -> int:
     """Lifetime unique closed trades for ``bot`` (DB source of truth for the Live pulse)."""
     rows = conn.execute(
@@ -101,10 +125,24 @@ def purge_legacy_dashboard_rows(conn) -> dict:
     This project's closed trades use ids like ``forex:EUR/USD:…`` and start on
     2026-07-20. The old bot used ``trade_<n>`` ids and earlier timestamps; those
     inflated Live/Reports closed counts (100+) while this project only has ~tens.
+
+    Also deletes ``-PAIR`` ghost stubs created when ingest synthesized ids from
+    empty ``entry_ts`` + pair (lifetime open_trades inflation).
     """
     epoch = PROJECT_TRADE_EPOCH
     stats = {
         "trades_legacy_id": conn.execute("DELETE FROM trades WHERE id LIKE 'trade_%'").rowcount,
+        "trades_ghost_dash_id": conn.execute(
+            "DELETE FROM trades WHERE id LIKE '-%' OR id IS NULL OR id = ''"
+        ).rowcount,
+        "trades_ghost_no_ts": conn.execute(
+            """
+            DELETE FROM trades WHERE
+              (entry_ts IS NULL OR entry_ts = '')
+              AND (exit_ts IS NULL OR exit_ts = '')
+              AND (exit_reason IS NULL OR exit_reason = '')
+            """
+        ).rowcount,
         "trades_before_epoch": conn.execute(
             """
             DELETE FROM trades WHERE
@@ -415,7 +453,16 @@ def _ts() -> str:
 
 def upsert_trades(conn, bot: str, trades: list):
     for t in trades:
-        tid = t.get("id") or f"{t.get('entry_ts', '')}-{t.get('pair', t.get('asset', ''))}"
+        if not isinstance(t, dict):
+            continue
+        # Never invent ``-{pair}`` from empty entry_ts — that created ghost rows
+        # that inflated lifetime open_trades. Hermes always sends real ids.
+        tid = t.get("id")
+        if tid is None or not str(tid).strip():
+            continue
+        tid = str(tid).strip()
+        if tid.startswith("-") or _is_ghost_trade_row({**t, "id": tid}):
+            continue
         conn.execute(
             """
             INSERT INTO trades (id, bot, pair, entry_price, exit_price, entry_ts, exit_ts,
@@ -439,7 +486,7 @@ def upsert_trades(conn, bot: str, trades: list):
                 t.get("entry_ts"),
                 t.get("exit_ts"),
                 t.get("pnl_pct"),
-                t.get("exit_reason"),
+                t.get("exit_reason") or t.get("reason"),
                 t.get("hold_cycles"),
                 t.get("entry_rsi"),
                 t.get("entry_regime"),
@@ -861,7 +908,7 @@ def overview():
         _seen_ids: set[str] = set()
         _uniq_trades = []
         for t in trades:
-            if t["id"] in _seen_ids or _is_contaminated_trade(t):
+            if t["id"] in _seen_ids or _is_contaminated_trade(t) or _is_ghost_trade_row(t):
                 continue
             _seen_ids.add(t["id"])
             _uniq_trades.append(t)
@@ -1022,7 +1069,7 @@ def bot_trades(bot_name: str, pair: str | None = None, limit: int = 5000):
             (bot_name, limit),
         ).fetchall()
     conn.close()
-    return [row_to_trade(r) for r in rows]
+    return [row_to_trade(r) for r in rows if not _is_ghost_trade_row(r)]
 
 
 @app.get("/api/trades/{bot_name}")
@@ -1117,8 +1164,15 @@ def _summarize(rows, label: str) -> dict:
             continue
         seen.add(tid)
         deduped.append(r)
-    rows = deduped
+    rows = [r for r in deduped if not _is_ghost_trade_row(r)]
     closed = [r for r in rows if r["exit_reason"]]
+    # Live opens live in open_trades_json (overview). Do NOT treat every
+    # null-exit_reason trades-table row as open — that counted ``-PAIR`` ghosts.
+    open_incomplete = [
+        r
+        for r in rows
+        if not r["exit_reason"] and r["entry_ts"] and str(r["id"] or "").strip()
+    ]
     pnls = [r["pnl_pct"] for r in closed if r["pnl_pct"] is not None]
     wins = [p for p in pnls if p > 0]
     losses = [p for p in pnls if p <= 0]
@@ -1155,7 +1209,7 @@ def _summarize(rows, label: str) -> dict:
     return {
         "label": label,
         "closed_trades": len(closed),
-        "open_trades": len(rows) - len(closed),
+        "open_trades": len(open_incomplete),
         "total_pnl_pct": round(sum(pnls), 3) if pnls else 0,
         "win_rate_pct": round(len(wins) / len(closed) * 100, 1) if closed else 0,
         "wr_lower": wilson_score_interval(len(wins), len(closed))[0] if closed else 0,
@@ -1224,12 +1278,28 @@ def lifetime_summary():
         rows = conn.execute("SELECT * FROM trades WHERE bot=?", (bot,)).fetchall()
         hyps = conn.execute("SELECT COUNT(*) c FROM hypotheses WHERE bot=?", (bot,)).fetchone()
         first_row = conn.execute(
-            "SELECT MIN(entry_ts) m FROM trades WHERE bot=?", (bot,)
+            "SELECT MIN(entry_ts) m FROM trades WHERE bot=? AND entry_ts IS NOT NULL AND entry_ts != ''",
+            (bot,),
         ).fetchone()
 
         result["bots"][bot] = _summarize(rows, "lifetime")
         result["bots"][bot]["total_reflections"] = hyps["c"]
         result["bots"][bot]["tracking_since"] = first_row["m"]
+        # Align open count with overview (live book), not trades-table ghosts.
+        state_row = conn.execute(
+            "SELECT open_trades_json FROM latest_state WHERE bot=?", (bot,)
+        ).fetchone()
+        live_opens: list = []
+        if state_row and state_row["open_trades_json"]:
+            with contextlib.suppress(TypeError, ValueError, json.JSONDecodeError):
+                parsed = json.loads(state_row["open_trades_json"])
+                if isinstance(parsed, list):
+                    live_opens = [
+                        t
+                        for t in parsed
+                        if isinstance(t, dict) and (t.get("pair") or t.get("asset"))
+                    ]
+        result["bots"][bot]["open_trades"] = len(live_opens)
 
     conn.close()
     return result
@@ -3362,4 +3432,4 @@ try:
 except Exception as _cleanup_exc:
     print(f"[CLEANUP] skipped: {_cleanup_exc}", flush=True)
 
-# deploy-tag: purge-legacy-hermes-v1 (force rebuild — drop old bot trades from volume DB)
+# deploy-tag: purge-ghost-dash-trades-v1 (drop -PAIR stubs; lifetime opens from live book)

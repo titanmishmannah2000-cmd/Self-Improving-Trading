@@ -148,6 +148,16 @@ def collect_bot_snapshot(bot: str) -> dict[str, Any]:
             for c in (audit.get("checks") or [])
             if isinstance(c, dict) and not c.get("passed")
         ],
+        "failed_must": [
+            c.get("name")
+            for c in (audit.get("checks") or [])
+            if isinstance(c, dict) and not c.get("passed") and c.get("critical", True)
+        ],
+        "failed_soft": [
+            c.get("name")
+            for c in (audit.get("checks") or [])
+            if isinstance(c, dict) and not c.get("passed") and not c.get("critical", True)
+        ],
     }
 
 
@@ -191,12 +201,16 @@ def evaluate_alerts(snap: dict[str, Any]) -> list[dict[str, str]]:
         )
 
     if not snap.get("go_nogo"):
-        failed = ",".join(snap.get("failed_checks") or []) or "unknown"
+        must = ",".join(snap.get("failed_must") or []) or ",".join(
+            snap.get("failed_checks") or []
+        ) or "unknown"
+        soft = snap.get("failed_soft") or []
+        soft_s = f" soft=[{','.join(soft)}]" if soft else ""
         alerts.append(
             {
                 "key": "go_nogo_red",
                 "level": "critical",
-                "message": f"[soak] {bot}: go/no-go RED failed=[{failed}]",
+                "message": f"[soak] {bot}: go/no-go RED must=[{must}]{soft_s}",
             }
         )
 

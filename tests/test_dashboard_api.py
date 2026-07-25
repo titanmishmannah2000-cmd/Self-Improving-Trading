@@ -565,3 +565,148 @@ def test_overview_open_trades_not_filtered_by_age_and_no_ghost_fallback():
     assert pairs == {"EUR/USD", "GBP/USD", "AUD/USD"}
     assert "GBP/JPY" not in pairs  # ghost excluded
     assert sum(1 for t in live if t.get("entry_type") == "gp_ensemble") == 2
+
+
+def test_upsert_skips_idless_trades_no_dash_ghost():
+    """Id-less recent_trades must not create ``-EUR/USD`` ghost rows."""
+    import json
+
+    conn = m.get_conn()
+    m.upsert_trades(
+        conn,
+        "forex",
+        [
+            {"pair": "EUR/USD", "pnl_pct": 0.0, "reason": "time_exit"},
+            {"id": "", "pair": "GBP/USD", "pnl_pct": 0.0},
+            {
+                "id": "forex:EUR/USD:99",
+                "pair": "EUR/USD",
+                "entry_ts": "2026-07-21T00:00:00+00:00",
+                "exit_ts": "2026-07-21T01:00:00+00:00",
+                "exit_reason": "time_exit",
+                "pnl_pct": 0.1,
+            },
+        ],
+    )
+    conn.commit()
+    ids = {r["id"] for r in conn.execute("SELECT id FROM trades WHERE bot='forex'").fetchall()}
+    assert ids == {"forex:EUR/USD:99"}
+    assert "-EUR/USD" not in ids
+    conn.close()
+
+
+def test_purge_removes_dash_ghost_trades():
+    """Startup purge must delete existing ``-PAIR`` stubs from the volume DB."""
+    import json
+
+    conn = m.get_conn()
+    conn.execute(
+        "INSERT INTO trades (id, bot, pair, entry_price, exit_price, pnl_pct, exit_reason, raw_json) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (
+            "-EUR/USD",
+            "forex",
+            "EUR/USD",
+            1.1,
+            1.1,
+            0.0,
+            None,
+            json.dumps({"id": "-EUR/USD", "pair": "EUR/USD"}),
+        ),
+    )
+    conn.execute(
+        "INSERT INTO trades (id, bot, pair, entry_price, entry_ts, exit_ts, exit_reason, pnl_pct, raw_json) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            "forex:EUR/USD:1",
+            "forex",
+            "EUR/USD",
+            1.1,
+            "2026-07-21T00:00:00+00:00",
+            "2026-07-21T01:00:00+00:00",
+            "time_exit",
+            0.1,
+            json.dumps({"id": "forex:EUR/USD:1"}),
+        ),
+    )
+    conn.commit()
+    purged = m.purge_legacy_dashboard_rows(conn)
+    assert purged["trades_ghost_dash_id"] >= 1
+    left = {r["id"] for r in conn.execute("SELECT id FROM trades").fetchall()}
+    assert left == {"forex:EUR/USD:1"}
+    conn.close()
+
+
+def test_lifetime_open_trades_uses_live_book_not_ghost_rows():
+    """Lifetime open_trades must match open_trades_json, not null-exit_reason ghosts."""
+    import json
+    from datetime import datetime
+
+    conn = m.get_conn()
+    # Ghost stub would previously inflate open_trades to 1.
+    conn.execute(
+        "INSERT INTO trades (id, bot, pair, entry_price, exit_price, pnl_pct, exit_reason, raw_json) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (
+            "-BTC/USD",
+            "crypto",
+            "BTC/USD",
+            64000.0,
+            64100.0,
+            0.2,
+            None,
+            json.dumps({"id": "-BTC/USD", "pair": "BTC/USD", "reason": "time_exit"}),
+        ),
+    )
+    conn.execute(
+        "INSERT INTO trades (id, bot, pair, entry_price, entry_ts, exit_ts, exit_reason, pnl_pct, raw_json) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            "crypto:ETH/USD:1",
+            "crypto",
+            "ETH/USD",
+            1800.0,
+            "2026-07-21T00:00:00+00:00",
+            "2026-07-21T01:00:00+00:00",
+            "time_exit",
+            0.1,
+            json.dumps({"id": "crypto:ETH/USD:1"}),
+        ),
+    )
+    opens = [
+        {
+            "id": "crypto:ETH/USD:open",
+            "pair": "ETH/USD",
+            "entry_type": "gp_ensemble",
+            "entry_ts": datetime.now(UTC).isoformat(),
+            "entry_price": 1860.0,
+        }
+    ]
+    conn.execute(
+        """INSERT INTO latest_state
+           (bot, strategy_json, goal_json, heartbeat_json, open_trades_json,
+            discovered_json, cortex_json, flatlined_json, received_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        (
+            "crypto",
+            json.dumps({"BTC/USD": {}, "ETH/USD": {}}),
+            "{}",
+            "{}",
+            json.dumps(opens),
+            "{}",
+            "{}",
+            "{}",
+            datetime.now(UTC).isoformat(),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    lt = client.get("/api/lifetime-summary").json()
+    assert lt["bots"]["crypto"]["closed_trades"] == 1
+    assert lt["bots"]["crypto"]["open_trades"] == 1  # live book, not the -BTC/USD ghost
+
+    trades = client.get("/api/trades/crypto").json()
+    ids = {t["id"] for t in trades}
+    assert "-BTC/USD" not in ids
+    assert "crypto:ETH/USD:1" in ids

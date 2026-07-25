@@ -240,15 +240,21 @@ def run(bot: str | None = None) -> Report:
     else:
         checks.append(_check("heartbeat_fresh", False, "missing heartbeat.json"))
 
-    # Price sanity from heartbeat ΓÇö empty prices with configured pairs is a fail
-    # (bots must publish real quotes each cycle).
+    # Price sanity from heartbeat — empty prices with configured pairs is a fail
+    # (bots must publish real quotes each cycle). Weekend FX/metals calendar close
+    # is an exception: free FX feeds age out unchanged Friday closes → empty book
+    # is expected, not a soak RED (entries already blocked by market_closed).
     hb_prices = hb_data.get("prices") if isinstance(hb_data, dict) else None
+    market_closed = bool(isinstance(hb_data, dict) and hb_data.get("market_closed"))
     ok_px, px_reason = price_sanity_book(
         hb_prices,
         hb_data.get("price_history") if isinstance(hb_data, dict) else None,
     )
     if pairs and (not hb_prices):
-        ok_px, px_reason = False, "price_sanity:empty_prices"
+        if market_closed:
+            ok_px, px_reason = True, "price_sanity:market_closed_ok"
+        else:
+            ok_px, px_reason = False, "price_sanity:empty_prices"
     checks.append(_check("price_sanity", ok_px, px_reason or "ok"))
 
     # Canonical trade book present

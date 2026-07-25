@@ -413,3 +413,52 @@ def test_fx_weekend_sets_market_closed_and_blocks_entries(tmp_path, monkeypatch)
     assert hb.get("market_closed") is True
     skips = (tmp_path / "forex" / "state" / "skips.jsonl").read_text(encoding="utf-8")
     assert "market_closed" in skips
+
+
+def test_price_sanity_passes_when_market_closed_and_prices_empty(tmp_path, monkeypatch):
+    """Weekend FX empty book must not flip soak go/no-go RED on price_sanity."""
+    import json
+    import time
+
+    from hermes_core.engines import self_audit
+
+    monkeypatch.setenv("HERMES_STATE_ROOT", str(tmp_path))
+    ensure_state_files("forex")
+    clear_halt("forex")
+    state = tmp_path / "forex" / "state"
+    (state / "trades.jsonl").write_text("", encoding="utf-8")
+    hb = {
+        "ts": time.time(),
+        "asset": "forex",
+        "cycle": 10,
+        "status": "ok",
+        "market_closed": True,
+        "prices": {},
+        "price_history": {},
+        "consecutive_failures": 0,
+    }
+    (state / "heartbeat.json").write_text(json.dumps(hb), encoding="utf-8")
+    report = self_audit.run("forex")
+    by_name = {c["name"]: c for c in report.checks}
+    assert by_name["price_sanity"]["passed"] is True
+    assert "market_closed_ok" in (by_name["price_sanity"].get("detail") or "")
+
+
+def test_soak_alert_separates_must_and_soft_failures():
+    """go/no-go RED alert must not lump soft GP fails with critical must fails."""
+    from hermes_core.engines.soak_monitor import evaluate_alerts
+
+    snap = {
+        "bot": "forex",
+        "go_nogo": False,
+        "failed_checks": ["price_sanity", "gp_admitted", "gp_shadow_active"],
+        "failed_must": ["price_sanity"],
+        "failed_soft": ["gp_admitted", "gp_shadow_active"],
+        "heartbeat_age_s": 5,
+        "pairs": ["EUR/USD"],
+        "pulses": {"EUR/USD": {"status": "ok", "admitted": 0}},
+    }
+    alerts = evaluate_alerts(snap)
+    msg = next(a["message"] for a in alerts if a["key"] == "go_nogo_red")
+    assert "must=[price_sanity]" in msg
+    assert "soft=[gp_admitted,gp_shadow_active]" in msg
