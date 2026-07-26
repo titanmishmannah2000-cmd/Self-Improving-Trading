@@ -1573,6 +1573,13 @@ def run_cycle(
         # [GUARD L03] BB bandwidth — MR only (no edge on flat bands)
         if strategy.get("strategy_type") == "mean_reversion":
             bb_skip, bb_reason = bb_bandwidth_guard(ind["bb"])
+            # Persist bw samples for soak measurement (tune BB_BW_MIN from evidence).
+            with contextlib.suppress(Exception):
+                bb = ind.get("bb") or {}
+                mid = float(bb.get("middle") or 0.0)
+                if mid > 0:
+                    bw = (float(bb.get("upper") or mid) - float(bb.get("lower") or mid)) / mid
+                    append_bb_sample(bot, pair, bw)
             if bb_skip:
                 _log_skip(bot, pair, cycle, bb_reason)
                 summary["skips"] += 1
