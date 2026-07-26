@@ -315,6 +315,131 @@ def is_promote_allowed(bot: str, pair: str, *, state: dict | None = None) -> boo
     return not is_banned(bot, pair, state=state)
 
 
+def recommend_exclude_action(
+    rec: dict | None,
+    *,
+    env_listed: bool = False,
+    min_n: int | None = None,
+    ban_thr: float | None = None,
+    unban_thr: float | None = None,
+) -> dict:
+    """Advisory exclude/include recommendation for dashboard (does not mutate state).
+
+    Same thresholds as ``decide()``. Returns::
+      recommendation: should_exclude | should_include | hold
+      recommendation_reason: plain ops string
+    """
+    min_n = min_samples() if min_n is None else int(min_n)
+    ban_thr = ban_expectancy() if ban_thr is None else float(ban_thr)
+    unban_thr = unban_expectancy() if unban_thr is None else float(unban_thr)
+    rec = rec if isinstance(rec, dict) else {}
+    try:
+        n = int(rec.get("n") or 0)
+    except (TypeError, ValueError):
+        n = 0
+    try:
+        exp = float(rec.get("expectancy") or 0.0)
+    except (TypeError, ValueError):
+        exp = 0.0
+    banned = bool(rec.get("banned"))
+
+    if n < min_n:
+        return {
+            "recommendation": "hold",
+            "recommendation_reason": (
+                f"Need more samples before exclude advice (n={n} < {min_n})"
+            ),
+        }
+
+    # Weak expectancy: exclude if gate still allows (mismatch); hold if already banned.
+    if exp <= ban_thr:
+        if not banned:
+            return {
+                "recommendation": "should_exclude",
+                "recommendation_reason": (
+                    f"expectancy {exp:.4f}% <= ban threshold {ban_thr}% with n={n}"
+                ),
+            }
+        return {
+            "recommendation": "hold",
+            "recommendation_reason": (
+                f"Data matches banned status "
+                f"(expectancy {exp:.4f}% <= ban {ban_thr}% with n={n})"
+            ),
+        }
+
+    # Strong expectancy: include if still banned or env-listed; hold if already allowed.
+    if exp >= unban_thr:
+        if banned or env_listed:
+            bits = [
+                f"expectancy {exp:.4f}% >= unban threshold {unban_thr}% with n={n}"
+            ]
+            if env_listed:
+                bits.append("still on GP_EXCLUDE_PAIRS")
+            if banned:
+                bits.append("gate still banned")
+            return {
+                "recommendation": "should_include",
+                "recommendation_reason": "; ".join(bits),
+            }
+        return {
+            "recommendation": "hold",
+            "recommendation_reason": (
+                f"Data matches allowed status "
+                f"(expectancy {exp:.4f}% >= unban {unban_thr}% with n={n})"
+            ),
+        }
+
+    return {
+        "recommendation": "hold",
+        "recommendation_reason": (
+            f"Expectancy {exp:.4f}% in dead zone "
+            f"({ban_thr}% .. {unban_thr}%); n={n} — no exclude flip advice"
+        ),
+    }
+
+
+def snapshot_for_dashboard(bot: str, pairs: list[str] | None = None) -> dict:
+    """Per-pair promote-gate snapshot for dashboard ingest (incl. recommendations)."""
+    st = ensure_seeded(bot)
+    seeds = env_seed_bans()
+    gate_pairs = st.get("pairs") or {}
+    keys: list[str] = []
+    if pairs:
+        keys.extend(normalize_pair(p) for p in pairs if p)
+    for k in gate_pairs:
+        nk = normalize_pair(k)
+        if nk and nk not in keys:
+            keys.append(nk)
+    out: dict[str, dict] = {}
+    for key in keys:
+        if not key:
+            continue
+        rec = gate_pairs.get(key) or _empty_pair(banned=False)
+        env_listed = key in seeds
+        banned = bool(rec.get("banned"))
+        try:
+            n = int(rec.get("n") or 0)
+        except (TypeError, ValueError):
+            n = 0
+        try:
+            exp = float(rec.get("expectancy") or 0.0)
+        except (TypeError, ValueError):
+            exp = 0.0
+        advice = recommend_exclude_action(rec, env_listed=env_listed)
+        out[key] = {
+            "banned": banned,
+            "seeded_from_env": bool(rec.get("seeded_from_env")),
+            "env_listed": env_listed,
+            "n": n,
+            "expectancy": round(exp, 6),
+            "last_reason": str(rec.get("last_reason") or ""),
+            "recommendation": advice["recommendation"],
+            "recommendation_reason": advice["recommendation_reason"],
+        }
+    return out
+
+
 def observe_shadow(
     bot: str,
     pair: str,

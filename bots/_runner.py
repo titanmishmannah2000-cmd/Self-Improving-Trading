@@ -286,6 +286,11 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
     ]
     # recent trades / skips / hypotheses / flatline from the jsonl the engines append
     flatline_events = _read_jsonl("flatline_log.jsonl", limit=200)
+    gp_promote_gate: dict = {}
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.gp_promote_gate import snapshot_for_dashboard
+
+        gp_promote_gate = snapshot_for_dashboard(bot, list(cfg.get("pairs") or []))
     payload = {
         "strategies": strategies,
         "goal": cfg.get("goal"),
@@ -298,6 +303,8 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
         # List of flatline events (crisis L21). Stored in flatlined_json so the
         # dashboard Flatline tab works across Railway volumes (not filesystem).
         "flatlined_pairs": flatline_events,
+        # GP Brain promote-gate bans + exclude/include recommendations (advisory).
+        "gp_promote_gate": gp_promote_gate,
         "recent_open_trades": recent_open_trades,
         "meta": {
             "oversold_pairs": (summary or {}).get("oversold_pairs", 0),

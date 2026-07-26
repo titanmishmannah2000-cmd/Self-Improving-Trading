@@ -211,3 +211,85 @@ def test_refresh_from_sim(gate_env, monkeypatch):
     assert out["banned"] is True
     assert out["n"] == 20
     assert out["expectancy"] == pytest.approx(-0.2)
+
+
+def test_recommend_exclude_when_allowed_but_weak():
+    out = gpg.recommend_exclude_action(
+        {"banned": False, "n": 40, "expectancy": -0.08},
+        env_listed=False,
+        min_n=30,
+        ban_thr=-0.05,
+        unban_thr=0.05,
+    )
+    assert out["recommendation"] == "should_exclude"
+    assert "ban threshold" in out["recommendation_reason"]
+
+
+def test_recommend_include_when_banned_but_strong():
+    out = gpg.recommend_exclude_action(
+        {"banned": True, "n": 40, "expectancy": 0.12},
+        env_listed=False,
+        min_n=30,
+        ban_thr=-0.05,
+        unban_thr=0.05,
+    )
+    assert out["recommendation"] == "should_include"
+    assert "unban threshold" in out["recommendation_reason"]
+
+
+def test_recommend_include_when_env_listed_and_strong():
+    out = gpg.recommend_exclude_action(
+        {"banned": False, "n": 40, "expectancy": 0.12},
+        env_listed=True,
+        min_n=30,
+        ban_thr=-0.05,
+        unban_thr=0.05,
+    )
+    assert out["recommendation"] == "should_include"
+    assert "GP_EXCLUDE_PAIRS" in out["recommendation_reason"]
+
+
+def test_recommend_hold_thin_samples_or_aligned():
+    thin = gpg.recommend_exclude_action(
+        {"banned": False, "n": 5, "expectancy": -0.5},
+        min_n=30,
+        ban_thr=-0.05,
+        unban_thr=0.05,
+    )
+    assert thin["recommendation"] == "hold"
+    assert "more samples" in thin["recommendation_reason"].lower()
+
+    aligned_ban = gpg.recommend_exclude_action(
+        {"banned": True, "n": 40, "expectancy": -0.2},
+        min_n=30,
+        ban_thr=-0.05,
+        unban_thr=0.05,
+    )
+    assert aligned_ban["recommendation"] == "hold"
+    assert "matches banned" in aligned_ban["recommendation_reason"].lower()
+
+    dead = gpg.recommend_exclude_action(
+        {"banned": False, "n": 40, "expectancy": 0.0},
+        min_n=30,
+        ban_thr=-0.05,
+        unban_thr=0.05,
+    )
+    assert dead["recommendation"] == "hold"
+    assert "dead zone" in dead["recommendation_reason"].lower()
+
+
+def test_snapshot_for_dashboard_includes_recommendation(gate_env, monkeypatch):
+    monkeypatch.setenv("GP_EXCLUDE_PAIRS", "")
+    gpg.refresh_from_pnls("forex", "ETH/USD", [-0.2] * 25, now=1_000_000.0)
+    snap = gpg.snapshot_for_dashboard("forex", ["ETH/USD", "EUR/USD"])
+    assert "ETH/USD" in snap
+    assert snap["ETH/USD"]["banned"] is True
+    assert snap["ETH/USD"]["recommendation"] in (
+        "hold",
+        "should_include",
+        "should_exclude",
+    )
+    assert "recommendation_reason" in snap["ETH/USD"]
+    assert "EUR/USD" in snap
+    assert snap["EUR/USD"]["banned"] is False
+    assert snap["EUR/USD"]["recommendation"] == "hold"  # thin n

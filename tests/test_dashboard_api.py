@@ -42,7 +42,13 @@ def _tmp_backend(tmp_path, monkeypatch):
     # Replicate the import-time migration (cortex_json/flatlined_json) that the
     # production DB has but init_db()'s base schema omits.
     conn = m.get_conn()
-    for _col in ("discovered_json", "cortex_json", "flatlined_json", "open_trades_json"):
+    for _col in (
+        "discovered_json",
+        "cortex_json",
+        "flatlined_json",
+        "open_trades_json",
+        "gp_promote_gate_json",
+    ):
         with contextlib.suppress(Exception):
             conn.execute(f"ALTER TABLE latest_state ADD COLUMN {_col} TEXT DEFAULT '{{}}'")
     conn.commit()
@@ -179,7 +185,13 @@ def test_gp_open_trade_surfaces_in_overview():
     mm.DB_PATH = f"{d}/dash.db"
     mm.init_db()
     conn = mm.get_conn()
-    for _col in ("discovered_json", "cortex_json", "flatlined_json", "open_trades_json"):
+    for _col in (
+        "discovered_json",
+        "cortex_json",
+        "flatlined_json",
+        "open_trades_json",
+        "gp_promote_gate_json",
+    ):
         with contextlib.suppress(Exception):
             conn.execute(f"ALTER TABLE latest_state ADD COLUMN {_col} TEXT DEFAULT '{{}}'")
 
@@ -221,6 +233,51 @@ def test_gp_open_trade_surfaces_in_overview():
     assert gp, f"GP open trade dropped from overview: {open_trades}"
     assert gp[0]["pair"] == "XAU/USD"
     assert gp[0].get("unrealised_pct") == 0.32
+
+
+def test_gp_promote_gate_ingest_and_overview():
+    """Bot ingest of gp_promote_gate (ban + recommendations) round-trips to overview."""
+    c = client
+    gate = {
+        "BTC/USD": {
+            "banned": True,
+            "seeded_from_env": False,
+            "env_listed": False,
+            "n": 36,
+            "expectancy": -0.025,
+            "last_reason": "hold_banned",
+            "recommendation": "hold",
+            "recommendation_reason": "Expectancy in dead zone",
+        },
+        "ETH/USD": {
+            "banned": False,
+            "seeded_from_env": False,
+            "env_listed": False,
+            "n": 40,
+            "expectancy": -0.08,
+            "last_reason": "hold_allowed",
+            "recommendation": "should_exclude",
+            "recommendation_reason": "expectancy -0.0800% <= ban threshold -0.05% with n=40",
+        },
+    }
+    r = c.post(
+        "/api/ingest/crypto",
+        json={
+            "strategies": {},
+            "goal": {},
+            "heartbeat": {"cycle": 1},
+            "recent_trades": [],
+            "recent_open_trades": [],
+            "gp_promote_gate": gate,
+        },
+        headers=TOKEN,
+    )
+    assert r.status_code == 200
+    o = c.get("/api/overview").json()
+    got = o["bots"]["crypto"]["gp_promote_gate"]
+    assert got["ETH/USD"]["recommendation"] == "should_exclude"
+    assert got["BTC/USD"]["banned"] is True
+    assert "recommendation_reason" in got["ETH/USD"]
 
 
 def test_discovered_api_excludes_suppress_from_ensemble_and_exposes_health():
@@ -549,7 +606,13 @@ def test_overview_open_trades_not_filtered_by_age_and_no_ghost_fallback():
     mm.DB_PATH = f"{d}/dash.db"
     mm.init_db()
     conn = mm.get_conn()
-    for _col in ("discovered_json", "cortex_json", "flatlined_json", "open_trades_json"):
+    for _col in (
+        "discovered_json",
+        "cortex_json",
+        "flatlined_json",
+        "open_trades_json",
+        "gp_promote_gate_json",
+    ):
         with contextlib.suppress(Exception):
             conn.execute(f"ALTER TABLE latest_state ADD COLUMN {_col} TEXT DEFAULT '{{}}'")
 

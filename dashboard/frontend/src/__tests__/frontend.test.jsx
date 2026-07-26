@@ -116,6 +116,13 @@ function installFetchMock(overview = mockOverview()) {
 beforeEach(() => {
   localStorage.setItem("hermes_token", "test-token");
   localStorage.setItem("hermes_onboarded", "1");
+  // Recharts ResponsiveContainer needs ResizeObserver (jsdom lacks it).
+  global.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+  Element.prototype.scrollIntoView = vi.fn();
   installFetchMock();
 });
 
@@ -485,5 +492,57 @@ describe("Phase 17 dashboard frontend", () => {
     fireEvent.click(screen.getByRole("button", { name: "Watcher" }));
     const badge = await screen.findByTestId("mfe-peak-badge");
     expect(badge).toHaveTextContent(/MFE 1\.3%/i);
+  });
+
+  it("test_gp_ban_and_exclude_recommendation_in_detail", async () => {
+    const overview = mockOverview();
+    overview.bots.forex.gp_promote_gate = {
+      "EUR/USD": {
+        banned: false,
+        seeded_from_env: false,
+        env_listed: false,
+        n: 40,
+        expectancy: -0.08,
+        last_reason: "hold_allowed",
+        recommendation: "should_exclude",
+        recommendation_reason: "expectancy -0.0800% <= ban threshold -0.05% with n=40",
+      },
+      "GBP/USD": {
+        banned: true,
+        seeded_from_env: false,
+        env_listed: true,
+        n: 40,
+        expectancy: 0.12,
+        last_reason: "hold_banned",
+        recommendation: "should_include",
+        recommendation_reason: "expectancy 0.1200% >= unban threshold 0.05% with n=40; still on GP_EXCLUDE_PAIRS; gate still banned",
+      },
+    };
+    installFetchMock(overview);
+
+    render(<App />);
+    await screen.findAllByTestId("pair-card");
+    fireEvent.click(screen.getByRole("button", { name: "Watcher" }));
+
+    expect(await screen.findByTestId("gp-exclude-hint")).toHaveTextContent(/Exclude\?/i);
+    expect(await screen.findByTestId("gp-banned-badge")).toHaveTextContent(/GP banned/i);
+    expect(await screen.findByTestId("gp-include-hint")).toHaveTextContent(/Leave exclude/i);
+
+    const eurCard = screen.getAllByTestId("pair-card").find((el) =>
+      el.textContent?.includes("EUR/USD")
+    );
+    expect(eurCard).toBeTruthy();
+    fireEvent.click(eurCard);
+    const rec = await screen.findByTestId("detail-gp-recommendation");
+    expect(rec).toHaveTextContent(/should be on GP exclude/i);
+    expect(await screen.findByTestId("detail-gp-status")).toHaveTextContent(/Allowed/i);
+
+    const gbpCard = screen.getAllByTestId("pair-card").find((el) =>
+      el.textContent?.includes("GBP/USD")
+    );
+    fireEvent.click(gbpCard);
+    const rec2 = await screen.findByTestId("detail-gp-recommendation");
+    expect(rec2).toHaveTextContent(/should be out of GP exclude/i);
+    expect(await screen.findByTestId("detail-gp-status")).toHaveTextContent(/Banned/i);
   });
 });

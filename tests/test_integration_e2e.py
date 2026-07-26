@@ -128,7 +128,13 @@ def live_api(tmp_path):
     import sqlite3 as _sqlite3
 
     _conn = _sqlite3.connect(str(db))
-    for _col in ("discovered_json", "cortex_json", "flatlined_json", "open_trades_json"):
+    for _col in (
+        "discovered_json",
+        "cortex_json",
+        "flatlined_json",
+        "open_trades_json",
+        "gp_promote_gate_json",
+    ):
         try:
             _conn.execute(f"ALTER TABLE latest_state ADD COLUMN {_col} TEXT DEFAULT '{{}}'")
             _conn.commit()

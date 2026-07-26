@@ -183,6 +183,10 @@ in run_cycle(), after traditional evaluate_entry():
   and outside `GP_PROMOTE_GATE_COOLDOWN_S`.
 - Invent + `_log_gp_shadow` keep running while banned; shadow forward-PnL and
   closed GP paper trades feed `record_pnl` / `observe_shadow`.
+- **Dashboard:** pair cards show **GP banned** / **Exclude?** / **Leave exclude**
+  from ingest `gp_promote_gate`; detail panel shows status, expectancy, and
+  should-exclude / should-include recommendations (advisory only —
+  `GP_EXCLUDE_PAIRS` remains manual / deploy).
 
 **Environment switches (Railway, per service):**
 | Var | Default | Effect |

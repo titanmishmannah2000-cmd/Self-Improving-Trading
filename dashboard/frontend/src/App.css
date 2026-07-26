@@ -282,6 +282,21 @@ body {
   color: #5fd0e6;
   border: 1px solid #2c7d92;
 }
+.pc-strategy-gp-banned {
+  background: #3a1418;
+  color: #f0a0a8;
+  border: 1px solid #8a3a45;
+}
+.pc-strategy-gp-exclude-hint {
+  background: #3a2a14;
+  color: #e6c05f;
+  border: 1px solid #92702c;
+}
+.pc-strategy-gp-include-hint {
+  background: #143a28;
+  color: #5fe6a0;
+  border: 1px solid #2c9270;
+}
 .pc-strategy-probe {
   background: #3a2e14;
   color: #e6c45f;
@@ -4229,6 +4244,48 @@ body {
   font-size: 13px;
   line-height: 1.5;
   color: var(--text);
+}
+.detail-gp-gate {
+  margin: 14px 0 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border, #262b36);
+  border-radius: 10px;
+  background: var(--panel, #161a22);
+}
+.detail-gp-gate .dp-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+  padding: 3px 0;
+  color: var(--ghost, #8b93a3);
+}
+.detail-gp-gate .dp-row .mono {
+  color: var(--text, #e8ecf4);
+  text-align: right;
+}
+.gp-gate-callout {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #262b36);
+}
+.gp-gate-callout strong { display: block; margin-bottom: 4px; font-size: 13px; }
+.gp-gate-callout p { margin: 0; font-size: 12px; color: var(--ghost, #8b93a3); line-height: 1.4; }
+.gp-gate-callout-exclude {
+  background: #3a2a14;
+  border-color: #92702c;
+  color: #e6c05f;
+}
+.gp-gate-callout-include {
+  background: #143a28;
+  border-color: #2c9270;
+  color: #5fe6a0;
+}
+.gp-gate-callout-hold {
+  background: #1a1e26;
+  border-color: #2a3140;
+  color: var(--ghost-strong, #a8afbd);
 }
 .detail-numbers-toggle {
   background: none;

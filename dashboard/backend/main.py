@@ -446,6 +446,17 @@ try:
 except sqlite3.OperationalError:
     pass
 
+# ── Migration: add gp_promote_gate_json (GP Brain ban + exclude recommendations)
+try:
+    conn = get_conn()
+    conn.execute(
+        "ALTER TABLE latest_state ADD COLUMN gp_promote_gate_json TEXT DEFAULT '{}'"
+    )
+    conn.commit()
+    conn.close()
+except sqlite3.OperationalError:
+    pass
+
 
 def _ts() -> str:
     return datetime.now(UTC).isoformat()
@@ -724,10 +735,18 @@ async def ingest(bot_name: str, request: Request):
         if not isinstance(open_trades, list):
             open_trades = []
 
+        gp_gate = payload.get("gp_promote_gate", {})
+        if not isinstance(gp_gate, dict):
+            gp_gate = {}
+
         conn.execute(
             """
-            INSERT INTO latest_state (bot, strategy_json, goal_json, heartbeat_json, open_trades_json, discovered_json, cortex_json, flatlined_json, received_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO latest_state (
+                bot, strategy_json, goal_json, heartbeat_json, open_trades_json,
+                discovered_json, cortex_json, flatlined_json, gp_promote_gate_json,
+                received_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(bot) DO UPDATE SET
                 strategy_json=excluded.strategy_json,
                 goal_json=excluded.goal_json,
@@ -736,6 +755,7 @@ async def ingest(bot_name: str, request: Request):
                 discovered_json=excluded.discovered_json,
                 cortex_json=excluded.cortex_json,
                 flatlined_json=excluded.flatlined_json,
+                gp_promote_gate_json=excluded.gp_promote_gate_json,
                 received_at=excluded.received_at
             """,
             (
@@ -747,6 +767,7 @@ async def ingest(bot_name: str, request: Request):
                 json.dumps(payload.get("discovered", {})),
                 json.dumps(payload.get("cortex", {})),
                 json.dumps(payload.get("flatlined_pairs", {})),
+                json.dumps(gp_gate),
                 utcnow_iso(),
             ),
         )
@@ -1033,6 +1054,13 @@ def overview():
                 if heartbeat and heartbeat.get("last_discovery_run_ts")
                 else None,
             },
+            "gp_promote_gate": (
+                json.loads(state_row["gp_promote_gate_json"])
+                if state_row
+                and "gp_promote_gate_json" in state_row.keys()
+                and state_row["gp_promote_gate_json"]
+                else {}
+            ),
         }
 
     conn.close()
