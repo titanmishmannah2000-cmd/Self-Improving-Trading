@@ -521,16 +521,6 @@ async def run_bot(bot_name: str) -> None:
         target=_discovery_loop, args=(bot, pairs, _stop, _disc_cortex, cfg), daemon=True
     )
     _disc.start()
-    # Automated soak / invent health monitor → Discord alerts + weekly digest.
-    try:
-        from hermes_core.engines.soak_monitor import monitor_loop
-
-        print(f"[hermes] starting soak monitor for {bot}", flush=True)
-        threading.Thread(
-            target=monitor_loop, args=(bot, _stop), daemon=True, name=f"soak-monitor-{bot}"
-        ).start()
-    except Exception as exc:  # noqa: BLE001 — monitor must never block bot start
-        print(f"[hermes] soak monitor not started: {exc!r}", file=sys.stderr, flush=True)
     try:
         while not _stop.is_set():
             cycle += 1

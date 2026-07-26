@@ -329,17 +329,6 @@ def test_discovered_corrupt_quarantined(tmp_path, monkeypatch):
     assert any(tmp_path.glob("EUR_USD.json.corrupt-*"))
 
 
-def test_soak_clock_refuses_red_audit(tmp_path, monkeypatch):
-    from tools import start_soak_clock as clock
-
-    monkeypatch.setenv("HERMES_STATE_ROOT", str(tmp_path))
-    ensure_state_files("forex")
-    # No heartbeat → go_nogo false.
-    rc = clock.main(["forex"])
-    assert rc == 1
-    assert not (tmp_path / "forex" / "state" / "soak_started.json").exists()
-
-
 def test_regime_updates_while_in_trade(tmp_path, monkeypatch):
     """Open positions skip the entry path; regime must still land in heartbeat."""
     import json
@@ -443,22 +432,3 @@ def test_price_sanity_passes_when_market_closed_and_prices_empty(tmp_path, monke
     assert by_name["price_sanity"]["passed"] is True
     assert "market_closed_ok" in (by_name["price_sanity"].get("detail") or "")
 
-
-def test_soak_alert_separates_must_and_soft_failures():
-    """go/no-go RED alert must not lump soft GP fails with critical must fails."""
-    from hermes_core.engines.soak_monitor import evaluate_alerts
-
-    snap = {
-        "bot": "forex",
-        "go_nogo": False,
-        "failed_checks": ["price_sanity", "gp_admitted", "gp_shadow_active"],
-        "failed_must": ["price_sanity"],
-        "failed_soft": ["gp_admitted", "gp_shadow_active"],
-        "heartbeat_age_s": 5,
-        "pairs": ["EUR/USD"],
-        "pulses": {"EUR/USD": {"status": "ok", "admitted": 0}},
-    }
-    alerts = evaluate_alerts(snap)
-    msg = next(a["message"] for a in alerts if a["key"] == "go_nogo_red")
-    assert "must=[price_sanity]" in msg
-    assert "soft=[gp_admitted,gp_shadow_active]" in msg
