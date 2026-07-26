@@ -336,6 +336,59 @@ def test_ingest_hypotheses_normalize_old_new_and_skip_reason():
     assert isinstance(fl, list) and any(x.get("pair") == "AUD/USD" for x in fl)
 
 
+def test_reflection_health_endpoint_reads_cortex_block():
+    """Phase 0.2: /api/reflection-health/{bot} surfaces the pushed health block."""
+    import json
+    from datetime import datetime
+
+    health = {
+        "bot": "forex",
+        "auto_deploy": False,
+        "reflection_every": 5,
+        "pairs": {
+            "EUR/USD": {
+                "closed": 3,
+                "reflection_every": 5,
+                "next_fire_at": 5,
+                "trades_until_next": 2,
+                "latched_at": None,
+                "last_status": "approved_pending_deploy",
+                "last_status_class": "proven",
+                "proven": True,
+            }
+        },
+    }
+    ts = datetime.now(UTC).isoformat()
+    conn = m.get_conn()
+    conn.execute(
+        """INSERT INTO latest_state
+           (bot, strategy_json, goal_json, heartbeat_json, open_trades_json,
+            discovered_json, cortex_json, flatlined_json, received_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        ("forex", "{}", "{}", "{}", "[]", "{}", json.dumps({"reflection_health": health}), "{}", ts),
+    )
+    conn.commit()
+    conn.close()
+
+    r = client.get("/api/reflection-health/forex")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["reflection_every"] == 5
+    assert body["auto_deploy"] is False
+    assert body["pairs"]["EUR/USD"]["next_fire_at"] == 5
+    assert body["pairs"]["EUR/USD"]["proven"] is True
+
+
+def test_reflection_health_endpoint_no_data():
+    r = client.get("/api/reflection-health/forex")
+    assert r.status_code == 200
+    assert r.json().get("status") == "no_data"
+
+
+def test_reflection_health_unknown_bot_404():
+    assert client.get("/api/reflection-health/unknown_bot").status_code == 404
+
+
 def test_per_version_uses_entry_type_when_strategy_version_missing():
     import json
     from datetime import datetime

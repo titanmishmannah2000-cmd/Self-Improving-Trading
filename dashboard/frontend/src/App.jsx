@@ -1929,6 +1929,160 @@ function OnboardingTour({ step, onNext, onSkip, selectedPair }) {
 }
 
 // ── Per-Version View (tab content with copy) ──
+function ReflectionHealthPanel() {
+  const botNames = { forex: "Forex", gold: "Gold", crypto: "Crypto" };
+  const [health, setHealth] = useState({});
+
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      const out = {};
+      for (const bot of ["forex", "gold", "crypto"]) {
+        try {
+          const r = await fetch(`${API_BASE}/api/reflection-health/${bot}`);
+          if (r.ok) out[bot] = await r.json();
+        } catch (e) { /* silent */ }
+      }
+      if (alive) setHealth(out);
+    };
+    load();
+    const id = setInterval(load, POLL_MS);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
+  const statusLabel = (s) => {
+    if (!s) return "—";
+    return s;
+  };
+  const statusColor = (cls) => ({
+    deployed: "#2ecc71",
+    proven: "#3498db",
+    rejected: "#e67e22",
+    no_proposal: "#95a5a6",
+    error: "#e74c3c",
+  }[cls] || "#95a5a6");
+
+  const bots = Object.entries(health).filter(
+    ([, h]) => h && h.pairs && Object.keys(h.pairs).length,
+  );
+
+  return (
+    <div className="reflection-health" data-testid="reflection-health">
+      <div className="dc-label" style={{ marginBottom: 6 }}>
+        Reflection health — is it firing / proving / deploying?
+      </div>
+      <p className="activity-help" style={{ marginTop: 0 }}>
+        Source of truth: closed trades + reflection latch + hypotheses. A proposal can
+        be <strong>proven</strong> (approved_pending_deploy) without creating a new version
+        while auto-deploy is off — the Versions tab only changes on an actual deploy.
+      </p>
+      {bots.length === 0 ? (
+        <div className="version-placeholder">No reflection activity yet.</div>
+      ) : (
+        bots.map(([bot, h]) => (
+          <div key={bot} style={{ marginBottom: 12 }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>
+              {botNames[bot] || bot}
+              <span className="activity-help" style={{ marginLeft: 8 }}>
+                every {h.reflection_every} closes · auto-deploy {h.auto_deploy ? "ON" : "OFF"}
+              </span>
+            </div>
+            <table className="mini-table" style={{ width: "100%", fontSize: "0.85em" }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left" }}>Pair</th>
+                  <th>Closed</th>
+                  <th>Next fire</th>
+                  <th>To go</th>
+                  <th>Last status</th>
+                  <th>Experiment</th>
+                  <th>Champion</th>
+                  <th>Safe mode</th>
+                  <th>GP handoff</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(h.pairs).map(([pair, p]) => (
+                  <tr key={pair}>
+                    <td style={{ textAlign: "left" }}>{pair}</td>
+                    <td style={{ textAlign: "center" }}>{p.closed}</td>
+                    <td style={{ textAlign: "center" }}>{p.next_fire_at}</td>
+                    <td style={{ textAlign: "center" }}>{p.trades_until_next}</td>
+                    <td style={{ textAlign: "center", color: statusColor(p.last_status_class) }}>
+                      {statusLabel(p.last_status)}
+                    </td>
+                    <td style={{ textAlign: "center" }}>
+                      {p.experiment
+                        ? `${p.experiment.variable} ${p.experiment.version_from}→${p.experiment.version_to} [${p.experiment.status}]`
+                        : "—"}
+                    </td>
+                    <td
+                      style={{
+                        textAlign: "center",
+                        color: p.champion_status === "underperforming" ? "#e67e22" : "#95a5a6",
+                      }}
+                    >
+                      {p.champion_status || "—"}
+                      {p.revert_count ? ` (${p.revert_count}×)` : ""}
+                    </td>
+                    <td style={{ textAlign: "center", color: p.safe_mode ? "#e74c3c" : "#95a5a6" }}>
+                      {p.safe_mode || "—"}
+                    </td>
+                    <td style={{ textAlign: "center", color: p.gp_handoff ? "#3498db" : "#95a5a6" }}>
+                      {p.gp_handoff ? "priority" : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {h.adaptive && h.adaptive.axes && Object.keys(h.adaptive.axes).length ? (
+              <div style={{ marginTop: 6 }} data-testid={`adaptive-${bot}`}>
+                <div className="activity-help" style={{ marginBottom: 2 }}>
+                  What it has learned — axis reliability from live outcomes (drives step
+                  size, axis order and cooldown length):
+                </div>
+                <table className="mini-table" style={{ width: "100%", fontSize: "0.8em" }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left" }}>Axis</th>
+                      <th>Tried</th>
+                      <th>Worked</th>
+                      <th>Reverted</th>
+                      <th>Reliability</th>
+                      <th>Step ×</th>
+                      <th>Fail streak</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(h.adaptive.axes).map(([axis, a]) => (
+                      <tr key={axis}>
+                        <td style={{ textAlign: "left" }}>{axis}</td>
+                        <td style={{ textAlign: "center" }}>{a.attempts}</td>
+                        <td style={{ textAlign: "center", color: "#2ecc71" }}>{a.improved}</td>
+                        <td style={{ textAlign: "center", color: "#e67e22" }}>{a.reverted}</td>
+                        <td
+                          style={{
+                            textAlign: "center",
+                            color: a.reliability >= 0.5 ? "#2ecc71" : "#e74c3c",
+                          }}
+                        >
+                          {a.reliability}
+                        </td>
+                        <td style={{ textAlign: "center" }}>{a.step_scale}</td>
+                        <td style={{ textAlign: "center" }}>{a.fail_streak || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 function VersionView({ perVersion }) {
   const botNames = { forex: "Forex Bot", gold: "Gold Bot", crypto: "Crypto Bot" };
   const [versionText, setVersionText] = useState(null);
@@ -2588,7 +2742,10 @@ export default function App() {
             {subTab === "activity" || isWatcher ? (
               <ActivityFeed overview={overview} />
             ) : subTab === "versions" ? (
-              <VersionView perVersion={perVersion} />
+              <>
+                <ReflectionHealthPanel />
+                <VersionView perVersion={perVersion} />
+              </>
             ) : (
               <SkipAnalysis apiBase={API_BASE} initialBot={selectedBotName || "forex"} />
             )}

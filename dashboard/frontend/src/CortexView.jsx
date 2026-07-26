@@ -108,6 +108,8 @@ export default function CortexView({ apiBase, isActive = true }) {
 
   const s = (botData && botData.summary) || {};
   const exiled = (botData && botData.exiled) || [];
+  const paramQuarantine = (botData && botData.param_quarantine) || [];
+  const gpHandoff = (botData && botData.gp_handoff_pairs) || [];
   const indicators = (botData && botData.indicators) || {};
   const policy = (botData && botData.policy) || {};
   const gates = (botData && botData.gates) || policy.gates || {};
@@ -128,6 +130,7 @@ export default function CortexView({ apiBase, isActive = true }) {
     policy.soft_weights === true ||
     prioDisc === true ||
     (Array.isArray(prioDisc) && prioDisc.length > 0) ||
+    (Array.isArray(gpHandoff) && gpHandoff.length > 0) ||
     rollback === true ||
     (Array.isArray(rollback) && rollback.length > 0) ||
     Object.keys(gates).length > 0;
@@ -648,6 +651,55 @@ export default function CortexView({ apiBase, isActive = true }) {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {(paramQuarantine.length > 0 || gpHandoff.length > 0) && (
+          <div className="report-card" style={{ marginBottom: 16, borderLeft: "3px solid #3498db" }}>
+            <div className="report-card-header">
+              Shared failure memory{" "}
+              <span style={{ opacity: 0.7 }}>
+                (params ≠ indicators — no cross-contamination)
+              </span>
+            </div>
+            <Help>
+              <strong>Param quarantine</strong> bans specific strategy changes
+              that failed backtest or live auto-revert. <strong>GP handoff</strong>{" "}
+              pairs are underperforming after reflection exhausted its axes —
+              invent is accelerated, but admits never bump strategy versions.
+            </Help>
+            {gpHandoff.length > 0 && (
+              <div style={{ marginTop: 8 }}>
+                Priority discovery pairs:{" "}
+                <code>{gpHandoff.join(", ")}</code>
+              </div>
+            )}
+            {paramQuarantine.length > 0 && (
+              <table className="trade-table" style={{ marginTop: 8, fontSize: "0.85em" }}>
+                <thead>
+                  <tr>
+                    <th>Pair</th>
+                    <th>Variable</th>
+                    <th>Old→New</th>
+                    <th>Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paramQuarantine.slice(-10).map((q, i) => (
+                    <tr key={i}>
+                      <td>{q.pair}</td>
+                      <td style={{ fontFamily: "monospace" }}>{q.variable}</td>
+                      <td>
+                        {String(q.old)}→{String(q.new)}
+                      </td>
+                      <td style={{ color: q.live_worse ? "#e67e22" : undefined }}>
+                        {q.live_worse ? "live_worse" : (q.reason || "").slice(0, 60)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         )}
 

@@ -83,6 +83,8 @@ GOAL = {"max_drawdown": 10.0, "reflection_every": 5}
 @pytest.fixture
 def reflect_env(tmp_path, monkeypatch):
     """Isolate latch, hypotheses, KB, strategy YAML, and trades under tmp_path."""
+    monkeypatch.setenv("HERMES_STATE_ROOT", str(tmp_path))
+    monkeypatch.setenv("HERMES_BOT_NAME", "forex")
     state = tmp_path / "forex" / "state"
     state.mkdir(parents=True)
     strat_dir = tmp_path / "bots" / "forex" / "state" / "strategies"

@@ -170,6 +170,15 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
 
         cx = Cortex(bot=bot)
         cortex = cx.summary()
+        # Phase 0.2: attach reflection health so the dashboard can answer
+        # "is reflection firing / proving / deploying?" from the same source of
+        # truth the live cadence uses (trades.jsonl + latch + hypotheses).
+        with contextlib.suppress(Exception):
+            from hermes_core.engines.reflect import reflection_health
+
+            cortex["reflection_health"] = reflection_health(
+                bot, list(cfg.get("pairs") or []), goal=cfg.get("goal")
+            )
         try:
             pol = PolicyEngine().evaluate(max(cycle, 0), list(cfg.get("pairs") or []), cortex=cx)
             cortex["policy"] = {
@@ -178,7 +187,10 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
                 "gates": {
                     "suppress_gp": "Bench GP when MR WR ≥ 40% and GP WR < 30%",
                     "suppress_mr": "Bench MR when GP WR ≥ 50%",
-                    "priority_discovery": "≥2 exiled indicators → prioritize GP rediscovery",
+                    "priority_discovery": (
+                        "≥2 exiled indicators OR reflection underperforming+"
+                        "quarantined axes → accelerate GP invent (signal path only)"
+                    ),
                     "rollback": "Flag rollback when MR WR < 30% after ≥10 trades",
                     "soft_weights": (
                         "HIF Phase-2: when SOFT_WEIGHTS=1, L35 benches shrink size "

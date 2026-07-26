@@ -57,6 +57,18 @@ CRISIS_DELTA_OK = 0.5  # crisis fail is fatal unless delta >= 0.5
 CRISIS_DD_LIMIT = 0.20  # [GUARD L53] crisis max-drawdown ceiling
 OOS_CORR_MIN = 0.15  # 99th-percentile OOS correlation floor (L53)
 
+# ── Phase 1 (reflection superiority) strict deploy proof ────────────────────
+# The default gates above only require "not much worse" (delta > -0.1 / -0.2),
+# which lets a marginally-worse change ship. When ``strict=True`` (reflection
+# always sets it) a candidate must STRICTLY BEAT the last deployed version on
+# BOTH the full window and the out-of-sample holdout on REAL price history, and
+# clear an absolute risk floor — so "less bad than a disaster" can never deploy.
+STRICT_IMPROVE_MARGIN = 0.0  # full-window new_pnl must exceed old_pnl by > this
+STRICT_OOS_IMPROVE_MARGIN = 0.0  # OOS new_pnl must exceed old_pnl by > this
+STRICT_MIN_BARS = 60  # real-data sufficiency for a deploy-grade proof
+STRICT_FLOOR_MIN_ENTRIES = 3  # candidate must actually trade in simulation
+STRICT_FLOOR_MAX_DD = 0.25  # candidate's own max drawdown ceiling (fraction)
+
 # Optional test override (tests monkeypatch this module attribute).
 KB_PATH: Path | None = None
 
@@ -65,6 +77,27 @@ def _kb_path(bot: str | None = None) -> Path:
     if KB_PATH is not None:
         return KB_PATH
     return hypotheses_kb_path(bot)
+
+
+def _is_degenerate_prices(prices: list[float]) -> bool:
+    """True if the series is not usable real data (flat / zero-variance / NaN).
+
+    A strict deploy proof must never approve on a synthetic or degenerate feed
+    (e.g. a stuck price, all-identical stub, or NaN-laden series).
+    """
+    if not prices or len(prices) < 2:
+        return True
+    try:
+        arr = np.asarray(prices, dtype=float)
+    except (TypeError, ValueError):
+        return True
+    if not np.all(np.isfinite(arr)):
+        return True
+    if float(np.nanstd(arr)) <= 1e-12:
+        return True
+    # Almost-all-identical (a stuck feed dressed up with a couple of ticks).
+    uniq = np.unique(arr)
+    return uniq.size < max(3, int(len(arr) * 0.02))
 
 
 # Cap KB growth so S10 full-file scans stay cheap over a 30-day soak.
@@ -591,12 +624,18 @@ def backtest_with_history(
     ensemble_consensus: str | list[str] | None = None,
     fetch_prices: Callable[[str], list[float]] = _default_fetch,
     bot: str = "forex",
+    strict: bool = False,
 ) -> dict:
     """7-phase validation of a single parameter change. Returns the verdict dict.
 
     Shadow by default: records to the hypothesis KB and computes the bumped
     version, but does NOT mutate the live strategy file (that is the explicit
     approval-gated deploy step upstream).
+
+    When ``strict=True`` (reflection's deploy proof) the candidate must STRICTLY
+    beat the last deployed version on the full window AND the OOS holdout on real
+    data, and clear an absolute risk floor — a marginally-worse or "less bad"
+    change is rejected even if the permissive delta gates would pass it.
 
     Entry simulation applies live BB/RSI/ADX plus session (L04), ensemble (L13),
     and stop-loss cooldown (L15/L23). Optional ``candle_ts`` / ``ensemble_consensus``
@@ -644,6 +683,22 @@ def backtest_with_history(
     if not prices or len(prices) < 10:
         verdict = {"approved": False, "reason": "insufficient price history", "phases": {}}
         _kb_record(pair, param, old_val, new_val, False, verdict["reason"])
+        return verdict
+    # Phase 1.4 — real-data-only: a deploy-grade proof fails CLOSED on a too-short
+    # or synthetic/degenerate feed (never silently approve on stub data).
+    if strict and (len(prices) < STRICT_MIN_BARS or _is_degenerate_prices(prices)):
+        reason = (
+            f"strict: insufficient real data (bars={len(prices)} < {STRICT_MIN_BARS} "
+            f"or degenerate feed)"
+        )
+        verdict = {
+            "approved": False,
+            "reason": reason,
+            "phases": {},
+            "strict": True,
+            "data_bars": len(prices),
+        }
+        _kb_record(pair, param, old_val, new_val, False, reason)
         return verdict
 
     sim_kw = dict(
@@ -762,13 +817,52 @@ def backtest_with_history(
     redundant = abs(oos_corr) > 0.8
     phases["phase5_corr"] = {"oos_corr": oos_corr, "redundant": redundant}
 
+    # Phase 1b — strict superiority + absolute floor (reflection deploy proof).
+    # Must STRICTLY beat the last version on full window AND OOS, actually trade,
+    # and keep its own drawdown under the ceiling. Marginal/"less bad" changes die.
+    strict_ok = True
+    strict_block: dict | None = None
+    if strict:
+        improved_full = delta > STRICT_IMPROVE_MARGIN
+        improved_oos = oos_delta > STRICT_OOS_IMPROVE_MARGIN
+        trades_enough = new_res["entries"] >= STRICT_FLOOR_MIN_ENTRIES
+        dd_ok = float(new_res.get("max_dd", 0.0)) <= STRICT_FLOOR_MAX_DD
+        floor_ok = trades_enough and dd_ok
+        strict_ok = improved_full and improved_oos and floor_ok
+        strict_block = {
+            "improved_full": improved_full,
+            "improved_oos": improved_oos,
+            "improvement_full": round(delta, 4),
+            "improvement_oos": round(oos_delta, 4),
+            "floor_ok": floor_ok,
+            "new_entries": new_res["entries"],
+            "new_max_dd": new_res.get("max_dd", 0.0),
+            "data_bars": len(prices),
+            "ok": strict_ok,
+        }
+        phases["phase1b_strict"] = strict_block
+        if not strict_ok:
+            bits = []
+            if not improved_full:
+                bits.append(f"full delta {round(delta, 4)} <= {STRICT_IMPROVE_MARGIN}")
+            if not improved_oos:
+                bits.append(f"oos delta {round(oos_delta, 4)} <= {STRICT_OOS_IMPROVE_MARGIN}")
+            if not trades_enough:
+                bits.append(f"new entries {new_res['entries']} < {STRICT_FLOOR_MIN_ENTRIES}")
+            if not dd_ok:
+                bits.append(f"new max_dd {new_res.get('max_dd')} > {STRICT_FLOOR_MAX_DD}")
+            reasons.append("STRICT FAIL: " + "; ".join(bits))
+
     # ── verdict: hard gates ──
     approved = (
         oos_approved
         and hist_ok
         and (crisis.get("approved", True) or delta >= CRISIS_DELTA_OK)
         and perm_ok
+        and strict_ok
     )
+    version_from = str(strategy.get("version", "00"))
+    bumped = None
     if approved:
         # Phase 6 deploy: compute bumped version (caller applies it on approval)
         bumped = _bump_version(pair, bot)
@@ -787,11 +881,20 @@ def backtest_with_history(
         "old_wr": old_res["wr"],
         "new_wr": new_res["wr"],
         "entries": old_res["entries"],
+        "new_entries": new_res["entries"],
+        "new_max_dd": new_res.get("max_dd", 0.0),
         "alpha": alpha,
         "regime": regime,
         "oos_corr": oos_corr,
         "oos_delta": round(oos_delta, 4),
         "p_value": p_val,
+        # Phase 1.5 provenance: what proved it, over how much real data.
+        "strict": strict,
+        "improvement_full": round(delta, 4),
+        "improvement_oos": round(oos_delta, 4),
+        "data_bars": len(prices),
+        "version_from": version_from,
+        "version_to": bumped,
         "reason": " | ".join(reasons),
         "phases": phases,
         "kb_hit": False,

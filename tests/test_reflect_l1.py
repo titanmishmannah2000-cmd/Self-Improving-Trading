@@ -42,6 +42,8 @@ def _trades(pnls, base=1.1000):
 
 @pytest.fixture(autouse=True)
 def _tmp_hypotheses(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_STATE_ROOT", str(tmp_path))
+    monkeypatch.setenv("HERMES_BOT_NAME", "forex")
     log = tmp_path / "forex" / "state" / "hypotheses.jsonl"
     monkeypatch.setattr(
         rf,

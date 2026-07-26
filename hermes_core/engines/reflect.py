@@ -30,6 +30,7 @@ Functions (blueprint Phase 9 build target + live latch):
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 
@@ -38,7 +39,28 @@ from hermes_core.state.paths import hypotheses_path, reflection_latch_path
 
 STOP_FLOOR = 0.5  # [GUARD L45] stop_loss_pct never goes below this
 STOP_TIGHTEN = 0.3  # DD breach -> tighten by this much
-CONFIDENCE = 0.40  # L1 fixed confidence gate
+STOP_WIDEN = 0.3  # low-WR / sustained-loss -> widen by this much
+CONFIDENCE = 0.40  # L1 fixed confidence gate (legacy floor / fallback)
+
+# ── Phase 2 multi-axis tuning knobs ─────────────────────────────────────────
+# Bounds mirror hermes_core/config/schema.STRATEGY_PARAM_RANGES so a proposed
+# value always survives validate_strategy_params.
+STOP_CAP = 8.0  # widen ceiling (schema allows up to 10.0; stay conservative)
+TARGET_STEP = 0.5  # profit_target_pct step
+TARGET_FLOOR = 0.8  # never take profit-target below this
+TRAIL_STEP = 0.4  # trailing_stop_pct step (0.0 -> capture giveback)
+TRAIL_CAP = 3.0
+ENTRY_THRESH_STEP = 5  # RSI entry threshold step (be more selective)
+ENTRY_THRESH_CAP = 45  # do not over-tighten MR oversold entries
+MAXHOLD_CUT = 0.75  # reduce time_exit_cycles to this fraction
+MAXHOLD_FLOOR = 60
+SIZE_CUT = 0.75  # reduce position_size_r to this fraction (soft de-risk)
+SIZE_FLOOR = 0.05
+
+GIVEBACK_CAPTURE_LO = 0.6  # winners capturing < 60% of peak MFE -> giveback problem
+TIMEOUT_FRAC_HI = 0.5  # > half of closes are time-exits -> exit-timing problem
+LOW_WR = 0.3  # win-rate below this is a low-WR pathology
+MIN_SAMPLE = 5  # need at least this many closes before any change
 
 
 # ── pure helpers (unit-tested, no I/O) ─────────────────────────────────────
@@ -63,65 +85,501 @@ def aggregate_trades(trades: list[dict]) -> dict:
     }
 
 
+def _trade_regime(t: dict) -> str | None:
+    """Best-effort regime label stamped on a close (Phase 5.1)."""
+    for key in ("entry_regime", "regime", "regime_label"):
+        v = t.get(key)
+        if v:
+            return str(v).lower()
+    return None
+
+
+def same_regime_batch(trades: list[dict], every: int) -> tuple[list[dict], str | None]:
+    """Pick a same-regime reflection batch (Phase 5.1).
+
+    Prefer the dominant regime among the most recent ``every * 2`` closes, then
+    return up to ``every`` trades from that regime. If no regime stamps are
+    present (legacy books), fall back to the last ``every`` closes unchanged.
+    """
+    if not trades or every < 1:
+        return [], None
+    window = trades[-max(every * 2, every) :]
+    labels = [_trade_regime(t) for t in window]
+    present = [r for r in labels if r]
+    if not present:
+        return trades[-every:], None
+    # Dominant regime (mode); ties → most recent label wins via reverse scan.
+    counts: dict[str, int] = {}
+    for r in present:
+        counts[r] = counts.get(r, 0) + 1
+    best_n = max(counts.values())
+    candidates = {k for k, n in counts.items() if n == best_n}
+    dominant = None
+    for t in reversed(window):
+        r = _trade_regime(t)
+        if r in candidates:
+            dominant = r
+            break
+    batch = [t for t in window if _trade_regime(t) == dominant][-every:]
+    return batch, dominant
+
+
+def _exit_reason(t: dict) -> str:
+    return str(t.get("exit_reason") or t.get("reason") or "").lower()
+
+
+def trade_pathology(trades: list[dict]) -> dict:
+    """Summarise WHY the batch behaved as it did (Phase 2.1 feature extraction).
+
+    Pure arithmetic over the closed batch + any excursion fields the loop stamps
+    (mfe_pct / giveback_frac / mfe_capture). Fields that are absent simply yield
+    ``None`` so downstream axes fail-soft (they will not fire on data they can't
+    see — this keeps legacy rule tests intact).
+    """
+    n = len(trades)
+    reasons = [_exit_reason(t) for t in trades]
+    stop_n = sum(1 for r in reasons if r in ("sl", "stop_loss", "stop"))
+    tp_n = sum(1 for r in reasons if r in ("tp", "take_profit", "profit_target"))
+    time_n = sum(1 for r in reasons if "time" in r or r == "timeout")
+
+    caps = [float(t["mfe_capture"]) for t in trades if t.get("mfe_capture") is not None]
+    gbs = [float(t["giveback_frac"]) for t in trades if t.get("giveback_frac") is not None]
+    winners = [t for t in trades if float(t.get("pnl_pct", 0.0)) > 0]
+    # MFE left on the table by time-exits (profit that existed but wasn't taken).
+    time_mfe = [
+        float(t.get("mfe_pct", 0.0))
+        for t in trades
+        if ("time" in _exit_reason(t)) and t.get("mfe_pct") is not None
+    ]
+    return {
+        "count": n,
+        "stop_frac": stop_n / n if n else 0.0,
+        "tp_frac": tp_n / n if n else 0.0,
+        "timeout_frac": time_n / n if n else 0.0,
+        "winners": len(winners),
+        "avg_capture": (sum(caps) / len(caps)) if caps else None,
+        "avg_giveback": (sum(gbs) / len(gbs)) if gbs else None,
+        "avg_time_mfe": (sum(time_mfe) / len(time_mfe)) if time_mfe else None,
+    }
+
+
+def _cortex_stability(cortex, pair: str, entry_type: str) -> float:
+    """0..1 confidence contribution from Cortex evidence for (pair, entry_type)."""
+    if cortex is None:
+        return 0.0
+    try:
+        wr = cortex.entry_type_wr(entry_type, pair=pair)
+        if wr is None:
+            return 0.0
+        n = 0
+        with contextlib.suppress(Exception):
+            n = int(cortex.evidence_n(pair, entry_type))
+        return min(1.0, n / 20.0)
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def dynamic_confidence(
+    count: int, effect: float, stability: float, *, weights: dict | None = None
+) -> float:
+    """Confidence from sample size + effect size + Cortex stability (Phase 2.3).
+
+    Calibrated so a thin batch (~5 closes, no Cortex support) stays BELOW the L2
+    invocation bar (0.65) — only more evidence / stronger pathology / Cortex
+    corroboration pushes a proposal into consensus review.
+
+    ``weights`` (Phase 6) lets the blend be recalibrated from realized live
+    outcomes; omitted → the default prior weights, i.e. unchanged behaviour.
+    """
+    w = weights or {}
+    intercept = float(w.get("intercept", 0.30))
+    w_size = float(w.get("size", 0.20))
+    w_effect = float(w.get("effect", 0.20))
+    w_stab = float(w.get("stability", 0.15))
+
+    size_term = min(1.0, max(0, count) / 20.0)
+    effect = max(0.0, min(1.0, effect))
+    stability = max(0.0, min(1.0, stability))
+    conf = intercept + w_size * size_term + w_effect * effect + w_stab * stability
+    return round(max(0.25, min(0.95, conf)), 3)
+
+
+def adaptive_bars(bot: str | None, pair: str, trades: list[dict]) -> dict:
+    """Pathology bars for THIS pair, learned from its own distribution (Phase 6).
+
+    Returns the same keys as the module-level priors. With a thin sample the
+    priors are returned unchanged, so behaviour only shifts once the pair has
+    actually shown the engine what "normal" looks like for it.
+    """
+    bars = {
+        "low_wr": LOW_WR,
+        "giveback_capture_lo": GIVEBACK_CAPTURE_LO,
+        "timeout_frac_hi": TIMEOUT_FRAC_HI,
+    }
+    if not bot:
+        return bars
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.adaptive import adaptive_threshold
+
+        closed = _closed_trades_for_pair(bot, pair) or list(trades or [])
+        # Per-batch win-rates over rolling windows of 5 → the pair's own WR spread.
+        wrs: list[float] = []
+        window = 5
+        for i in range(0, max(0, len(closed) - window + 1)):
+            chunk = closed[i : i + window]
+            wins = sum(1 for t in chunk if float(t.get("pnl_pct", 0.0)) > 0)
+            wrs.append(wins / len(chunk))
+        bars["low_wr"] = adaptive_threshold(
+            LOW_WR, wrs, q=0.25, floor=0.10, cap=0.50
+        )
+
+        caps = [
+            float(t["mfe_capture"]) for t in closed if t.get("mfe_capture") is not None
+        ]
+        bars["giveback_capture_lo"] = adaptive_threshold(
+            GIVEBACK_CAPTURE_LO, caps, q=0.35, floor=0.30, cap=0.85
+        )
+
+        # Timeout share per rolling window → what "too many timeouts" means here.
+        shares: list[float] = []
+        for i in range(0, max(0, len(closed) - window + 1)):
+            chunk = closed[i : i + window]
+            n_to = sum(1 for t in chunk if "time" in _exit_reason(t))
+            shares.append(n_to / len(chunk))
+        bars["timeout_frac_hi"] = adaptive_threshold(
+            TIMEOUT_FRAC_HI, shares, q=0.75, floor=0.25, cap=0.85
+        )
+    return bars
+
+
+def _axis_candidates(
+    strategy: dict,
+    agg: dict,
+    path: dict,
+    goal: dict,
+    *,
+    blocked: set[str] | None = None,
+    bot: str | None = None,
+    pair: str | None = None,
+    bars: dict | None = None,
+    regime: str | None = None,
+    closed_count: int | None = None,
+) -> list[tuple]:
+    """Pathology→axis mapping (Phase 2.2 / 2.4). Returns ordered candidate axes.
+
+    Each candidate is (priority, variable, old, new, why, effect). The single
+    highest-priority candidate whose change is non-degenerate is chosen upstream
+    (one_variable_only). Only axes whose pathology signal is actually present
+    produce a candidate — so on batches lacking excursion/exit data the tree
+    reduces to the classic stop rules.
+
+    ``blocked`` (Phase 3.4) drops axes whose variable is under a live-experiment
+    cooldown, so reflection is FORCED onto a different lever after a revert.
+
+    Phase 6: step sizes, pathology bars and the final ORDER are all adaptive.
+    Priorities are priors — an axis with a live track record can outrank one that
+    keeps failing. With no learned evidence this is byte-identical to the old
+    fixed tree.
+
+    Soft direction quarantine (#6) drops candidates whose (variable, direction)
+    is still cooling after a live/pipeline reject.
+    """
+    out: list[tuple] = []
+    max_dd = float((goal or {}).get("max_drawdown", 10.0))
+    cur_stop = float(strategy.get("stop_loss_pct", 1.5))
+
+    b = bars or {
+        "low_wr": LOW_WR,
+        "giveback_capture_lo": GIVEBACK_CAPTURE_LO,
+        "timeout_frac_hi": TIMEOUT_FRAC_HI,
+    }
+    low_wr = float(b["low_wr"])
+    capture_lo = float(b["giveback_capture_lo"])
+    timeout_hi = float(b["timeout_frac_hi"])
+
+    def _step(variable: str, base: float, effect: float) -> float:
+        """Learned step magnitude for this axis (prior when no evidence)."""
+        if not bot:
+            return base
+        try:
+            from hermes_core.engines.adaptive import adaptive_step
+
+            return adaptive_step(
+                bot, pair, variable, base, effect=effect, regime=regime
+            )
+        except Exception:  # noqa: BLE001
+            return base
+
+    # P1 — drawdown breach → tighten stop (classic; always emitted even if the
+    # floor clamps it, matching the legacy floor-enforced contract).
+    if agg["drawdown"] > max_dd:
+        effect = min(1.0, (agg["drawdown"] - max_dd) / max(1e-9, max_dd))
+        step = _step("stop_loss_pct", STOP_TIGHTEN, effect)
+        # STOP_FLOOR is a hard risk guard — never adaptive.
+        new_stop = max(STOP_FLOOR, round(cur_stop - step, 4))
+        out.append(
+            (1, "stop_loss_pct", cur_stop, new_stop,
+             f"tighten stop on drawdown breach; drawdown {agg['drawdown']:.2f}% > max_dd {max_dd:.2f}%",
+             effect)
+        )
+
+    # P2 — winners give back too much of peak MFE → capture with a trailing stop.
+    cap = path.get("avg_capture")
+    if cap is not None and path["winners"] >= 3 and cap < capture_lo:
+        cur_trail = float(strategy.get("trailing_stop_pct", 0.0) or 0.0)
+        effect = min(1.0, (capture_lo - cap) / max(1e-9, capture_lo))
+        step = _step("trailing_stop_pct", TRAIL_STEP, effect)
+        new_trail = round(min(TRAIL_CAP, (cur_trail or 0.0) + step), 4)
+        out.append(
+            (2, "trailing_stop_pct", cur_trail, new_trail,
+             f"winners capture only {cap:.0%} of peak MFE (<{capture_lo:.0%}); "
+             f"add/raise trailing stop to lock gains",
+             effect)
+        )
+
+    # P3 — most exits are timeouts leaving profit on the table → take profit sooner.
+    if path["timeout_frac"] > timeout_hi and (path.get("avg_time_mfe") or 0.0) > 0:
+        cur_tgt = float(strategy.get("profit_target_pct", 3.0))
+        effect = min(1.0, path["timeout_frac"])
+        step = _step("profit_target_pct", TARGET_STEP, effect)
+        new_tgt = round(max(TARGET_FLOOR, cur_tgt - step), 4)
+        out.append(
+            (3, "profit_target_pct", cur_tgt, new_tgt,
+             f"{path['timeout_frac']:.0%} time-exits with avg peak MFE "
+             f"{path['avg_time_mfe']:.2f}% unrealised; lower profit target to capture it",
+             effect)
+        )
+
+    # P4 — low win-rate → widen stop so noise doesn't stop us out (classic).
+    if agg["win_rate"] < low_wr:
+        effect = min(1.0, (low_wr - agg["win_rate"]) / max(1e-9, low_wr))
+        step = _step("stop_loss_pct", STOP_WIDEN, effect)
+        new_stop = min(STOP_CAP, round(cur_stop + step, 4))
+        out.append(
+            (4, "stop_loss_pct", cur_stop, new_stop,
+             f"widen stop on low win-rate; win_rate {agg['win_rate']:.2f} < {low_wr:.2f}",
+             effect)
+        )
+
+    # P5 — sustained bleed over a real sample → soft de-risk (shrink size).
+    if agg["ret"] < -0.5 and agg["count"] >= 10 and agg["win_rate"] >= low_wr:
+        cur_size = float(strategy.get("position_size_r", 0.4))
+        effect = min(1.0, abs(agg["ret"]) / 5.0)
+        # Cut fraction adapts: a reliable de-risk lever cuts harder, a shaky one less.
+        cut = 1.0 - (1.0 - SIZE_CUT) * (_step("position_size_r", 1.0, effect))
+        cut = max(0.4, min(0.95, cut))
+        new_size = round(max(SIZE_FLOOR, cur_size * cut), 4)
+        out.append(
+            (5, "position_size_r", cur_size, new_size,
+             f"sustained loss {agg['ret']:.2f}% over {agg['count']} trades at WR "
+             f"{agg['win_rate']:.2f}; shrink size while edge is unproven",
+             effect)
+        )
+
+    # P6 — legacy sustained-loss widen-stop (low WR path already covered by P4).
+    if agg["ret"] < -0.5 and agg["count"] >= 10 and agg["win_rate"] < low_wr:
+        effect = min(1.0, abs(agg["ret"]) / 5.0)
+        step = _step("stop_loss_pct", STOP_WIDEN, effect)
+        new_stop = min(STOP_CAP, round(cur_stop + step, 4))
+        out.append(
+            (6, "stop_loss_pct", cur_stop, new_stop,
+             f"widen stop on sustained loss; ret {agg['ret']:.2f}% over {agg['count']} trades",
+             effect)
+        )
+
+    if blocked:
+        out = [c for c in out if c[1] not in blocked]
+
+    # Soft direction / near-dupe quarantine (#6).
+    if bot and pair is not None:
+        with contextlib.suppress(Exception):
+            from hermes_core.engines import experiment_control as _exp
+
+            n_closed = closed_count
+            if n_closed is None:
+                n_closed = len(_closed_trades_for_pair(bot, pair))
+            filtered = []
+            for c in out:
+                ban = _exp.soft_quarantined(bot, pair, c[1], c[2], c[3], int(n_closed))
+                if ban is None:
+                    filtered.append(c)
+            out = filtered
+
+    if bot:
+        with contextlib.suppress(Exception):
+            from hermes_core.engines.adaptive import sort_candidates
+
+            return sort_candidates(bot, pair, out, regime=regime)
+    out.sort(key=lambda c: c[0])
+    return out
+
+
 def layer1_rule_based(
     pair: str,
     trades: list[dict],
     goal: dict,
     strategy: dict,
+    *,
+    cortex=None,
+    blocked_axes: set[str] | None = None,
+    bot: str | None = None,
 ) -> tuple | None:
-    """L1 rule tree. Returns (variable, old, new, reason, confidence) or None.
+    """Multi-axis L1 rule tree (Phase 2). Returns (variable, old, new, reason,
+    confidence) or None.
 
-    Pure: no I/O, no mutation. The caller decides whether to log/apply it.
+    No mutation. Picks exactly ONE variable (one_variable_only) — the
+    highest-ranked axis whose pathology signal is present and whose change is
+    non-degenerate. New axes (trailing capture, profit target, soft size) fire
+    only when their excursion/exit signals appear.
+
+    Phase 6: when ``bot`` is supplied the step sizes, pathology bars, axis order
+    and confidence blend are all learned from that bot's realized live-experiment
+    outcomes. Without ``bot`` the function stays pure and uses the priors.
     """
     if not trades or not strategy:
         return None
     agg = aggregate_trades(trades)
-    if agg["count"] < 5:
+    min_sample = MIN_SAMPLE
+    if agg["count"] < min_sample:
         return None  # [guard] need a minimum sample before anything changes
 
-    cur_stop = float(strategy.get("stop_loss_pct", 1.5))
-    reason_parts: list[str] = []
-    decision = None  # (new_stop, why)
+    path = trade_pathology(trades)
+    entry_type = str(strategy.get("strategy_type") or "mean_reversion")
+    stability = _cortex_stability(cortex, pair, entry_type)
 
-    max_dd = float((goal or {}).get("max_drawdown", 10.0))
-    # drawdown is in %; goal max_drawdown is in % (10.0 == 10%)
-    if agg["drawdown"] > max_dd:
-        # tighten stop to cut further damage, but never below floor
-        new_stop = max(STOP_FLOOR, round(cur_stop - STOP_TIGHTEN, 4))
-        reason_parts.append(f"drawdown {agg['drawdown']:.2f}% > max_dd {max_dd:.2f}%")
-        decision = (new_stop, "tighten stop on drawdown breach")
+    bars = adaptive_bars(bot, pair, trades) if bot else None
+    conf_weights = None
+    if bot:
+        with contextlib.suppress(Exception):
+            from hermes_core.engines.adaptive import confidence_weights
 
-    if decision is None and agg["win_rate"] < 0.3:
-        # widen stop so noise doesn't stop us out; only if still above floor
-        new_stop = max(STOP_FLOOR, round(cur_stop + 0.3, 4))
-        reason_parts.append(f"win_rate {agg['win_rate']:.2f} < 0.30")
-        decision = (new_stop, "widen stop on low win-rate")
+            conf_weights = confidence_weights(bot, pair)
 
-    if decision is None and agg["ret"] < -0.5 and agg["count"] >= 10:
-        # sustained bleed (>=10 trades, aggregate return < -0.5%): widen stop
-        new_stop = max(STOP_FLOOR, round(cur_stop + 0.3, 4))
-        reason_parts.append(f"ret {agg['ret']:.2f}% < -0.5 over {agg['count']} trades")
-        decision = (new_stop, "widen stop on sustained loss")
+    # Dominant regime of this batch → regime-conditioned credit (#3).
+    regime = None
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.live_verdict import dominant_regime
 
-    if decision is None:
-        return None  # no rule fired -> no change
+        regime = dominant_regime(trades)
 
-    new_stop, why = decision
-    # The floor (STOP_FLOOR) may have clamped new_stop == cur_stop. That is NOT a
-    # no-op: it is a legitimate "attempted to tighten/widen but already at the
-    # floor" reflection signal (blueprint test_floor_enforced asserts new >= 0.5,
-    # not that we suppress it). Always return a fired rule's proposal.
-    return ("stop_loss_pct", cur_stop, new_stop, f"{why}; {'; '.join(reason_parts)}", CONFIDENCE)
+    closed_count = None
+    if bot:
+        with contextlib.suppress(Exception):
+            closed_count = len(_closed_trades_for_pair(bot, pair))
+
+    cands = list(
+        _axis_candidates(
+            strategy,
+            agg,
+            path,
+            goal,
+            blocked=blocked_axes,
+            bot=bot,
+            pair=pair,
+            bars=bars,
+            regime=regime,
+            closed_count=closed_count,
+        )
+    )
+
+    # #9: prefer the next step of a saved plan when it is still a valid candidate.
+    if bot and cands:
+        with contextlib.suppress(Exception):
+            from hermes_core.engines.experiment_control import next_plan_step
+
+            step = next_plan_step(bot, pair)
+            if step and step.get("variable"):
+                for i, c in enumerate(cands):
+                    if c[1] == step["variable"]:
+                        cands = [cands[i]] + cands[:i] + cands[i + 1 :]
+                        break
+
+    chosen = None
+    for priority, variable, old, new, why, effect in cands:
+        # P1 (drawdown tighten) is allowed to be floor-clamped to a no-op and
+        # still emitted (legacy contract). Every other axis skips no-ops.
+        if priority != 1 and float(new) == float(old):
+            continue
+        conf = dynamic_confidence(agg["count"], effect, stability, weights=conf_weights)
+        chosen = (variable, old, new, why, conf)
+        break
+
+    # Persist the remaining pathology-matched axes as a short plan (#9).
+    if bot and chosen and len(cands) > 1:
+        with contextlib.suppress(Exception):
+            from hermes_core.engines.experiment_control import save_plan
+
+            rest = []
+            for priority, variable, old, new, why, effect in cands:
+                if variable == chosen[0] and float(old) == float(chosen[1]) and float(new) == float(chosen[2]):
+                    continue
+                if priority != 1 and float(new) == float(old):
+                    continue
+                rest.append(
+                    {
+                        "priority": priority,
+                        "variable": variable,
+                        "old": old,
+                        "new": new,
+                        "why": why,
+                    }
+                )
+            if rest:
+                save_plan(bot, pair, rest, reason=f"follow_up_after_{chosen[0]}")
+
+    return chosen
 
 
 def _log_hypothesis(rec: dict) -> None:
-    """Append a reflection hypothesis to state/hypotheses.jsonl (shadow log)."""
+    """Append a reflection hypothesis to state/hypotheses.jsonl (shadow log).
+
+    Also mirror the note into the cortex reflection channel (Phase 0.4) so
+    Cortex is aware of every reflection proposal/outcome. Both writes are
+    fail-soft — reflection must never break on a logging error.
+    """
     path = hypotheses_path(rec.get("bot"))
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(rec, default=str) + "\n")
     except OSError:
+        pass
+    _notify_cortex(rec)
+
+
+def _notify_cortex(rec: dict) -> None:
+    """Mirror a reflection hypothesis into the cortex reflection channel.
+
+    The destination is derived from the (possibly test-patched) hypotheses log
+    location so isolation of one isolates the other. In production this resolves
+    to ``{bot}/state/cortex/reflection_log.jsonl`` — exactly what
+    ``Cortex.recent_hypotheses`` reads.
+    """
+    try:
+        from hermes_core.engines.decision_cortex import append_reflection_note
+
+        bot = rec.get("bot")
+        cortex_log = hypotheses_path(bot).parent / "cortex" / "reflection_log.jsonl"
+        variable = rec.get("variable")
+        text = rec.get("reason") or (
+            f"{variable} {rec.get('old')}->{rec.get('new')}" if variable else rec.get("status", "")
+        )
+        append_reflection_note(
+            bot,
+            {
+                "pair": rec.get("pair"),
+                "type": "hypothesis",
+                "text": text,
+                "status": rec.get("status"),
+                "variable": variable,
+                "old": rec.get("old"),
+                "new": rec.get("new"),
+                "version": rec.get("version"),
+                "ts": rec.get("ts") or __import__("time").time(),
+            },
+            path=cortex_log,
+        )
+    except Exception:  # noqa: BLE001 — never break reflection on cortex logging
         pass
 
 
@@ -133,12 +591,14 @@ def combined_reflect(
     skipped_json: str = "",
     strategy: dict | None = None,
     bot: str = "forex",
+    cortex=None,
 ) -> list[dict]:
     """L1 orchestrator. Returns the list of proposed (shadow) changes.
 
     SHADOW-ONLY: it never mutates the live strategy. Each proposal is logged to
     state/hypotheses.jsonl with full provenance so you can approve it later.
-    Exactly one variable may change per call (one_variable_only).
+    Exactly one variable may change per call (one_variable_only). ``cortex`` (or
+    a lazily-built read-only Cortex) feeds per-entry-type WR into confidence.
     """
     if goal is None:
         goal = (load_config(bot) if bot else {}).get("goal", {})
@@ -147,8 +607,48 @@ def combined_reflect(
 
         strategy = load_strategy_for_pair(pair, bot)
 
-    change = layer1_rule_based(pair, trades, goal, strategy)
+    if cortex is None:
+        with contextlib.suppress(Exception):
+            from hermes_core.engines.decision_cortex import Cortex
+
+            cortex = Cortex(bot=bot)
+
+    # Phase 3.4: axes under a live-experiment cooldown are off-limits — reflection
+    # must try a different lever until the cooldown lapses.
+    blocked: set[str] = set()
+    total_closed = len(trades)
+    with contextlib.suppress(Exception):
+        from hermes_core.engines import experiment_control as _exp
+
+        total_closed = len(_closed_trades_for_pair(bot, pair)) if bot else len(trades)
+        blocked = _exp.blocked_axes(bot, pair, total_closed)
+
+    change = layer1_rule_based(
+        pair, trades, goal, strategy, cortex=cortex, blocked_axes=blocked, bot=bot
+    )
     if change is None:
+        # Phase 3.5: if the pathology DID produce candidate axes but every one is
+        # blocked (all reverted/quarantined), reflection is stuck → escalate the
+        # pair into safe mode (size-down, then pause).
+        if blocked:
+            with contextlib.suppress(Exception):
+                agg = aggregate_trades(trades)
+                raw = _axis_candidates(
+                    strategy,
+                    agg,
+                    trade_pathology(trades),
+                    goal,
+                    bot=bot,
+                    pair=pair,
+                    bars=adaptive_bars(bot, pair, trades) if bot else None,
+                )
+                raw_vars = {c[1] for c in raw}
+                if raw_vars and raw_vars.issubset(blocked):
+                    from hermes_core.engines import experiment_control as _exp
+
+                    _exp.escalate_safe_mode(
+                        bot, pair, f"all reflection axes blocked: {sorted(raw_vars)}"
+                    )
         return []
 
     variable, old, new, reason, confidence = change
@@ -308,13 +808,13 @@ class ConsensusResult:
         }
 
 
-def _required_votes(score: float) -> tuple[int, str]:
+def _required_votes(score: float, *, min_score: float = L2_MIN_SCORE, uni_score: float = L2_UNANIMOUS_SCORE) -> tuple[int, str]:
     """Return (required yes-votes, human label) for a given score (gate logic)."""
-    if score >= L2_UNANIMOUS_SCORE:
-        return 3, "unanimous 3/3 (score>=75)"
-    if score >= L2_MIN_SCORE:
-        return 2, "2/3 majority (65<=score<75)"
-    return 0, "L2 not invoked (score<65)"
+    if score >= uni_score:
+        return 3, f"unanimous 3/3 (score>={uni_score:.0f})"
+    if score >= min_score:
+        return 2, f"2/3 majority ({min_score:.0f}<=score<{uni_score:.0f})"
+    return 0, f"L2 not invoked (score<{min_score:.0f})"
 
 
 def call_llm_consensus(
@@ -325,6 +825,9 @@ def call_llm_consensus(
     confidence: float | None = None,
     models: tuple[str, ...] = DEFAULT_MODELS,
     callers: dict[str, callable] | None = None,
+    bot: str | None = None,
+    min_score: float | None = None,
+    uni_score: float | None = None,
 ) -> ConsensusResult:
     """Run the tiered three-model consensus gate over a proposal.
 
@@ -332,24 +835,27 @@ def call_llm_consensus(
     injectable so the gate logic is testable without producing a real proposal.
     `callers` lets tests inject fake model functions keyed by model name.
 
-    Gate (fail-closed): below L2_MIN_SCORE the models are never consulted and the
+    Gate (fail-closed): below min_score the models are never consulted and the
     decision is REJECT (L1 must stand/rejected on its own). At/above the bar the
-    required vote count (2/3 or 3/3) must be met AND confidence >= APPLY_CONF.
+    required weighted vote count (2/3 or 3/3) must be met AND confidence >= APPLY.
+    Model weights come from live outcome calibration (#10).
     """
     score = float(score if score is not None else proposal.get("confidence", 0.0) * 100)
     confidence = float(confidence if confidence is not None else proposal.get("confidence", 0.0))
-    required, label = _required_votes(score)
+    min_s = float(min_score if min_score is not None else L2_MIN_SCORE)
+    uni_s = float(uni_score if uni_score is not None else L2_UNANIMOUS_SCORE)
+    required, label = _required_votes(score, min_score=min_s, uni_score=uni_s)
 
     if required == 0:
         return ConsensusResult(
             score,
-            L2_MIN_SCORE,
+            min_s,
             0,
             0,
             0,
             confidence,
             False,
-            [f"score {score:.0f} < {L2_MIN_SCORE}: L2 not invoked; L1 stands on its own"],
+            [f"score {score:.0f} < {min_s:.0f}: L2 not invoked; L1 stands on its own"],
         )
 
     callers = callers or _MODEL_CALLERS
@@ -363,35 +869,59 @@ def call_llm_consensus(
 
     votes_yes = 0
     reached = 0
+    yes_weight = 0.0
     call_errors: list[str] = []
+    vote_map: dict[str, bool] = {}
     for name in models:
         if name not in callers:
             continue
         reached += 1
+        weight = 1.0
+        if bot:
+            with contextlib.suppress(Exception):
+                from hermes_core.engines.experiment_control import l2_model_weight
+
+                weight = float(l2_model_weight(bot, name))
         try:
             reply = callers[name](prompt)
         except Exception as exc:  # noqa: BLE001 — fail-closed: a model error = NO
             call_errors.append(f"{name}:{type(exc).__name__}")
+            vote_map[name] = False
             continue
-        if _parse_vote(reply):
+        yes = _parse_vote(reply)
+        vote_map[name] = yes
+        if yes:
             votes_yes += 1
+            yes_weight += weight
 
-    reasons = [f"score {score:.0f} -> {label}; votes {votes_yes}/{reached} (required {required})"]
+    # Weighted bar: default weights=1 → identical to classic 2/3 or 3/3.
+    required_weight = float(required)
+    reasons = [
+        f"score {score:.0f} -> {label}; votes {votes_yes}/{reached} "
+        f"(required {required}, yes_w={yes_weight:.2f}/{required_weight:.2f})"
+    ]
     if call_errors:
-        reasons.append("model errors: " + ", ".join(call_errors))
+        reasons.append("errors: " + ",".join(call_errors))
 
-    passed = votes_yes >= required
-    conf_ok = confidence >= APPLY_CONFIDENCE
-    decision = passed and conf_ok
-    if not conf_ok:
-        reasons.append(f"confidence {confidence:.2f} < {APPLY_CONFIDENCE}: apply blocked")
-    if passed and conf_ok:
-        reasons.append("CONSENSUS APPLY")
-    else:
-        reasons.append("CONSENSUS REJECT")
+    decision = yes_weight + 1e-9 >= required_weight and confidence >= APPLY_CONFIDENCE
+    if confidence < APPLY_CONFIDENCE:
+        reasons.append(f"confidence {confidence:.2f} < {APPLY_CONFIDENCE}")
+    reasons.append("CONSENSUS APPLY" if decision else "CONSENSUS REJECT")
+
+    if bot and proposal.get("pair"):
+        with contextlib.suppress(Exception):
+            from hermes_core.engines.experiment_control import record_l2_votes
+
+            record_l2_votes(
+                bot,
+                str(proposal.get("pair")),
+                votes=vote_map,
+                decision=decision,
+            )
+
     return ConsensusResult(
         score,
-        L2_MIN_SCORE if score < L2_UNANIMOUS_SCORE else L2_UNANIMOUS_SCORE,
+        min_s if score < uni_s else uni_s,
         votes_yes,
         reached,
         required,
@@ -498,6 +1028,43 @@ def apply_strategy_change(
     return strat
 
 
+def _build_l2_context(
+    pair: str, bot: str, *, chart_context: str = "", skipped_json: str = ""
+) -> str:
+    """Assemble the critic brief for L2 (Phase 2.5).
+
+    Gives the consensus models what a human reviewer would want: the pair's
+    Cortex win-rate/exile picture, the last few reflection hypotheses (so a
+    model can spot an oscillation or a repeatedly-failing axis), and the recent
+    skip context. Fail-soft — returns at least the chart context.
+    """
+    parts: list[str] = []
+    if chart_context:
+        parts.append(f"CHART: {chart_context[:400]}")
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.decision_cortex import Cortex
+
+        cx = Cortex(bot=bot)
+        summ = cx.summary() or {}
+        s = summ.get("summary", {})
+        type_wr = summ.get("type_wr", {})
+        parts.append(
+            "CORTEX: best_entry="
+            f"{s.get('best_entry_type')} exiled={s.get('exiled_indicators')} "
+            f"type_wr={ {k: (round(v, 2) if isinstance(v, (int, float)) else v) for k, v in type_wr.items()} }"
+        )
+        recent = cx.recent_hypotheses(pair=pair, limit=3)
+        if recent:
+            hist = "; ".join(
+                f"{h.get('variable')} {h.get('old')}->{h.get('new')} [{h.get('status')}]"
+                for h in recent
+            )
+            parts.append(f"LAST_HYPOTHESES: {hist}")
+    if skipped_json:
+        parts.append(f"SKIPS: {skipped_json[:300]}")
+    return " | ".join(parts) if parts else chart_context
+
+
 def run_reflection_pipeline(
     pair: str,
     trades: list[dict],
@@ -544,13 +1111,25 @@ def run_reflection_pipeline(
     if "score" in prop:
         score = float(prop["score"])
 
-    if score >= L2_MIN_SCORE:
+    l2_min, l2_uni = float(L2_MIN_SCORE), float(L2_UNANIMOUS_SCORE)
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.adaptive import adaptive_l2_thresholds
+
+        l2_min, l2_uni = adaptive_l2_thresholds(bot, pair)
+
+    if score >= l2_min:
+        critic_context = _build_l2_context(
+            pair, bot, chart_context=chart_context, skipped_json=skipped_json
+        )
         cons = call_llm_consensus(
             prop,
-            context=chart_context,
+            context=critic_context,
             score=score,
             confidence=float(prop.get("confidence", 0.0)),
             callers=llm_callers,
+            bot=bot,
+            min_score=l2_min,
+            uni_score=l2_uni,
         )
         _log_hypothesis(
             {
@@ -561,6 +1140,20 @@ def run_reflection_pipeline(
             }
         )
         if not cons.decision:
+            with contextlib.suppress(Exception):
+                from hermes_core.engines import experiment_control as _exp
+                from hermes_core.engines.live_verdict import dominant_regime
+
+                _exp.record_pipeline_outcome(
+                    bot,
+                    pair,
+                    variable=str(prop.get("variable")),
+                    status="l2_reject",
+                    old=prop.get("old"),
+                    new=prop.get("new"),
+                    regime=dominant_regime(trades),
+                    reason="l2_consensus_rejected",
+                )
             return {
                 "status": "l2_reject",
                 "pair": pair,
@@ -569,10 +1162,14 @@ def run_reflection_pipeline(
                 "l2": cons.to_dict(),
             }
 
+    # Phase 1: reflection deploy proof is STRICT by default — a candidate must
+    # strictly beat the last version on real data (escape hatch: REFLECT_STRICT=0).
+    strict = __import__("os").getenv("REFLECT_STRICT", "1") != "0"
     kwargs = {
         "strategy": strategy,
         "prices": prices,
         "bot": bot,
+        "strict": strict,
     }
     if fetch_prices is not None:
         kwargs["fetch_prices"] = fetch_prices
@@ -593,11 +1190,34 @@ def run_reflection_pipeline(
                 "version_bumped": (verdict.get("phases") or {})
                 .get("phase6_deploy", {})
                 .get("version_bumped"),
+                # Phase 1.5 provenance: prove it on the record.
+                "strict": verdict.get("strict"),
+                "old_pnl": verdict.get("old_pnl"),
+                "new_pnl": verdict.get("new_pnl"),
+                "improvement_full": verdict.get("improvement_full"),
+                "improvement_oos": verdict.get("improvement_oos"),
+                "data_bars": verdict.get("data_bars"),
+                "version_from": verdict.get("version_from"),
+                "version_to": verdict.get("version_to"),
             },
             "ts": __import__("time").time(),
         }
     )
     if not verdict.get("approved"):
+        with contextlib.suppress(Exception):
+            from hermes_core.engines import experiment_control as _exp
+            from hermes_core.engines.live_verdict import dominant_regime
+
+            _exp.record_pipeline_outcome(
+                bot,
+                pair,
+                variable=str(prop.get("variable")),
+                status="backtest_reject",
+                old=prop.get("old"),
+                new=prop.get("new"),
+                regime=dominant_regime(trades),
+                reason=str(verdict.get("reason") or "backtest_rejected"),
+            )
         return {
             "status": "backtest_reject",
             "pair": pair,
@@ -607,7 +1227,34 @@ def run_reflection_pipeline(
         }
 
     bumped = (verdict.get("phases") or {}).get("phase6_deploy", {}).get("version_bumped")
-    if not auto_deploy:
+
+    # Phase 5.3 staged deploy + Phase 5.2 cooldown.
+    #   auto_deploy False → pending
+    #   stage == prove    → pending (shadow even if auto_deploy True)
+    #   cooldown/quiet    → pending
+    #   canary/full       → live write (+ canary size_down)
+    stage = "full"
+    with contextlib.suppress(Exception):
+        from hermes_core.engines import experiment_control as _exp
+
+        stage = _exp.get_deploy_stage(bot)
+    if not auto_deploy or stage == "prove":
+        with contextlib.suppress(Exception):
+            from hermes_core.engines import experiment_control as _exp
+
+            _exp.record_shadow_challenger(
+                bot,
+                pair,
+                variable=str(prop.get("variable")),
+                old=prop.get("old"),
+                new=prop.get("new"),
+                reason=(
+                    "stage_prove_shadow_only"
+                    if stage == "prove" and auto_deploy
+                    else "auto_deploy_off"
+                ),
+                backtest=verdict,
+            )
         return {
             "status": "approved_pending_deploy",
             "pair": pair,
@@ -615,8 +1262,51 @@ def run_reflection_pipeline(
             "proposal": prop,
             "verdict": verdict,
             "version": bumped,
+            "deploy_stage": stage,
+            "reason": (
+                "stage_prove_shadow_only" if stage == "prove" and auto_deploy else "auto_deploy_off"
+            ),
         }
 
+    closed_now = 0
+    with contextlib.suppress(Exception):
+        closed_now = len(_closed_trades_for_pair(bot, pair))
+    block = None
+    with contextlib.suppress(Exception):
+        from hermes_core.engines import experiment_control as _exp
+
+        block = _exp.deploy_blocked(bot, pair, closed_count=closed_now)
+    if block:
+        _log_hypothesis(
+            {
+                **{k: prop.get(k) for k in ("pair", "bot", "variable", "old", "new")},
+                "status": "deploy_cooldown",
+                "reason": block.get("reason"),
+                "block": block,
+                "ts": __import__("time").time(),
+            }
+        )
+        return {
+            "status": "approved_pending_deploy",
+            "pair": pair,
+            "deployed": False,
+            "proposal": prop,
+            "verdict": verdict,
+            "version": bumped,
+            "deploy_stage": stage,
+            "cooldown": block,
+        }
+
+    if stage == "canary":
+        with contextlib.suppress(Exception):
+            from hermes_core.engines import experiment_control as _exp
+
+            if _exp.pair_safe_mode(bot, pair) is None:
+                _exp.set_safe_mode(bot, pair, "size_down", "canary_deploy")
+
+    import copy as _copy
+
+    prior_strategy = _copy.deepcopy(strategy)
     written = apply_strategy_change(
         pair,
         prop["variable"],
@@ -630,9 +1320,25 @@ def run_reflection_pipeline(
             **{k: prop.get(k) for k in ("pair", "bot", "variable", "old", "new")},
             "status": "deployed",
             "version": written.get("version"),
+            "deploy_stage": stage,
             "ts": __import__("time").time(),
         }
     )
+    with contextlib.suppress(Exception):
+        from hermes_core.engines import experiment_control as _exp
+
+        _exp.record_deployment(
+            bot,
+            pair,
+            variable=prop["variable"],
+            old=prop["old"],
+            new=prop["new"],
+            version_from=str(prior_strategy.get("version", "00")),
+            version_to=written.get("version"),
+            prior_strategy=prior_strategy,
+            closed_count=closed_now,
+        )
+        _exp.clear_shadow_challenger(bot, pair)
     return {
         "status": "deployed",
         "pair": pair,
@@ -641,6 +1347,7 @@ def run_reflection_pipeline(
         "verdict": verdict,
         "version": written.get("version"),
         "strategy": written,
+        "deploy_stage": stage,
     }
 
 
@@ -661,37 +1368,79 @@ def maybe_reflect_pair(
     Always fail-soft at the caller — this function may raise only on logic bugs;
     I/O errors inside the pipeline are converted to status dicts where possible.
     """
-    from hermes_core.state.paths import bot_state_dir
-
     if goal is None:
         goal = (load_config(bot) or {}).get("goal", {})
     every = int(goal.get("reflection_every", 5) or 5)
     if every < 1:
         every = 5
 
-    trades_path = bot_state_dir(bot) / "trades.jsonl"
-    closed: list[dict] = []
-    if trades_path.exists():
-        try:
-            for line in trades_path.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                rec = json.loads(line)
-                if rec.get("pair") != pair:
-                    continue
-                # Real closes carry exit_reason (or legacy reason) + pnl.
-                if rec.get("exit_reason") or rec.get("reason") or "pnl_pct" in rec:
-                    closed.append(rec)
-        except (OSError, json.JSONDecodeError):
-            closed = []
-
+    closed = _closed_trades_for_pair(bot, pair)
     total = len(closed)
-    if total <= 0 or total % every != 0:
-        return None
-    if _is_reflection_done(pair, total, bot):
-        return {"status": "latched", "pair": pair, "closed": total, "deployed": False}
 
-    batch = closed[-every:]
+    # #2: cadence adapts to noise / recent failure rate (prior = goal every).
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.adaptive import adaptive_reflection_every
+
+        every = adaptive_reflection_every(
+            bot,
+            pair,
+            every,
+            pnls=[float(t.get("pnl_pct", 0.0)) for t in closed if t.get("pnl_pct") is not None],
+        )
+
+    # Phase 3.1: judge any live experiment on EVERY close (independent of the
+    # propose cadence) so a worsening version is reverted as soon as it has
+    # enough evidence. Fail-soft — never break the loop on experiment control.
+    revert_result: dict | None = None
+    with contextlib.suppress(Exception):
+        from hermes_core.engines import experiment_control as _exp
+
+        rr = _exp.maybe_auto_revert(bot, pair)
+        if rr.get("status") in ("reverted", "improved"):
+            revert_result = rr
+
+    # Phase 4.5: after a GP admit on a handoff pair, force an early reflection
+    # pass so risk params can be retuned for the new entry behaviour.
+    force_retune = False
+    with contextlib.suppress(Exception):
+        from hermes_core.engines import experiment_control as _exp
+
+        if _exp.pending_reflection_retune(bot, pair) and total > 0:
+            force_retune = True
+            _exp.consume_reflection_retune(bot, pair)
+
+    if not force_retune and (total <= 0 or total % every != 0):
+        if revert_result is not None:
+            return {
+                "status": revert_result["status"],
+                "pair": pair,
+                "closed": total,
+                "deployed": False,
+                "experiment": revert_result,
+            }
+        return None
+    if not force_retune and _is_reflection_done(pair, total, bot):
+        result = {"status": "latched", "pair": pair, "closed": total, "deployed": False}
+        if revert_result is not None:
+            result["experiment"] = revert_result
+        return result
+
+    batch, batch_regime = same_regime_batch(closed, every)
+    if len(batch) < MIN_SAMPLE and not force_retune:
+        # Not enough same-regime evidence yet — wait for a cleaner batch.
+        result = {
+            "status": "no_proposal",
+            "pair": pair,
+            "closed": total,
+            "deployed": False,
+            "reason": "insufficient_same_regime_sample",
+            "regime": batch_regime,
+            "batch_n": len(batch),
+        }
+        if revert_result is not None:
+            result["experiment"] = revert_result
+        _mark_reflection_done(pair, total, bot)
+        return result
     skipped_json = ""
     try:
         from hermes_core.engines.skip_shadow_learn import (
@@ -736,4 +1485,208 @@ def maybe_reflect_pair(
     result["reflection_every"] = every
     if skipped_json:
         result["skip_context"] = skipped_json
+    if revert_result is not None:
+        result["experiment"] = revert_result
+    if force_retune:
+        result["retune_after_gp"] = True
+    if batch_regime:
+        result["regime"] = batch_regime
     return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Reflection health / status taxonomy (Phase 0.2 / 0.3)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# NOTE ON THE DASHBOARD "VERSIONS" TAB (read this before debugging "no new
+# version every 5 trades"): the Reports → Versions tab groups CLOSED TRADES by
+# the ``strategy_version`` string that was stamped on each trade AT OPEN TIME.
+# It is NOT a live view of the reflection pipeline. A reflection run can fire,
+# propose, pass L2, and pass backtest yet still NOT create a new version when
+# ``REFLECT_AUTO_DEPLOY=0`` (soak default) — it stops at ``approved_pending_deploy``.
+# Use ``reflection_health`` (below) — not the Versions tab — to answer
+# "did reflection fire / prove / deploy?".
+
+# Terminal statuses returned by the pipeline, grouped for the dashboard.
+REFLECTION_STATUSES = {
+    # Reflection fired but produced no change (healthy non-event).
+    "no_proposal": "no_proposal",
+    # Rejected before deploy.
+    "l2_reject": "rejected",
+    "backtest_reject": "rejected",
+    "error": "error",
+    # Proven but intentionally not deployed (auto-deploy off) — soak SUCCESS.
+    "approved_pending_deploy": "proven",
+    # Live version written.
+    "deployed": "deployed",
+    # Cadence/latch bookkeeping (not a real reflection run).
+    "latched": "latched",
+}
+
+# Statuses that mean "reflection worked as intended" during a soak. A proven
+# proposal that is intentionally not deployed (REFLECT_AUTO_DEPLOY=0) counts as
+# success — it is the whole point of shadow-proving before live deploy.
+SOAK_SUCCESS_STATUSES = frozenset({"approved_pending_deploy", "deployed"})
+
+
+def status_class(status: str | None) -> str:
+    """Map a raw pipeline status to a coarse class for the dashboard."""
+    return REFLECTION_STATUSES.get(status or "", "unknown")
+
+
+def is_soak_success(status: str | None) -> bool:
+    """True if ``status`` means reflection proved a change (deployed or pending)."""
+    return status in SOAK_SUCCESS_STATUSES
+
+
+def _closed_trades_for_pair(bot: str, pair: str) -> list[dict]:
+    """Closed trades for ``pair`` as reflection counts them (single source of truth).
+
+    A close is any row carrying ``exit_reason``/``reason`` or a ``pnl_pct`` and
+    matching ``pair``. Read from the SAME file the trade loop appends to
+    (``append_trade`` → ``bot_state_dir(bot)/trades.jsonl``) so the health view
+    and the live cadence can never disagree.
+
+    Uses the process-local trades cache (#8) so health polls / experiment eval
+    don't re-parse the whole jsonl on every call.
+    """
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.trades_cache import closed_trades
+
+        return closed_trades(bot, pair)
+    from hermes_core.state.paths import bot_state_dir
+
+    trades_path = bot_state_dir(bot) / "trades.jsonl"
+    closed: list[dict] = []
+    if not trades_path.exists():
+        return closed
+    try:
+        for line in trades_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            rec = json.loads(line)
+            if rec.get("pair") != pair:
+                continue
+            if rec.get("orphan"):
+                continue
+            if rec.get("exit_reason") or rec.get("reason") or "pnl_pct" in rec:
+                closed.append(rec)
+    except (OSError, json.JSONDecodeError):
+        return []
+    return closed
+
+
+def _last_hypothesis_for_pair(bot: str, pair: str) -> dict | None:
+    """Most recent hypotheses.jsonl record for ``pair`` (None if never reflected)."""
+    path = hypotheses_path(bot)
+    if not path.exists():
+        return None
+    last: dict | None = None
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("pair") == pair:
+                last = rec
+    except OSError:
+        return None
+    return last
+
+
+def reflection_health(bot: str, pairs: list[str] | None = None, *, goal: dict | None = None) -> dict:
+    """Per-pair reflection health snapshot (Phase 0.2).
+
+    For each pair reports how many closes reflection can see, when it will next
+    fire, the latch position, and the last recorded status — the data an
+    operator needs to answer "is reflection firing / proving / deploying?"
+    without guessing from the Versions tab. Pure reads; never raises.
+    """
+    import os
+
+    if goal is None:
+        goal = (load_config(bot) or {}).get("goal", {})
+    every = int((goal or {}).get("reflection_every", 5) or 5)
+    if every < 1:
+        every = 5
+
+    if pairs is None:
+        cfg = load_config(bot) or {}
+        pairs = list(cfg.get("pairs") or [])
+
+    auto_deploy = os.getenv("REFLECT_AUTO_DEPLOY", "0") != "0"
+    latches = _load_reflection_latches(bot)
+
+    # Phase 3.6: fold live-experiment / champion / safe-mode state into health.
+    exp_summary: dict = {}
+    with contextlib.suppress(Exception):
+        from hermes_core.engines import experiment_control as _exp
+
+        exp_summary = _exp.experiments_summary(bot, pairs).get("pairs", {})
+
+    out_pairs: dict[str, dict] = {}
+    for pair in pairs:
+        closed = _closed_trades_for_pair(bot, pair)
+        total = len(closed)
+        latch_entry = latches.get(pair) or {}
+        latched_at = latch_entry.get("reflected_count")
+        # Next multiple of `every` strictly greater than the current count (or
+        # `total` itself if it is a not-yet-reflected multiple).
+        if total > 0 and total % every == 0 and latched_at != total:
+            next_fire_at = total  # due now
+        else:
+            next_fire_at = ((total // every) + 1) * every
+        last_hyp = _last_hypothesis_for_pair(bot, pair)
+        last_status = last_hyp.get("status") if last_hyp else None
+        out_pairs[pair] = {
+            "closed": total,
+            "reflection_every": every,
+            "next_fire_at": next_fire_at,
+            "trades_until_next": max(0, next_fire_at - total),
+            "latched_at": latched_at,
+            "last_status": last_status,
+            "last_status_class": status_class(last_status),
+            "last_reason": (last_hyp or {}).get("reason"),
+            "last_ts": (last_hyp or {}).get("ts"),
+            "proven": is_soak_success(last_status),
+            "experiment": (exp_summary.get(pair) or {}).get("experiment"),
+            "champion_status": (exp_summary.get(pair) or {}).get("champion_status"),
+            "revert_count": (exp_summary.get(pair) or {}).get("revert_count", 0),
+            "safe_mode": (exp_summary.get(pair) or {}).get("safe_mode"),
+            "cooldown_axes": (exp_summary.get(pair) or {}).get("cooldown_axes", []),
+            "gp_handoff": (exp_summary.get(pair) or {}).get("gp_handoff", False),
+        }
+        # Phase 6: what the engine has learned about this pair's axes.
+        with contextlib.suppress(Exception):
+            from hermes_core.engines.adaptive import summary as _adapt_summary
+
+            learned = _adapt_summary(bot, pair)
+            out_pairs[pair]["learned_axes"] = learned.get("axes", {})
+            out_pairs[pair]["pathology_bars"] = adaptive_bars(bot, pair, closed)
+
+    deploy_stage = "full"
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.experiment_control import get_deploy_stage
+
+        deploy_stage = get_deploy_stage(bot)
+
+    adaptive_state: dict = {}
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.adaptive import summary as _adapt_summary
+
+        adaptive_state = _adapt_summary(bot)
+
+    return {
+        "bot": bot,
+        "auto_deploy": auto_deploy,
+        "reflection_every": every,
+        "deploy_stage": deploy_stage,
+        "pairs": out_pairs,
+        "adaptive": adaptive_state,
+        "gp_handoff_pairs": [
+            p for p, info in out_pairs.items() if info.get("gp_handoff")
+        ],
+    }

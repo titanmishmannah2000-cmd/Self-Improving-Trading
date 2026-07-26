@@ -21,12 +21,94 @@ Persistence:
 from __future__ import annotations
 
 import contextlib
+import json
 import os
+import threading
 import time
 from pathlib import Path
 
 from hermes_core.state.atomic_json import atomic_write_json, load_json, quarantine_corrupt
 from hermes_core.state.paths import cortex_dir, current_bot
+
+# Append-only reflection channel (Phase 0.4). Reflection runs in a background
+# thread while the main loop mutates the cortex memory blob; writing hypotheses
+# into that blob from two threads/instances would lose updates (load-modify-save
+# race) and could drop trade outcomes. So reflection notes live in a SEPARATE
+# append-only jsonl that both the reflection thread and Cortex can safely share.
+_REFLECTION_LOG_NAME = "reflection_log.jsonl"
+_REFLECTION_LOG_LOCK = threading.Lock()
+
+
+def reflection_log_path(bot: str | None = None) -> Path:
+    """Path to the append-only cortex reflection channel for ``bot``."""
+    base = CORTEX_DIR if CORTEX_DIR is not None else cortex_dir(bot or current_bot())
+    return base / _REFLECTION_LOG_NAME
+
+
+def _param_quarantine_for_summary(bot: str | None) -> list[dict]:
+    """Fail-soft read of the param-side failure memory for Cortex.summary."""
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.experiment_control import param_quarantine
+
+        return param_quarantine(bot or current_bot(), limit=20)
+    return []
+
+
+def _gp_handoff_for_summary(bot: str | None) -> list[str]:
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.experiment_control import gp_handoff_pairs
+
+        return gp_handoff_pairs(bot or current_bot())
+    return []
+
+
+def append_reflection_note(bot: str | None, rec: dict, *, path: Path | None = None) -> bool:
+    """Atomically append one reflection note to the cortex channel (fail-soft).
+
+    O_APPEND + a process-wide lock make concurrent writes from the reflection
+    thread and the main loop safe. Returns False on I/O failure (never raises).
+    ``path`` may override the destination (used by reflect so the mirror lands
+    beside the — possibly test-isolated — hypotheses log).
+    """
+    if path is None:
+        path = reflection_log_path(bot)
+    line = json.dumps(rec, default=str)
+    try:
+        with _REFLECTION_LOG_LOCK:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+                fh.flush()
+        return True
+    except OSError:
+        return False
+
+
+def read_reflection_notes(
+    bot: str | None = None, *, pair: str | None = None, limit: int = 200
+) -> list[dict]:
+    """Read recent reflection notes (newest last), optionally filtered by pair."""
+    path = reflection_log_path(bot)
+    if not path.exists():
+        return []
+    out: list[dict] = []
+    try:
+        with _REFLECTION_LOG_LOCK:
+            lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    for line in lines[-max(1, limit) :]:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if pair is not None and rec.get("pair") != pair:
+            continue
+        out.append(rec)
+    return out
 
 # ── gates ──────────────────────────────────────────────────────────────────
 EXILE_WR = 0.30  # [GUARD L36] WR below this after enough attempts -> exile
@@ -225,9 +307,40 @@ class Cortex:
             self._entries.append(row)
         self._flush()
 
-    def record_hypothesis(self, pair: str, text: str) -> None:
-        self._entries.append({"pair": pair, "type": "hypothesis", "text": text})
-        self._flush()
+    def record_hypothesis(
+        self,
+        pair: str,
+        text: str,
+        *,
+        status: str | None = None,
+        variable: str | None = None,
+        old=None,
+        new=None,
+        version: str | None = None,
+    ) -> None:
+        """Record a reflection hypothesis to the cortex reflection channel.
+
+        Append-only + process-locked so it is safe to call from the background
+        reflection thread without racing the main loop's memory writes. This is
+        how Cortex becomes aware of reflection proposals/outcomes; read it back
+        with :meth:`recent_hypotheses`.
+        """
+        rec: dict = {"pair": pair, "type": "hypothesis", "text": text, "ts": time.time()}
+        if status is not None:
+            rec["status"] = status
+        if variable is not None:
+            rec["variable"] = variable
+        if old is not None:
+            rec["old"] = old
+        if new is not None:
+            rec["new"] = new
+        if version is not None:
+            rec["version"] = version
+        append_reflection_note(self._bot, rec)
+
+    def recent_hypotheses(self, pair: str | None = None, *, limit: int = 50) -> list[dict]:
+        """Recent reflection notes Cortex has seen (newest last)."""
+        return read_reflection_notes(self._bot, pair=pair, limit=limit)
 
     def record_discovery(self, pair: str, ind_id: str) -> None:
         self._entries.append({"pair": pair, "type": "discovery", "ind": ind_id})
@@ -693,12 +806,21 @@ class Cortex:
                     f"Missing cortex evidence fails open to full size."
                 ),
                 "priority_discovery": (
-                    "Dashboard/ops signal only: ≥2 exiled indicators — invent "
-                    "scheduling is not auto-accelerated from this flag yet"
+                    "≥2 exiled indicators OR reflection underperforming+quarantined "
+                    "axes → accelerate GP invent for those pairs (signal path only; "
+                    "never bumps strategy YAML)"
+                ),
+                "param_quarantine": (
+                    "Hypothesis KB bans (pair,variable,old,new) — includes live_worse "
+                    "auto-reverts. Separate from indicator exile (no cross-contamination)."
                 ),
                 "excursion": (
                     "Edge quality: avg MFE / giveback_frac / mfe_capture "
                     "(pnl÷peak MFE). Prefer over time_exit PnL WR."
                 ),
             },
+            # Phase 4.3 shared failure memory (param side). Indicator exile is
+            # already exposed above; the two stores never write each other.
+            "param_quarantine": _param_quarantine_for_summary(self._bot),
+            "gp_handoff_pairs": _gp_handoff_for_summary(self._bot),
         }

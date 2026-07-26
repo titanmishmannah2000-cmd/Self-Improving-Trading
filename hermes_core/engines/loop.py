@@ -366,6 +366,8 @@ def _process_exit(
         "pnl_pct": pnl,
         "size": pos["size"],
         "hold_cycles": pos.get("held_cycles", 0),
+        # Phase 5.1: stamp entry regime so reflection can build same-regime batches.
+        "entry_regime": pos.get("entry_regime") or pos.get("regime_label") or pos.get("regime"),
         **{
             k: _exc[k]
             for k in ("mfe_pct", "mae_pct", "giveback_pct", "giveback_frac", "mfe_capture")
@@ -1101,6 +1103,13 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
             except Exception:  # noqa: BLE001 — keep discover()'s write on merge failure
                 pass
         _log.info("[discovery] %s: admitted=%d -> %s", pair, len(inds), _discovered_path(pair))
+        # Phase 4.5: if reflection handed this pair to GP and invent admitted,
+        # clear the handoff and schedule a risk-param retune. GP never bumps
+        # strategy YAML versions (Phase 4.2 / 4.4 — signal path only).
+        with contextlib.suppress(Exception):
+            from hermes_core.engines.experiment_control import on_gp_admit
+
+            on_gp_admit(bot, pair, admitted=len(inds or []))
         # discover() already writes a full pulse; tag bot/seed for the dashboard.
         try:
             from hermes_core.engines.genetic import load_discovery_pulse
@@ -1374,14 +1383,25 @@ def run_cycle(
                     pair="*",
                     guard="policy_rollback",
                 )
-    # Priority discovery: nudge reinvent sooner when many indicators are exiled.
+    # Priority discovery: nudge reinvent sooner when many indicators are exiled
+    # OR when reflection has handed a pair to GP (Phase 4.1 underperforming +
+    # quarantined axes). Per-pair handoff is more precise than the fleet bool.
+    _prio_pairs: set[str] = set()
     if policy is not None and getattr(policy, "priority_discovery", False):
+        _prio_pairs |= set(pairs)
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.experiment_control import gp_handoff_pairs
+
+        _prio_pairs |= set(gp_handoff_pairs(bot))
+        if policy is not None:
+            _prio_pairs |= set(getattr(policy, "priority_discovery_pairs", None) or [])
+    if _prio_pairs:
         with contextlib.suppress(Exception):
             now_prio = time.time()
-            for _p in pairs:
+            for _p in _prio_pairs:
                 key = (bot, _p)
                 last = float(_DISCOVERY_LAST_INVENT.get(key) or 0.0)
-                if last and (now_prio - last) > 3600:
+                if (not last) or (now_prio - last) > 3600:
                     _DISCOVERY_LAST_INVENT[key] = now_prio - DISCOVERY_REINVENT_INTERVAL_S
 
     for pair in pairs:
@@ -1609,6 +1629,17 @@ def run_cycle(
 
         # --- entry evaluation ---------------------------------------------
         pos = open_positions.get(pair)
+        # Phase 3.5: honour reflection safe mode. ``paused`` blocks new entries;
+        # ``size_down`` shrinks size once we've computed it below. Fail-open.
+        _safe_mode = None
+        with contextlib.suppress(Exception):
+            from hermes_core.engines.experiment_control import pair_safe_mode
+
+            _safe_mode = pair_safe_mode(bot, pair)
+        if pos is None and _safe_mode and _safe_mode.get("mode") == "paused":
+            _log_skip(bot, pair, cycle, "safe_mode_paused")
+            summary["skips"] += 1
+            continue
         if pos is None:
             from hermes_core.engines.entry_ranking import (
                 entry_ranking_enabled,
@@ -1851,6 +1882,13 @@ def run_cycle(
                 evidence_n=_evidence_n,
             )
             size = float(_probe["size"])
+            # Phase 3.5: reflection size-down safe mode (all axes exhausted).
+            if _safe_mode and _safe_mode.get("mode") == "size_down":
+                try:
+                    _sf = float(get_env("REFLECT_SAFE_SIZE_FACTOR", "0.5"))
+                except ValueError:
+                    _sf = 0.5
+                size = round(size * max(0.0, min(1.0, _sf)), 6)
             # HIF: momentum range/confluence guard (Jul 23 gold — chop lesson).
             _mg = {
                 "mom_guard_mode": "disabled",

@@ -108,9 +108,12 @@ from hermes_core.engines.reflect import (
     call_groq,
     call_llm_consensus,
     combined_reflect,
+    is_soak_success,
     layer1_rule_based,
     maybe_reflect_pair,
+    reflection_health,
     run_reflection_pipeline,
+    status_class,
 )
 from hermes_core.engines.regime_sizing import (
     apply_regime_sizing,
@@ -174,6 +177,9 @@ __all__ = [
     "_mark_reflection_done",
     "run_reflection_pipeline",
     "maybe_reflect_pair",
+    "reflection_health",
+    "status_class",
+    "is_soak_success",
     "apply_strategy_change",
     "backtest_with_history",
     "backtest_gp_indicator",

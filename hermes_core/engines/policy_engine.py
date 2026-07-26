@@ -23,6 +23,7 @@ suppression set + a per-pair ``allocation`` map for the dashboard.
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 from hermes_core.engines.decision_cortex import Cortex
@@ -72,6 +73,7 @@ class Policy:
         rollback: bool,
         allocation: dict | None = None,
         soft_weights: bool = False,
+        priority_discovery_pairs: list[str] | None = None,
     ) -> None:
         self.suppressions = suppressions  # {pair: set(entry_type)}
         self.priority_discovery = priority_discovery
@@ -79,6 +81,7 @@ class Policy:
         self.rollback = rollback
         self.allocation = allocation or {}  # {pair: {etype: weight_info}}
         self.soft_weights = soft_weights
+        self.priority_discovery_pairs = list(priority_discovery_pairs or [])
 
     def is_suppressed(self, pair: str, entry_type: str) -> bool:
         return entry_type in self.suppressions.get(pair, set())
@@ -92,6 +95,7 @@ class Policy:
         return {
             "suppressions": {p: sorted(t) for p, t in self.suppressions.items()},
             "priority_discovery": self.priority_discovery,
+            "priority_discovery_pairs": list(self.priority_discovery_pairs),
             "probe_interval": self.probe_interval,
             "rollback": self.rollback,
             "soft_weights": self.soft_weights,
@@ -144,6 +148,16 @@ class PolicyEngine:
 
         exiled = cortex.get_exiled_indicators()
         priority_discovery = len(exiled) >= PRIORITY_DISCOVERY_EXILES
+        # Phase 4.1: reflection underperforming + quarantined axes also force
+        # priority discovery (per-pair handoff latch).
+        handoff_pairs: list[str] = []
+        with contextlib.suppress(Exception):
+            from hermes_core.engines.experiment_control import gp_handoff_pairs
+
+            bot_for_ho = getattr(cortex, "_bot", None) or current_bot()
+            handoff_pairs = gp_handoff_pairs(bot_for_ho)
+            if handoff_pairs:
+                priority_discovery = True
 
         # Closed outcomes only — open/hypothesis rows must not skew probe cadence.
         if hasattr(cortex, "closed_outcome_count"):
@@ -196,6 +210,7 @@ class PolicyEngine:
             rollback,
             allocation=allocation,
             soft_weights=soft,
+            priority_discovery_pairs=handoff_pairs,
         )
         # Persist under the cortex bot — never current_bot() alone (CLI/env mismatch).
         bot_for_save = getattr(cortex, "_bot", None) or current_bot()
@@ -214,4 +229,5 @@ class PolicyEngine:
             d.get("rollback", False),
             allocation=d.get("allocation") or {},
             soft_weights=bool(d.get("soft_weights", False)),
+            priority_discovery_pairs=list(d.get("priority_discovery_pairs") or []),
         )

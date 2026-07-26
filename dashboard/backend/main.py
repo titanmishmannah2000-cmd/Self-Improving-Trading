@@ -2916,6 +2916,34 @@ def cortex_dashboard():
         return {"error": str(e)}
 
 
+@app.get("/api/reflection-health/{bot_name}")
+def reflection_health_dashboard(bot_name: str):
+    """Reflection health for one bot (Phase 0.2).
+
+    Reads the ``reflection_health`` block the bot pushes inside ``cortex_json``
+    (source of truth: trades.jsonl + reflection latch + hypotheses.jsonl). Lets
+    an operator see per-pair closed count, next-fire cadence, latch position,
+    last status, and whether auto-deploy is on — without reading the bot volume.
+    """
+    if bot_name not in VALID_BOTS:
+        raise HTTPException(404, f"Unknown bot '{bot_name}'")
+    try:
+        conn = get_conn()
+        row = conn.execute(
+            "SELECT cortex_json FROM latest_state WHERE bot=?", (bot_name,)
+        ).fetchone()
+        conn.close()
+        if not row or not row["cortex_json"]:
+            return {"bot": bot_name, "status": "no_data"}
+        cortex = json.loads(row["cortex_json"])
+        health = cortex.get("reflection_health")
+        if not health:
+            return {"bot": bot_name, "status": "no_data"}
+        return health
+    except Exception as e:
+        return {"bot": bot_name, "error": str(e)}
+
+
 @app.get("/api/audit/findings/{finding_id}")
 def audit_get_finding(finding_id: str):
     """Get a single finding by ID."""
