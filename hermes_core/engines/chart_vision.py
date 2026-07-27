@@ -9,7 +9,7 @@ Guards (tagged so tools/verify_guard_tags.py can find them):
        (weaker than L14; a confident sell still passes through to the engines).
 
 Behaviour (blueprint Section 7 / Engine 6):
-  * PRIMARY  Gemini gemini-2.5-flash, FALLBACK Groq llama-4-scout.
+  * PRIMARY  Gemini gemini-2.5-flash, FALLBACK Groq llama-3.1-8b-instant.
   * 60-minute cache (in-memory + on-disk) so we don't re-call the LLM every
     60s cycle.
   * FAIL-OPEN: any pipeline error yields an empty context, never an exception —
@@ -34,14 +34,23 @@ from hermes_core.state.paths import chart_cache_dir
 
 # ── config ────────────────────────────────────────────────────────────────
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL = "gemini-2.5-flash"
-GEMINI_URL = (
-    f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
-)
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_URL = os.environ.get("GROQ_URL", "https://api.groq.com/openai/v1/chat/completions")
 CACHE_INTERVAL_S = 3600  # 60 minutes
+
+
+def _gemini_url() -> str:
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    return os.environ.get(
+        "GEMINI_URL",
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+    )
+
+
+def _groq_model() -> str:
+    return os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
 
 
 def _cache_dir() -> Path:
@@ -217,7 +226,7 @@ def analyze_chart_gemini(png_path, symbol: str) -> str | None:
         ]
     }
     try:
-        resp = httpx.post(GEMINI_URL, json=payload, params={"key": GEMINI_API_KEY}, timeout=30)
+        resp = httpx.post(_gemini_url(), json=payload, params={"key": GEMINI_API_KEY}, timeout=30)
         if resp.status_code == 429:
             return "CHART: unavailable (rate limited)"
         resp.raise_for_status()
@@ -240,7 +249,7 @@ def analyze_chart_groq(png_path, symbol: str) -> str | None:
     except OSError:
         return None
     payload = {
-        "model": GROQ_MODEL,
+        "model": _groq_model(),
         "messages": [
             {
                 "role": "user",

@@ -19,6 +19,13 @@ import hermes_core.engines.chart_vision as cv
 from hermes_core.engines import hard_block, soft_block
 
 
+def test_default_chart_model_ids(monkeypatch):
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    monkeypatch.delenv("GROQ_MODEL", raising=False)
+    assert "gemini-2.5-flash" in cv._gemini_url()
+    assert cv._groq_model() == "llama-3.1-8b-instant"
+
+
 # --- guard predicates -------------------------------------------------------
 def test_hard_block_avoid():
     # blueprint: hard_block returns True on "avoid entirely"

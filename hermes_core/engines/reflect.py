@@ -699,6 +699,9 @@ DEFAULT_MODELS = ("deepseek", "gemini", "groq")
 
 _DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
 _GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-pro"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -745,7 +748,7 @@ def call_deepseek(prompt: str, api_key: str | None = None) -> str:
     key = api_key or _env("DEEPSEEK_API_KEY")
     if not key:
         raise RuntimeError("DEEPSEEK_API_KEY missing")
-    model = _env("DEEPSEEK_MODEL", "deepseek-chat") or "deepseek-chat"
+    model = _env("DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL) or DEFAULT_DEEPSEEK_MODEL
     url = _env("DEEPSEEK_URL", _DEEPSEEK_URL) or _DEEPSEEK_URL
     return _openai_chat_completion(url=url, api_key=key, model=model, prompt=prompt)
 
@@ -757,7 +760,7 @@ def call_gemini(prompt: str, api_key: str | None = None) -> str:
     key = api_key or _env("GEMINI_API_KEY")
     if not key:
         raise RuntimeError("GEMINI_API_KEY missing")
-    model = _env("GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+    model = _env("GEMINI_MODEL", DEFAULT_GEMINI_MODEL) or DEFAULT_GEMINI_MODEL
     url = _env(
         "GEMINI_URL",
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
@@ -782,7 +785,7 @@ def call_groq(prompt: str, api_key: str | None = None) -> str:
     key = api_key or _env("GROQ_API_KEY")
     if not key:
         raise RuntimeError("GROQ_API_KEY missing")
-    model = _env("GROQ_MODEL", "llama-3.1-8b-instant") or "llama-3.1-8b-instant"
+    model = _env("GROQ_MODEL", DEFAULT_GROQ_MODEL) or DEFAULT_GROQ_MODEL
     url = _env("GROQ_URL", _GROQ_URL) or _GROQ_URL
     return _openai_chat_completion(url=url, api_key=key, model=model, prompt=prompt)
 

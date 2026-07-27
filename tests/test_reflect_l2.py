@@ -158,8 +158,39 @@ def test_call_deepseek_httpx(monkeypatch):
     out = rf.call_deepseek("should we apply?", api_key="sk-test")
     assert out == "YES"
     assert "deepseek.com" in calls["url"]
-    assert calls["json"]["model"] == "deepseek-chat"
+    assert calls["json"]["model"] == rf.DEFAULT_DEEPSEEK_MODEL
     assert calls["headers"]["Authorization"] == "Bearer sk-test"
+
+
+def test_default_l2_model_ids(monkeypatch):
+    from hermes_core.engines import reflect as rf
+    import httpx as hx
+
+    assert rf.DEFAULT_DEEPSEEK_MODEL == "deepseek-v4-pro"
+    assert rf.DEFAULT_GEMINI_MODEL == "gemini-2.5-flash"
+    assert rf.DEFAULT_GROQ_MODEL == "llama-3.1-8b-instant"
+    monkeypatch.delenv("DEEPSEEK_MODEL", raising=False)
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    monkeypatch.delenv("GROQ_MODEL", raising=False)
+    seen = {}
+
+    def _post(url, *, json=None, headers=None, timeout=None, params=None):
+        if "googleapis" in url:
+            seen["gemini_url"] = url
+            return _FakeResp({"candidates": [{"content": {"parts": [{"text": "YES"}]}}]})
+        if "deepseek.com" in url:
+            seen["deepseek_model"] = (json or {}).get("model")
+            return _FakeResp({"choices": [{"message": {"content": "YES"}}]})
+        seen["groq_model"] = (json or {}).get("model")
+        return _FakeResp({"choices": [{"message": {"content": "YES"}}]})
+
+    monkeypatch.setattr(hx, "post", _post)
+    rf.call_deepseek("?", api_key="k")
+    rf.call_gemini("?", api_key="k")
+    rf.call_groq("?", api_key="k")
+    assert seen["deepseek_model"] == "deepseek-v4-pro"
+    assert "gemini-2.5-flash" in seen["gemini_url"]
+    assert seen["groq_model"] == "llama-3.1-8b-instant"
 
 
 def test_call_gemini_httpx(monkeypatch):
