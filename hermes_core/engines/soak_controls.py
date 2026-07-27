@@ -20,7 +20,18 @@ from hermes_core.state.paths import bot_state_dir
 _FX_STUB_SET = frozenset({1.1, 1.11, 1.12, 1.13})
 _FX_PAIRS = frozenset({"EUR/USD", "GBP/USD", "AUD/USD", "GBP/JPY"})
 # chart_error is fail-open in the loop (cycle continues) — do not trip feed SLO.
+# Halt-echo skips (feed_slo:/idle_slo:) are consequences of a halt, not feed
+# measurements — counting them would deadlock recovery.
 _FEED_SKIP_PREFIXES = ("fetch_error", "no_candle")
+_FEED_SKIP_ECHO_PREFIXES = ("feed_slo:", "idle_slo:", "halt:feed", "halt:idle")
+
+
+def _is_feed_failure_reason(reason: str) -> bool:
+    r = str(reason or "")
+    if any(r.startswith(p) for p in _FEED_SKIP_ECHO_PREFIXES):
+        return False
+    return r.startswith(_FEED_SKIP_PREFIXES)
+
 _STATE_TOUCH_FILES = (
     "trades.jsonl",
     "skips.jsonl",
@@ -178,6 +189,14 @@ def maybe_recover_halt(
     idle_hours = {"crypto": 4.0, "gold": 8.0, "forex": 6.0}.get(bot, 6.0)
     idle = idle or idle_skip_slo(bot_state_dir(bot) / "skips.jsonl", hours=idle_hours)
     feed_ok = bool(feed.get("ok", True))
+    # Sticky feed_slo trap: halt-echo skips + old no_candle keep the long window
+    # red forever. Re-check a fresh window (echoes ignored) before giving up.
+    if (not feed_ok) and str(reason).startswith("feed_slo:") and price_ok:
+        fresh = feed_error_rate(
+            bot_state_dir(bot) / "skips.jsonl", window=80, max_age_s=15 * 60.0
+        )
+        if fresh.get("ok", True) or int(fresh.get("feed_n") or 0) == 0:
+            feed_ok = True
     idle_ok = not bool(idle.get("effectively_paused"))
     if feed_ok and idle_ok and price_ok:
         clear_halt(bot, alert=True, reason=f"recovered_from:{reason}")
@@ -283,11 +302,18 @@ def price_sanity_book(
     return True, ""
 
 
-def feed_error_rate(skips_path: Path, *, window: int = 200) -> dict[str, Any]:
-    """Fraction of recent skips that are feed/chart failures."""
+def feed_error_rate(
+    skips_path: Path, *, window: int = 200, max_age_s: float | None = None
+) -> dict[str, Any]:
+    """Fraction of recent skips that are feed/chart failures.
+
+    ``max_age_s`` limits to fresh skips (used by halt recovery so pre-fix
+    ``no_candle`` history cannot forever block ``feed_slo`` auto-clear).
+    """
     if not skips_path.exists():
         return {"n": 0, "feed_n": 0, "rate": 0.0, "ok": True}
     rows: list[str] = []
+    now = time.time()
     try:
         lines = _tail_lines(skips_path, window)
         for line in lines:
@@ -298,11 +324,18 @@ def feed_error_rate(skips_path: Path, *, window: int = 200) -> dict[str, Any]:
                 rec = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if max_age_s is not None:
+                try:
+                    ts = float(rec.get("ts") or 0.0)
+                except (TypeError, ValueError):
+                    ts = 0.0
+                if ts <= 0 or (now - ts) > max_age_s:
+                    continue
             rows.append(str(rec.get("reason") or rec.get("reason_skipped") or ""))
     except OSError:
         return {"n": 0, "feed_n": 0, "rate": 0.0, "ok": True}
     n = len(rows)
-    feed_n = sum(1 for r in rows if r.startswith(_FEED_SKIP_PREFIXES))
+    feed_n = sum(1 for r in rows if _is_feed_failure_reason(r))
     rate = (feed_n / n) if n else 0.0
     # Auto-halt threshold: >=40% of last 200 skips are feed failures, n>=40.
     ok = not (n >= 40 and rate >= 0.40)
@@ -340,7 +373,7 @@ def idle_skip_slo(skips_path: Path, *, hours: float = 6.0, window: int = 500) ->
         for r in reasons
         if r == "no_signal"
         or r.startswith("no_signal:")
-        or r.startswith(_FEED_SKIP_PREFIXES)
+        or _is_feed_failure_reason(r)
         or r.startswith("bb_bandwidth")
     )
     paused = badish == len(reasons)
