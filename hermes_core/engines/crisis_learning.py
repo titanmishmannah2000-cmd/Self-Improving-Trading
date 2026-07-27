@@ -421,6 +421,68 @@ def save_lived_crisis(
     return crisis_id
 
 
+def recommend_from_prices(
+    prices: list[float] | None,
+    volumes: list[float] | None = None,
+) -> dict:
+    """Extract a crisis fingerprint from prices and return a recommendation.
+
+    Fail-open: short/empty history yields the novel/safe dict (no crash).
+    """
+    feats = _extract_crisis_features(prices or [], volumes)
+    if not feats:
+        return get_crisis_recommendation([])
+    return get_crisis_recommendation(feats)
+
+
+def soft_widen_stop(stop_loss_pct: float, rec: dict | None) -> float:
+    """Widen stop toward a non-novel crisis recommendation; never tighten.
+
+    Targets are intentionally not applied here — shrinking profit_target mid-soak
+    would change R:R aggressively; stamp rec on the position instead.
+    """
+    try:
+        sl = float(stop_loss_pct)
+    except (TypeError, ValueError):
+        return float(stop_loss_pct or 0.0)
+    if not rec or rec.get("novel"):
+        return sl
+    rs = rec.get("recommended_stop_pct")
+    if rs is None:
+        return sl
+    try:
+        return max(sl, float(rs))
+    except (TypeError, ValueError):
+        return sl
+
+
+def save_adverse_lived_crisis(
+    pair: str,
+    pnl_pct: float,
+    price_history: list[float] | None,
+    *,
+    exit_reason: str | None = None,
+    threshold: float = -1.0,
+    volume_history: list[float] | None = None,
+) -> str | None:
+    """Persist a lived crisis only on adverse closes (fail-soft).
+
+    Triggers when ``pnl_pct <= threshold`` or the exit was a hard stop.
+    Requires >= 60 bars (same gate as ``save_lived_crisis``).
+    """
+    try:
+        pnl = float(pnl_pct)
+    except (TypeError, ValueError):
+        return None
+    reason = (exit_reason or "").lower()
+    hard_stop = reason in ("stop_loss", "atr_stop", "flatline_stop")
+    if pnl > threshold and not hard_stop:
+        return None
+    if not price_history or len(price_history) < 60:
+        return None
+    return save_lived_crisis(pair, pnl, list(price_history), volume_history)
+
+
 class CrisisLearning:
     """Roadmap S12 contract wrapper around the free functions above."""
 

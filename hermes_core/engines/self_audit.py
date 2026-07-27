@@ -469,6 +469,21 @@ def run(bot: str | None = None) -> Report:
         )
     )
 
+    # HIF dormancy snapshot — informational; all-off is intentional soak policy.
+    try:
+        from hermes_core.engines.hif_flags import snapshot as hif_snapshot
+
+        snap = hif_snapshot()
+        hb_hif = hb_data.get("hif_flags") if isinstance(hb_data, dict) else None
+        detail = (
+            f"enabled={snap['n_enabled']}/{snap['n_total']} "
+            f"on={snap['enabled'] or ['(none)']} "
+            f"hb_has_snapshot={isinstance(hb_hif, dict)}"
+        )
+        checks.append(_check("hif_flags_snapshot", True, detail, critical=False))
+    except Exception as exc:  # noqa: BLE001
+        checks.append(_check("hif_flags_snapshot", False, str(exc), critical=False))
+
     checks.extend(_cortex_soak_checks(b, state_dir))
 
     critical_ok = all(c["passed"] for c in checks if c.get("critical", True))

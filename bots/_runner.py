@@ -14,6 +14,7 @@ Env:
   PRICE_BACKEND        aggregate | yfinance | http
   HERMES_BOT_NAME      forex | gold | crypto (override via argv for local runs)
   HERMES_CYCLE_SECONDS cycle cadence (default 60)
+  SELF_AUDIT_EVERY_CYCLES  write self_audit.json every N cycles (default 60; 0=off)
   DASHBOARD_API_URL    where the dashboard listens (empty -> no price push)
   INGEST_TOKEN         dashboard ingest auth (must match dashboard's INGEST_TOKEN)
   PRICE_WS_URL/_API_KEY  optional real-time crypto WS (else REST poll fallback)
@@ -45,6 +46,7 @@ def _now_iso() -> str:
 
 from hermes_core.adapters import make_aggregator_fetch, make_default_fetch, seed_history
 from hermes_core.config.loader import load_config, load_strategy_for_pair
+from hermes_core.engines.chart_vision import get_chart_context
 from hermes_core.engines.loop import run_cycle
 from hermes_core.env import get_env, load_env
 
@@ -493,6 +495,35 @@ def _discovery_loop(
         stop.wait(interval)
 
 
+def _maybe_self_audit(bot: str, cycle: int) -> None:
+    """Periodic ops self-audit — report-only, never mutates trading state.
+
+    Writes ``{bot}/state/self_audit.json``. Fail-soft: never raises into the
+    heartbeat. Set SELF_AUDIT_EVERY_CYCLES=0 to disable.
+    """
+    try:
+        every = int(get_env("SELF_AUDIT_EVERY_CYCLES", "60") or "60")
+    except ValueError:
+        every = 60
+    if every <= 0 or cycle <= 0 or cycle % every != 0:
+        return
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.self_audit import run as self_audit_run
+        from hermes_core.state.atomic_json import atomic_write_json
+        from hermes_core.state.paths import bot_state_dir
+
+        report = self_audit_run(bot)
+        payload = report.to_dict()
+        payload["cycle"] = cycle
+        payload["ts"] = time.time()
+        atomic_write_json(bot_state_dir(bot) / "self_audit.json", payload)
+        print(
+            f"[hermes][self_audit] {bot}: ok={report.ok} go_nogo={report.go_nogo} "
+            f"checks={len(report.checks)}",
+            flush=True,
+        )
+
+
 async def run_bot(bot_name: str) -> None:
     import signal
     import traceback as _tb
@@ -611,6 +642,7 @@ async def run_bot(bot_name: str) -> None:
                     history_fn=getattr(aggregator, "seed_history_fn", seed_history),
                     consecutive_failures=consecutive_failures,
                     alert_fn=_alert_fn,
+                    chart_context_fn=get_chart_context,
                 )
             except Exception:  # noqa: BLE001 — one bad cycle must not kill the bot
                 print(f"[hermes] {bot} cycle {cycle} errored", file=sys.stderr, flush=True)
@@ -638,6 +670,7 @@ async def run_bot(bot_name: str) -> None:
                 # stall the bot. [Gap 1]
                 _push_state(bot, cfg, cycle, summary)
                 _drain_pending_approvals(bot)
+                _maybe_self_audit(bot, cycle)
             _persist_book()
             # Interruptible sleep so SIGTERM can stop promptly.
             if _stop.wait(cycle_seconds):

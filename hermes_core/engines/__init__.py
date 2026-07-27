@@ -21,7 +21,10 @@ from hermes_core.engines.crisis_learning import (
     check_novel_regime,
     find_nearest_crisis,
     get_crisis_recommendation,
+    recommend_from_prices,
+    save_adverse_lived_crisis,
     save_lived_crisis,
+    soft_widen_stop,
 )
 from hermes_core.engines.decision_cortex import Cortex
 from hermes_core.engines.entry import (
@@ -190,6 +193,9 @@ __all__ = [
     "find_nearest_crisis",
     "get_crisis_recommendation",
     "save_lived_crisis",
+    "recommend_from_prices",
+    "soft_widen_stop",
+    "save_adverse_lived_crisis",
     "GeneticEngine",
     "discover",
     "load_discovered_indicators",

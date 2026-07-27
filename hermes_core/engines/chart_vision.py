@@ -63,6 +63,10 @@ SYMBOL_MAP = {
     "GBP/USD": "GBPUSD=X",
     "AUD/USD": "AUDUSD=X",
     "GBP/JPY": "GBPJPY=X",
+    "XAU/USD": "GC=F",
+    "XAG/USD": "SI=F",
+    "BTC/USD": "BTC-USD",
+    "ETH/USD": "ETH-USD",
 }
 
 # in-memory cache: pair -> (context, ts)

@@ -124,3 +124,45 @@ def test_crisis_learning_class_wrapper():
     assert sig is not None and len(sig) == cl.CRISIS_SIGNATURE_LENGTH
     match = cl_eng.nearest(sig)
     assert match is None or match.crisis_id  # nearest may be None if novel
+
+
+# ── P1 wiring helpers (recommend / soft widen / adverse save) ─────────────
+def test_recommend_from_prices_covid_fingerprint():
+    # Exact COVID vector as "prices" won't extract — use known series + stub.
+    # Direct features path already covered; prices path must be fail-open.
+    rec = cl.recommend_from_prices([])
+    assert rec["novel"] is True
+    rec2 = cl.recommend_from_prices(_known_series(n=120))
+    assert isinstance(rec2, dict)
+    assert "recommended_stop_pct" in rec2
+    assert "novel" in rec2
+
+
+def test_soft_widen_stop_never_tightens():
+    rec = {
+        "novel": False,
+        "recommended_stop_pct": 2.5,
+    }
+    assert cl.soft_widen_stop(1.0, rec) == 2.5
+    assert cl.soft_widen_stop(3.0, rec) == 3.0  # already wider
+    assert cl.soft_widen_stop(1.0, {"novel": True, "recommended_stop_pct": 9.0}) == 1.0
+    assert cl.soft_widen_stop(1.0, None) == 1.0
+
+
+def test_save_adverse_lived_crisis_threshold_and_stop():
+    hist = _known_series(n=80)
+    # Mild loss above threshold, not a hard stop → no save
+    assert cl.save_adverse_lived_crisis("EUR/USD", -0.5, hist) is None
+    # Adverse PnL → save
+    cid = cl.save_adverse_lived_crisis("EUR/USD", -1.5, hist)
+    assert cid is not None and cid.startswith("lived_EUR/USD_")
+    # Hard stop with mild PnL still saves
+    cid2 = cl.save_adverse_lived_crisis(
+        "USD/JPY",
+        -0.2,
+        hist,
+        exit_reason="stop_loss",
+    )
+    assert cid2 is not None
+    # Short history → None
+    assert cl.save_adverse_lived_crisis("EUR/USD", -5.0, hist[:10]) is None

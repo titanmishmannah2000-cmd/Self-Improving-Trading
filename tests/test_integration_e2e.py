@@ -329,7 +329,8 @@ def test_health_engines_after_run(live_api):
     assert reg.get("price_adapter") is True
     assert reg.get("indicators") is True
     assert reg.get("config") is True
-    assert reg.get("chart_vision") is True
+    # Empty chart context is not a healthy vision signal (false-green fixed).
+    assert reg.get("chart_vision") is False
 
 
 def test_discord_alert():

@@ -172,10 +172,58 @@ def test_engine_failure_continues():
     assert hb["cycle"] >= 11
 
 
+def test_chart_vision_health_false_when_unwired():
+    """Missing chart_context_fn must not report chart_vision=True."""
+    health = {}
+    feed = FakeFeed("fresh")
+    run_cycle(
+        "forex",
+        1,
+        fetch_fn=feed,
+        now_fn=lambda: 12 * 3600,
+        health_registry=health,
+        chart_context_fn=None,
+    )
+    assert health.get("chart_vision") is False
+
+
+def test_chart_vision_health_true_on_usable_context():
+    health = {}
+    feed = FakeFeed("fresh")
+    run_cycle(
+        "forex",
+        1,
+        fetch_fn=feed,
+        now_fn=lambda: 12 * 3600,
+        health_registry=health,
+        chart_context_fn=lambda _p: "trend: uptrend (conf=0.80). Rec: enter long",
+    )
+    assert health.get("chart_vision") is True
+    hb = _hb()
+    assert any(
+        str(v).startswith("trend:")
+        for v in (hb.get("chart_contexts") or {}).values()
+    )
+
+
+def test_chart_vision_health_false_on_unavailable_string():
+    health = {}
+    feed = FakeFeed("fresh")
+    run_cycle(
+        "forex",
+        1,
+        fetch_fn=feed,
+        now_fn=lambda: 12 * 3600,
+        health_registry=health,
+        chart_context_fn=lambda _p: "CHART: unavailable",
+    )
+    assert health.get("chart_vision") is False
+
+
 def test_loop_is_generic_no_bot_branch():
     # running the gold bot exercises a different config/strategy without code change
     feed = FakeFeed("fresh")
     for c in range(1, 12):
         run_cycle("gold", c, fetch_fn=feed, now_fn=lambda: 12 * 3600)
-    hb = _hb()
+    hb = json.loads((_bot_state("gold") / "heartbeat.json").read_text(encoding="utf-8"))
     assert hb["cycle"] >= 11

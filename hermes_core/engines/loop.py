@@ -35,7 +35,12 @@ def _now_iso() -> str:
 
 from hermes_core.adapters import make_default_fetch
 from hermes_core.config import load_config, load_strategy_for_pair, state_root
-from hermes_core.engines.crisis_learning import check_novel_regime
+from hermes_core.engines.crisis_learning import (
+    check_novel_regime,
+    recommend_from_prices,
+    save_adverse_lived_crisis,
+    soft_widen_stop,
+)
 from hermes_core.engines.decision_cortex import Cortex
 from hermes_core.engines.entry import (
     _entry_rsi_threshold,
@@ -196,6 +201,7 @@ def write_heartbeat(
     regimes: dict | None = None,
     prices: dict | None = None,
     price_history: dict | None = None,
+    hif_flags: dict | None = None,
 ) -> dict:
     """Emit heartbeat.json with the documented keys (blueprint loop.py:1774/4433).
 
@@ -222,6 +228,8 @@ def write_heartbeat(
         # (e.g. gold/silver), so the card still shows a live mini-chart.
         "price_history": price_history or {},
     }
+    if hif_flags is not None:
+        data["hif_flags"] = hif_flags
     disc_ts = _LAST_DISCOVERY_RUN.get(asset)
     if disc_ts:
         data["last_discovery_run_ts"] = datetime.fromtimestamp(disc_ts, UTC).isoformat()
@@ -458,6 +466,19 @@ def _process_exit(
     if alert_fn is not None:
         with contextlib.suppress(Exception):
             alert_fn(bot, pair, ex.reason, pnl)
+    # Crisis learning: append-only lived fingerprint on adverse closes.
+    # Fail-soft — never break the close/heartbeat path.
+    with contextlib.suppress(Exception):
+        _cid = save_adverse_lived_crisis(
+            pair,
+            float(pnl),
+            list(prices) if prices else None,
+            exit_reason=ex.reason,
+        )
+        if _cid:
+            summary.setdefault("lived_crises", []).append(
+                {"pair": pair, "crisis_id": _cid, "pnl_pct": pnl}
+            )
     # Reflection latch: every N closed trades → L1 → (L2) → backtest → deploy.
     # Fail-soft: never let reflection break the close/heartbeat path.
     with contextlib.suppress(Exception):
@@ -1623,12 +1644,32 @@ def run_cycle(
         )
 
         # --- chart context (fail-open; an error yields neutral) -------------
+        # Health must be honest: missing fn or empty/unavailable context is NOT
+        # a green chart_vision signal (false-green hid the unwired runner gap).
         context = ""
+        _UNUSABLE_EXACT = (
+            "",
+            "chart data unavailable.",
+            "chart generation failed.",
+        )
         try:
-            if chart_context_fn is not None:
+            if chart_context_fn is None:
+                chart_contexts[pair] = ""
+                # Leave chart_vision unset/false — never claim healthy when unwired.
+                health_registry.setdefault("chart_vision", False)
+            else:
                 context = chart_context_fn(pair) or ""
-            chart_contexts[pair] = context
-            health_registry["chart_vision"] = True
+                chart_contexts[pair] = context
+                low = str(context).strip().lower()
+                usable = bool(low) and low not in _UNUSABLE_EXACT and not low.startswith(
+                    "chart: unavailable"
+                )
+                # Any pair with usable context flips health True; unavailable
+                # keeps False unless a prior pair already succeeded this cycle.
+                if usable:
+                    health_registry["chart_vision"] = True
+                else:
+                    health_registry.setdefault("chart_vision", False)
         except Exception as exc:  # noqa: BLE001 — fail-open, never crash
             context = ""
             chart_contexts[pair] = ""
@@ -1695,7 +1736,9 @@ def run_cycle(
             # GP promote gate: expectancy-driven per-pair ban/unban (seeds from
             # GP_EXCLUDE_PAIRS). Invent/shadow still run when banned.
             _want_gp = False
-            if get_env("GP_PROMOTE") == "1":
+            from hermes_core.engines.hif_flags import gp_promote_enabled
+
+            if gp_promote_enabled():
                 try:
                     from hermes_core.engines import gp_promote_gate as gpg
 
@@ -1872,6 +1915,19 @@ def run_cycle(
             # RR guard (S6) — reject R:R < 1.0 before committing
             sl = float(strategy["stop_loss_pct"])
             tp = float(strategy["profit_target_pct"])
+            # Soft crisis recommend: widen stop only when non-novel + RR still ok.
+            # Target not applied (would shrink R:R). Stamp rec on the position.
+            # Default OFF (soak-dormant); set CRISIS_RECOMMEND=1 to enable.
+            _crisis_rec: dict = {}
+            with contextlib.suppress(Exception):
+                from hermes_core.engines.hif_flags import crisis_recommend_enabled
+
+                if crisis_recommend_enabled():
+                    _crisis_rec = recommend_from_prices(prices)
+                    if not _crisis_rec.get("novel"):
+                        _sl_w = soft_widen_stop(sl, _crisis_rec)
+                        if _sl_w != sl and check_rr_guard(_sl_w, tp):
+                            sl = _sl_w
             if not check_rr_guard(sl, tp):
                 _log_skip(bot, pair, cycle, "rr_guard")
                 summary["skips"] += 1
@@ -1892,7 +1948,9 @@ def run_cycle(
             # HIF Phase-1 probe sizing: shrink only when PROBE_SIZING=1 and
             # cortex evidence for (pair, entry_type) is thin. Never skips.
             # Fail-open to full size if cortex cannot be read.
-            _probe_enabled = get_env("PROBE_SIZING", "0") == "1"
+            from hermes_core.engines.hif_flags import probe_sizing_enabled
+
+            _probe_enabled = probe_sizing_enabled()
             _evidence_n: int | None = None
             if _probe_enabled or _soft:
                 try:
@@ -2164,6 +2222,12 @@ def run_cycle(
                 "peak_mfe_pct": 0.0,
                 "trough_mae_pct": 0.0,
                 "mfe_tracking": False,
+                # Crisis recommend (soft advisory; stop may already be widened)
+                "crisis_name": _crisis_rec.get("crisis_name"),
+                "crisis_novel": _crisis_rec.get("novel"),
+                "crisis_distance": _crisis_rec.get("distance"),
+                "crisis_recommended_stop_pct": _crisis_rec.get("recommended_stop_pct"),
+                "crisis_recommended_target_pct": _crisis_rec.get("recommended_target_pct"),
             }
             # [CORTEX] record the entry (per-type memory; exile persists across cycles)
             with contextlib.suppress(Exception):
@@ -2218,6 +2282,12 @@ def run_cycle(
         summary["price_sanity"] = _book_reason
         write_halt(bot, _book_reason)
         summary["halted"] = True
+    _hif = None
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.hif_flags import snapshot as hif_snapshot
+
+        _hif = hif_snapshot()
+        summary["hif_flags"] = _hif
     write_heartbeat(
         bot,
         cycle,
@@ -2230,6 +2300,7 @@ def run_cycle(
         regimes=regimes,
         prices=summary.get("prices") or {},
         price_history=price_history,
+        hif_flags=_hif,
     )
     summary["consecutive_failures"] = consecutive_failures
     summary["oversold_pairs"] = oversold_pairs

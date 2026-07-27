@@ -26,6 +26,31 @@ def test_default_chart_model_ids(monkeypatch):
     assert cv._groq_model() == "llama-3.1-8b-instant"
 
 
+def test_symbol_map_covers_soak_bots():
+    for pair in (
+        "EUR/USD",
+        "GBP/USD",
+        "AUD/USD",
+        "GBP/JPY",
+        "XAU/USD",
+        "XAG/USD",
+        "BTC/USD",
+        "ETH/USD",
+    ):
+        assert pair in cv.SYMBOL_MAP
+        assert cv.SYMBOL_MAP[pair]
+
+
+def test_runner_wires_chart_context_fn():
+    """Production runner must inject get_chart_context into run_cycle."""
+    import inspect
+    from bots import _runner as runner
+
+    src = inspect.getsource(runner.run_bot)
+    assert "chart_context_fn=get_chart_context" in src
+    assert runner.get_chart_context is cv.get_chart_context
+
+
 # --- guard predicates -------------------------------------------------------
 def test_hard_block_avoid():
     # blueprint: hard_block returns True on "avoid entirely"
