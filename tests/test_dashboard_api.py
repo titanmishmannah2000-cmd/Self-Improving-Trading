@@ -393,6 +393,56 @@ def test_ingest_hypotheses_normalize_old_new_and_skip_reason():
     assert isinstance(fl, list) and any(x.get("pair") == "AUD/USD" for x in fl)
 
 
+def test_chart_analysis_endpoint_parses_vision_and_guards():
+    """Activity Charts tab: per-pair context + L14/L16 flags from heartbeat."""
+    r = client.post(
+        "/api/ingest/forex",
+        json={
+            "recent_trades": [],
+            "strategy": {"EUR/USD": {"strategy_type": "mean_reversion", "version": "00"}},
+            "heartbeat": {
+                "cycle": 42,
+                "status": "ok",
+                "ts": 1700000100.0,
+                "health": {"chart_vision": True},
+                "regimes": {"EUR/USD": "range"},
+                "prices": {"EUR/USD": 1.085},
+                "price_history": {"EUR/USD": [1.08, 1.082, 1.085]},
+                "chart_contexts": {
+                    "EUR/USD": "trend: downtrend (conf=0.70). SR: 1.08. Rec: avoid entirely",
+                },
+            },
+        },
+        headers=TOKEN,
+    )
+    assert r.status_code == 200, r.text
+
+    ca = client.get("/api/chart-analysis/forex").json()
+    assert ca["bot"] == "forex"
+    assert ca["chart_vision"] is True
+    assert ca["cycle"] == 42
+    assert ca["n_usable"] >= 1
+    assert ca["n_blocked"] >= 1
+    row = next(p for p in ca["pairs"] if p["pair"] == "EUR/USD")
+    assert row["usable"] is True
+    assert row["hard_block"] is True
+    assert row["trend"] == "downtrend"
+    assert "avoid" in (row["recommendation"] or "").lower()
+    assert row["price"] == 1.085
+    assert len(row["history"]) >= 2
+
+    empty = client.get("/api/chart-analysis/nosuch").status_code
+    assert empty == 404
+
+
+def test_parse_chart_context_unavailable_not_usable():
+    parsed = m._parse_chart_context("CHART: unavailable")
+    assert parsed["usable"] is False
+    assert parsed["hard_block"] is False
+    soft = m._parse_chart_context("trend: sideways (conf=0.30). Rec: sell")
+    assert soft["soft_block"] is True
+
+
 def test_reflection_health_endpoint_reads_cortex_block():
     """Phase 0.2: /api/reflection-health/{bot} surfaces the pushed health block."""
     import json

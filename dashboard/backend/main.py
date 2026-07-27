@@ -14,6 +14,7 @@ Endpoints:
   GET  /api/daily-summary           — today's activity, all bots
   GET  /api/lifetime-summary        — all-time stats, all bots
   GET  /api/export-text             — clean text block, paste-ready for analysis
+  GET  /api/chart-analysis/{bot}    — per-pair chart vision + price for Activity Charts tab
 """
 
 import json
@@ -1459,6 +1460,122 @@ def skip_analysis(bot_name: str):
             by_pair[pair]["missed_pnl_count"] += 1
 
     return {"bot": bot_name, "by_pair": by_pair, "total_skips": len(rows)}
+
+
+def _parse_chart_context(context: str) -> dict:
+    """Best-effort parse of chart_vision context strings into UI fields."""
+    import re
+
+    ctx = (context or "").strip()
+    low = ctx.lower()
+    unusable_exact = {
+        "",
+        "chart data unavailable.",
+        "chart generation failed.",
+    }
+    usable = bool(low) and low not in unusable_exact and not low.startswith("chart: unavailable")
+    hard = "avoid" in low or "downtrend" in low
+    conf_m = re.search(r"conf\s*=\s*([0-9]*\.?[0-9]+)", ctx, re.I)
+    quality = 5.0
+    confidence = None
+    if conf_m:
+        try:
+            confidence = float(conf_m.group(1))
+            quality = round(confidence * 10.0, 2)
+        except ValueError:
+            pass
+    soft = "sell" in low and quality < 5.0
+    trend_m = re.search(r"trend:\s*([a-zA-Z_]+)", ctx, re.I)
+    rec_m = re.search(r"Rec:\s*(.+?)(?:\s*$|\.\s*$)", ctx, re.I)
+    sr_m = re.search(r"SR:\s*(.+?)(?:\.\s*Rec:|$)", ctx, re.I)
+    return {
+        "usable": usable,
+        "hard_block": hard,
+        "soft_block": soft,
+        "quality": quality,
+        "confidence": confidence,
+        "trend": (trend_m.group(1).lower() if trend_m else None),
+        "recommendation": (rec_m.group(1).strip() if rec_m else None),
+        "sr_level": (sr_m.group(1).strip().rstrip(".") if sr_m else None),
+    }
+
+
+@app.get("/api/chart-analysis/{bot_name}")
+def chart_analysis(bot_name: str):
+    """Per-pair chart vision + price snapshot for the Activity Charts tab."""
+    if bot_name not in VALID_BOTS:
+        raise HTTPException(404, "Unknown bot")
+    conn = get_conn()
+    state_row = conn.execute("SELECT * FROM latest_state WHERE bot=?", (bot_name,)).fetchone()
+    conn.close()
+    if not state_row:
+        return {
+            "bot": bot_name,
+            "chart_vision": False,
+            "cycle": None,
+            "ts": None,
+            "pairs": [],
+            "message": "no ingest state yet",
+        }
+
+    hb = json.loads(state_row["heartbeat_json"]) if state_row["heartbeat_json"] else {}
+    hb = hb if isinstance(hb, dict) else {}
+    strategy = json.loads(state_row["strategy_json"]) if state_row["strategy_json"] else {}
+    strategy = strategy if isinstance(strategy, dict) else {}
+
+    chart_ctxs = hb.get("chart_contexts") or {}
+    if not isinstance(chart_ctxs, dict):
+        chart_ctxs = {}
+    regimes = hb.get("regimes") or {}
+    if not isinstance(regimes, dict):
+        regimes = {}
+    health = hb.get("health") or {}
+    if not isinstance(health, dict):
+        health = {}
+    price_history = hb.get("price_history") or {}
+    if not isinstance(price_history, dict):
+        price_history = {}
+    live_prices = {
+        **{p: ph[-1] for p, ph in price_history.items() if isinstance(ph, list) and ph},
+        **(hb.get("prices") or {} if isinstance(hb.get("prices"), dict) else {}),
+    }
+
+    pair_names = sorted(
+        {
+            *strategy.keys(),
+            *chart_ctxs.keys(),
+            *live_prices.keys(),
+            *regimes.keys(),
+        }
+    )
+    pairs_out = []
+    for pair in pair_names:
+        ctx = chart_ctxs.get(pair) or ""
+        parsed = _parse_chart_context(ctx if isinstance(ctx, str) else str(ctx))
+        hist = price_history.get(pair) or []
+        if not isinstance(hist, list):
+            hist = []
+        pairs_out.append(
+            {
+                "pair": pair,
+                "context": ctx if isinstance(ctx, str) else str(ctx),
+                "price": live_prices.get(pair),
+                "regime": regimes.get(pair),
+                "history": [round(float(p), 5) for p in hist[-60:] if p is not None],
+                **parsed,
+            }
+        )
+
+    return {
+        "bot": bot_name,
+        "chart_vision": bool(health.get("chart_vision")),
+        "cycle": hb.get("cycle"),
+        "ts": hb.get("ts"),
+        "market_closed": bool(hb.get("market_closed")),
+        "pairs": pairs_out,
+        "n_usable": sum(1 for p in pairs_out if p.get("usable")),
+        "n_blocked": sum(1 for p in pairs_out if p.get("hard_block") or p.get("soft_block")),
+    }
 
 
 @app.get("/api/strategy-params/{bot_name}")

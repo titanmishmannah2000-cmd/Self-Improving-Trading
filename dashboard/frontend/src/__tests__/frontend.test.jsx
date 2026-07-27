@@ -109,6 +109,41 @@ function installFetchMock(overview = mockOverview()) {
     if (u.includes("/api/spark")) {
       return { ok: true, status: 200, json: async () => ({ prices: [1.1, 1.11, 1.12] }) };
     }
+    if (u.includes("/api/chart-analysis/")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          bot: "forex",
+          chart_vision: true,
+          cycle: 12,
+          ts: Date.now() / 1000,
+          market_closed: false,
+          n_usable: 1,
+          n_blocked: 1,
+          pairs: [
+            {
+              pair: "EUR/USD",
+              context: "trend: downtrend (conf=0.70). SR: 1.08. Rec: avoid entirely",
+              price: 1.085,
+              regime: "range",
+              history: [1.08, 1.082, 1.085],
+              usable: true,
+              hard_block: true,
+              soft_block: false,
+              quality: 7,
+              confidence: 0.7,
+              trend: "downtrend",
+              recommendation: "avoid entirely",
+              sr_level: "1.08",
+            },
+          ],
+        }),
+      };
+    }
+    if (u.includes("/api/skip-analysis/")) {
+      return { ok: true, status: 200, json: async () => ({ bot: "forex", by_pair: {}, total_skips: 0 }) };
+    }
     return { ok: true, status: 200, json: async () => ({}) };
   });
 }
@@ -169,6 +204,22 @@ describe("Phase 17 dashboard frontend", () => {
     expect(items.length).toBeGreaterThan(0);
     expect(screen.getAllByText("rsi_div").length).toBeGreaterThan(0);
     expect(screen.getAllByText("macd_cross").length).toBeGreaterThan(0);
+  });
+
+  it("test_activity_charts_tab_before_skips", async () => {
+    render(<App />);
+    await screen.findAllByTestId("pair-card");
+    // ModeToggle label is current mode; click Watcher → Advanced.
+    fireEvent.click(screen.getByRole("button", { name: "Watcher" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Activity" }));
+    const charts = screen.getByRole("button", { name: "Charts" });
+    const skips = screen.getByRole("button", { name: "Skip Analysis" });
+    expect(charts.compareDocumentPosition(skips) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(charts);
+    expect(await screen.findByTestId("chart-analysis")).toBeTruthy();
+    expect(await screen.findByText("EUR/USD")).toBeTruthy();
+    expect(screen.getByText(/L14 hard/i)).toBeTruthy();
+    expect(screen.getByText(/chart_vision: true/i)).toBeTruthy();
   });
 
   it("test_discovered_crypto_filter_keeps_tabs", async () => {

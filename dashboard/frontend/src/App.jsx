@@ -1448,6 +1448,270 @@ function DetailFullscreen({ pair, botName, onClose }) {
   );
 }
 
+// ───────────────────────── Chart Analysis ─────────────────────────
+
+const CHART_ANALYSIS_BOTS = ["forex", "gold", "crypto"];
+
+function ChartAnalysisSpark({ pair, history, color }) {
+  const [prices, setPrices] = useState(history?.length >= 2 ? history : null);
+  const [err, setErr] = useState(false);
+
+  useEffect(() => {
+    let dead = false;
+    if (history?.length >= 2) {
+      setPrices(history);
+      setErr(false);
+    }
+    fetch(`${API_BASE}/api/spark?pair=${encodeURIComponent(pair)}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (dead) return;
+        if (d.prices?.length >= 2) {
+          setPrices(d.prices);
+          setErr(false);
+        } else if (!(history?.length >= 2)) {
+          setErr(true);
+        }
+      })
+      .catch(() => {
+        if (!dead && !(history?.length >= 2)) setErr(true);
+      });
+    return () => {
+      dead = true;
+    };
+  }, [pair, history]);
+
+  if (err) return <div className="ca-spark-empty">No price series yet</div>;
+  if (!prices) return <div className="ca-spark-empty">Loading chart…</div>;
+
+  const mn = Math.min(...prices);
+  const mx = Math.max(...prices);
+  const mid = (mn + mx) / 2;
+  const chg = (((prices.at(-1) - prices[0]) / prices[0]) * 100).toFixed(2);
+  const up = prices.at(-1) >= prices[0];
+  const chartData = prices.map((p, i) => ({ i: i + 1, p }));
+  const stroke = color || (up ? COLORS.up : COLORS.down);
+
+  return (
+    <div className="ca-spark">
+      <div className="ca-spark-meta">
+        <span className={up ? "pc-up" : "pc-down"}>
+          {up ? "Up ▲" : "Down ▼"} {chg}%
+        </span>
+        <span className="ca-spark-bars">{prices.length} bars</span>
+      </div>
+      <ResponsiveContainer width="100%" height={120}>
+        <AreaChart data={chartData}>
+          <defs>
+            <linearGradient id={`ca${pairId(pair)}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={stroke} stopOpacity={0.35} />
+              <stop offset="100%" stopColor={stroke} stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <XAxis dataKey="i" hide />
+          <YAxis hide domain={["auto", "auto"]} />
+          <ReferenceLine y={mid} stroke={COLORS.chartGrid} strokeDasharray="3 3" />
+          <Tooltip
+            contentStyle={{
+              background: COLORS.chartBg,
+              border: `1px solid ${COLORS.chartBorder}`,
+              borderRadius: 8,
+              fontSize: 11,
+            }}
+            formatter={(v) => [`${Number(v).toFixed(5)}`]}
+            labelFormatter={() => ""}
+          />
+          <Area
+            type="monotone"
+            dataKey="p"
+            stroke={stroke}
+            fill={`url(#ca${pairId(pair)})`}
+            strokeWidth={2}
+            dot={false}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function ChartAnalysis({ apiBase, initialBot = "forex" }) {
+  const [botName, setBotName] = useState(
+    CHART_ANALYSIS_BOTS.includes(initialBot) ? initialBot : "forex",
+  );
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+
+  useEffect(() => {
+    if (CHART_ANALYSIS_BOTS.includes(initialBot)) setBotName(initialBot);
+  }, [initialBot]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${apiBase}/api/chart-analysis/${botName}`);
+      if (!res.ok) throw new Error(`API ${res.status}`);
+      setData(await res.json());
+      setError(null);
+    } catch (e) {
+      setError(e.message || "failed to load");
+    }
+    setLoading(false);
+  }, [apiBase, botName]);
+
+  useEffect(() => {
+    load();
+    const id = setInterval(load, 30000);
+    const onVis = () => {
+      if (!document.hidden) load();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [load]);
+
+  return (
+    <div className="chart-analysis" data-testid="chart-analysis">
+      <p className="activity-help">
+        Live price series plus Gemini chart-vision context per pair.{" "}
+        <strong>L14</strong> hard-blocks on avoid/downtrend; <strong>L16</strong> soft-blocks
+        low-confidence sells. Empty or unavailable context must show unhealthy vision — never
+        false-green.
+      </p>
+      <div className="activity-bot-tabs" role="tablist" aria-label="Chart analysis bot">
+        {CHART_ANALYSIS_BOTS.map((b) => (
+          <button
+            key={b}
+            type="button"
+            className={`activity-bot-tab${botName === b ? " active" : ""}`}
+            onClick={() => setBotName(b)}
+          >
+            {b}
+          </button>
+        ))}
+      </div>
+      {loading && !data && <SkeletonActivity rows={6} />}
+      {error && (
+        <p className="error">
+          {error} —{" "}
+          <button type="button" className="retry-inline" onClick={load}>
+            retry
+          </button>
+        </p>
+      )}
+      {!error && data && (
+        <>
+          <div className="ca-summary">
+            <span
+              className={`ca-pill ${data.chart_vision ? "ca-pill-ok" : "ca-pill-bad"}`}
+              title="heartbeat health.chart_vision"
+            >
+              chart_vision: {data.chart_vision ? "true" : "false"}
+            </span>
+            <span className="ca-pill">
+              usable {data.n_usable ?? 0}/{data.pairs?.length ?? 0}
+            </span>
+            <span className="ca-pill">
+              blocked {data.n_blocked ?? 0}
+            </span>
+            {data.cycle != null && <span className="ca-pill">cycle {data.cycle}</span>}
+            {data.market_closed && <span className="ca-pill ca-pill-warn">market closed</span>}
+            {data.ts != null && (
+              <span className="ca-pill muted">
+                hb {timeAgo(data.ts)}
+              </span>
+            )}
+          </div>
+          {(!data.pairs || data.pairs.length === 0) && (
+            <div className="detail-muted">
+              {data.message || `No pairs in ${botName} state yet — waiting for ingest.`}
+            </div>
+          )}
+          <div className="ca-grid">
+            {(data.pairs || []).map((row) => {
+              const meta = PAIR_META[row.pair] || {};
+              const open = expanded === row.pair;
+              return (
+                <div className="ca-card" key={row.pair}>
+                  <button
+                    type="button"
+                    className="ca-card-head"
+                    onClick={() => setExpanded(open ? null : row.pair)}
+                    aria-expanded={open}
+                  >
+                    <span className="ca-pair-name">{row.pair}</span>
+                    {row.price != null && (
+                      <span className="ca-price">
+                        {Number(row.price).toLocaleString(undefined, { maximumFractionDigits: 5 })}
+                      </span>
+                    )}
+                    {row.regime && <span className="ca-regime">{row.regime}</span>}
+                    <span className="ca-badges">
+                      {!row.usable && <span className="ca-badge ca-badge-muted">unavailable</span>}
+                      {row.usable && <span className="ca-badge ca-badge-ok">usable</span>}
+                      {row.hard_block && <span className="ca-badge ca-badge-hard">L14 hard</span>}
+                      {row.soft_block && <span className="ca-badge ca-badge-soft">L16 soft</span>}
+                    </span>
+                    <span className="ca-expand">{open ? "▾" : "▸"}</span>
+                  </button>
+                  <ChartAnalysisSpark
+                    pair={row.pair}
+                    history={row.history}
+                    color={meta.color}
+                  />
+                  <div className="ca-analysis">
+                    <div className="ca-kv">
+                      <span className="ca-k">Trend</span>
+                      <span className="ca-v">{row.trend || "—"}</span>
+                    </div>
+                    <div className="ca-kv">
+                      <span className="ca-k">Conf</span>
+                      <span className="ca-v">
+                        {row.confidence != null ? row.confidence.toFixed(2) : "—"}
+                        {row.quality != null ? ` (q=${row.quality})` : ""}
+                      </span>
+                    </div>
+                    <div className="ca-kv ca-kv-wide">
+                      <span className="ca-k">Rec</span>
+                      <span className="ca-v">{row.recommendation || "—"}</span>
+                    </div>
+                  </div>
+                  {open && (
+                    <div className="ca-detail">
+                      {row.sr_level && (
+                        <p>
+                          <strong>SR:</strong> {row.sr_level}
+                        </p>
+                      )}
+                      <p className="ca-context">
+                        <strong>Vision context:</strong>{" "}
+                        {row.context?.trim()
+                          ? row.context
+                          : "(empty — chart_vision must not report healthy)"}
+                      </p>
+                      {(row.hard_block || row.soft_block) && (
+                        <p className="ca-guard-note">
+                          Entry guards would skip this pair
+                          {row.hard_block ? " (chart:hard_block)" : ""}
+                          {row.soft_block ? " (chart:soft_block)" : ""}.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ───────────────────────── Skip Analysis ─────────────────────────
 
 const SKIP_ANALYSIS_BOTS = ["forex", "gold", "crypto"];
@@ -3165,6 +3429,7 @@ export default function App() {
             </button>
             {!isWatcher && (
               <>
+                <button className={`ltab ${subTab === "charts" ? "ltab-active" : ""}`} onClick={() => setSubTab("charts")}>Charts</button>
                 <button className={`ltab ${subTab === "skips" ? "ltab-active" : ""}`} onClick={() => setSubTab("skips")}>Skip Analysis</button>
                 <button className={`ltab ${subTab === "reflections" ? "ltab-active" : ""}`} onClick={() => setSubTab("reflections")}>Reflections</button>
                 <button className={`ltab ${subTab === "versions" ? "ltab-active" : ""}`} onClick={() => setSubTab("versions")}>Versions</button>
@@ -3178,6 +3443,8 @@ export default function App() {
               <VersionView perVersion={perVersion} />
             ) : subTab === "reflections" ? (
               <ReflectionsView apiBase={API_BASE} initialBot={selectedBotName || "forex"} />
+            ) : subTab === "charts" ? (
+              <ChartAnalysis apiBase={API_BASE} initialBot={selectedBotName || "forex"} />
             ) : (
               <SkipAnalysis apiBase={API_BASE} initialBot={selectedBotName || "forex"} />
             )}
