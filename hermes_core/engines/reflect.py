@@ -705,12 +705,26 @@ DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
 
 
 def _env(name: str, default: str | None = None) -> str | None:
-    import os
+    """Read env at call time via hermes_core.env (loads .env once).
 
-    val = os.environ.get(name)
-    if val is None or val == "":
+    Never freeze API keys at import — same soak bug chart_vision hit when
+    bots/_runner imported engines before load_env().
+    """
+    from hermes_core.env import get_env
+
+    val = (get_env(name, "") or "").strip()
+    if not val:
         return default
     return val
+
+
+def l2_keys_status() -> dict[str, bool]:
+    """Which L2 provider keys are visible right now (no secret values)."""
+    return {
+        "deepseek": bool(_env("DEEPSEEK_API_KEY")),
+        "gemini": bool(_env("GEMINI_API_KEY")),
+        "groq": bool(_env("GROQ_API_KEY")),
+    }
 
 
 def _openai_chat_completion(
@@ -911,6 +925,14 @@ def call_llm_consensus(
         )
 
     callers = _MODEL_CALLERS if callers is None else callers
+    key_status = l2_keys_status()
+    missing = [n for n, ok in key_status.items() if n in models and not ok]
+    if missing:
+        print(
+            f"[hermes][L2] missing API keys at call time: {', '.join(missing)} "
+            f"(present={[n for n, ok in key_status.items() if ok]})",
+            flush=True,
+        )
     prompt = (
         f"You are a senior trading-risk reviewer. Proposal: change "
         f"{proposal.get('variable')} from {proposal.get('old')} to "

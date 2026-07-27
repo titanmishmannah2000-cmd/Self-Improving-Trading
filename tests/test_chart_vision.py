@@ -22,8 +22,26 @@ from hermes_core.engines import hard_block, soft_block
 def test_default_chart_model_ids(monkeypatch):
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
     monkeypatch.delenv("GROQ_MODEL", raising=False)
+    monkeypatch.delenv("CHART_GROQ_MODEL", raising=False)
+    monkeypatch.delenv("GROQ_VISION_MODEL", raising=False)
     assert "gemini-2.5-flash" in cv._gemini_url()
-    assert cv._groq_model() == "llama-3.1-8b-instant"
+    # Chart fallback uses a vision model — not the L2 text 8B.
+    assert "llama-4-scout" in cv._groq_model()
+
+
+def test_api_keys_read_at_call_time(monkeypatch, tmp_path):
+    """Keys must not be frozen empty at import (load_env may run later)."""
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    monkeypatch.setenv("GROQ_API_KEY", "")
+    assert cv._gemini_key() == ""
+    monkeypatch.setenv("GEMINI_API_KEY", "late-key")
+    assert cv._gemini_key() == "late-key"
+    png = tmp_path / "x.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+    # Missing key returns an explicit unavailable reason (not silent None-only).
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    out = cv.analyze_chart_gemini(png, "EUR/USD")
+    assert out is not None and "no gemini key" in out
 
 
 def test_symbol_map_covers_soak_bots():

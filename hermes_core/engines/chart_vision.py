@@ -9,11 +9,13 @@ Guards (tagged so tools/verify_guard_tags.py can find them):
        (weaker than L14; a confident sell still passes through to the engines).
 
 Behaviour (blueprint Section 7 / Engine 6):
-  * PRIMARY  Gemini gemini-2.5-flash, FALLBACK Groq llama-3.1-8b-instant.
+  * PRIMARY  Gemini gemini-2.5-flash, FALLBACK Groq llama-4-scout (vision).
+  * API keys read at call time via get_env (not frozen at import).
   * 60-minute cache (in-memory + on-disk) so we don't re-call the LLM every
     60s cycle.
-  * FAIL-OPEN: any pipeline error yields an empty context, never an exception —
-    the loop treats a missing chart as "no extra signal", never as a crash.
+  * FAIL-OPEN: any pipeline error yields a benign unavailable context, never an
+    exception — the loop treats a missing chart as "no extra signal", never as
+    a crash.
 
 The pipeline (fetch -> render -> analyze) is dispatched through module-level
 functions so the unit tests can monkeypatch them without network or the heavy
@@ -25,32 +27,48 @@ from __future__ import annotations
 
 import contextlib
 import json
-import os
 import re
 import time
 from pathlib import Path
 
+from hermes_core.env import get_env
 from hermes_core.state.paths import chart_cache_dir
 
 # ── config ────────────────────────────────────────────────────────────────
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
-GROQ_URL = os.environ.get("GROQ_URL", "https://api.groq.com/openai/v1/chat/completions")
+# Keys MUST be read at call time via get_env — module-level os.environ capture
+# freezes empty values when this file imports before load_env() (bots/_runner).
 CACHE_INTERVAL_S = 3600  # 60 minutes
+# Chart fallback needs a vision model. Do NOT reuse GROQ_MODEL (L2 text = 8B).
+_DEFAULT_CHART_GROQ = "meta-llama/llama-4-scout-17b-16e-instruct"
+
+
+def _gemini_key() -> str:
+    return (get_env("GEMINI_API_KEY", "") or "").strip()
+
+
+def _groq_key() -> str:
+    return (get_env("GROQ_API_KEY", "") or "").strip()
 
 
 def _gemini_url() -> str:
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-    return os.environ.get(
+    model = get_env("GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+    return get_env(
         "GEMINI_URL",
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
     )
 
 
 def _groq_model() -> str:
-    return os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
+    """Vision-capable Groq model for chart fallback only."""
+    return (
+        get_env("CHART_GROQ_MODEL", "")
+        or get_env("GROQ_VISION_MODEL", "")
+        or _DEFAULT_CHART_GROQ
+    )
+
+
+def _groq_url() -> str:
+    return get_env("GROQ_URL", "https://api.groq.com/openai/v1/chat/completions")
 
 
 def _cache_dir() -> Path:
@@ -209,15 +227,18 @@ def _parse_chart_response(text: str) -> str:
 
 def analyze_chart_gemini(png_path, symbol: str) -> str | None:
     """PRIMARY vision call (Gemini). Returns structured context or None on failure."""
-    if not GEMINI_API_KEY:
-        return None
+    api_key = _gemini_key()
+    if not api_key:
+        print(f"[chart_vision] {symbol}: GEMINI_API_KEY missing at call time", flush=True)
+        return "CHART: unavailable (no gemini key)"
     import base64
 
     import httpx
 
     try:
         img_b64 = base64.b64encode(Path(png_path).read_bytes()).decode("utf-8")
-    except OSError:
+    except OSError as exc:
+        print(f"[chart_vision] {symbol}: png read failed: {exc!r}", flush=True)
         return None
     payload = {
         "contents": [
@@ -230,19 +251,43 @@ def analyze_chart_gemini(png_path, symbol: str) -> str | None:
         ]
     }
     try:
-        resp = httpx.post(_gemini_url(), json=payload, params={"key": GEMINI_API_KEY}, timeout=30)
+        resp = httpx.post(_gemini_url(), json=payload, params={"key": api_key}, timeout=30)
         if resp.status_code == 429:
+            print(f"[chart_vision] {symbol}: gemini rate limited", flush=True)
             return "CHART: unavailable (rate limited)"
-        resp.raise_for_status()
-        text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        if resp.status_code >= 400:
+            detail = (resp.text or "")[:160].replace("\n", " ")
+            print(
+                f"[chart_vision] {symbol}: gemini HTTP {resp.status_code} {detail}",
+                flush=True,
+            )
+            return f"CHART: unavailable (gemini http {resp.status_code})"
+        data = resp.json()
+        cands = data.get("candidates") or []
+        if not cands:
+            block = (data.get("promptFeedback") or {}).get("blockReason") or "no_candidates"
+            print(f"[chart_vision] {symbol}: gemini blocked/empty ({block})", flush=True)
+            return f"CHART: unavailable (gemini {block})"
+        parts = ((cands[0].get("content") or {}).get("parts")) or []
+        text = ""
+        for part in parts:
+            if isinstance(part, dict) and part.get("text"):
+                text = str(part["text"]).strip()
+                break
+        if not text:
+            print(f"[chart_vision] {symbol}: gemini empty text", flush=True)
+            return "CHART: unavailable (gemini empty)"
         return _parse_chart_response(text)
-    except Exception:  # noqa: BLE001 — primary failure falls through to fallback
+    except Exception as exc:  # noqa: BLE001 — primary failure falls through to fallback
+        print(f"[chart_vision] {symbol}: gemini error {exc!r}", flush=True)
         return None
 
 
 def analyze_chart_groq(png_path, symbol: str) -> str | None:
-    """FALLBACK vision call (Groq). Returns structured context or None on failure."""
-    if not GROQ_API_KEY:
+    """FALLBACK vision call (Groq vision model). Returns structured context or None."""
+    api_key = _groq_key()
+    if not api_key:
+        print(f"[chart_vision] {symbol}: GROQ_API_KEY missing at call time", flush=True)
         return None
     import base64
 
@@ -250,10 +295,12 @@ def analyze_chart_groq(png_path, symbol: str) -> str | None:
 
     try:
         img_b64 = base64.b64encode(Path(png_path).read_bytes()).decode("utf-8")
-    except OSError:
+    except OSError as exc:
+        print(f"[chart_vision] {symbol}: png read failed: {exc!r}", flush=True)
         return None
+    model = _groq_model()
     payload = {
-        "model": _groq_model(),
+        "model": model,
         "messages": [
             {
                 "role": "user",
@@ -268,23 +315,34 @@ def analyze_chart_groq(png_path, symbol: str) -> str | None:
     }
     try:
         resp = httpx.post(
-            GROQ_URL,
+            _groq_url(),
             json=payload,
-            headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-            timeout=30,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            timeout=45,
         )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            detail = (resp.text or "")[:160].replace("\n", " ")
+            print(
+                f"[chart_vision] {symbol}: groq/{model} HTTP {resp.status_code} {detail}",
+                flush=True,
+            )
+            return f"CHART: unavailable (groq http {resp.status_code})"
         text = resp.json()["choices"][0]["message"]["content"].strip()
         return _parse_chart_response(text)
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        print(f"[chart_vision] {symbol}: groq error {exc!r}", flush=True)
         return None
 
 
 def analyze_chart(png_path, symbol: str) -> str | None:
-    """[GUARD L14/L16 source] Gemini PRIMARY -> Groq FALLBACK."""
+    """[GUARD L14/L16 source] Gemini PRIMARY -> Groq vision FALLBACK."""
     ctx = analyze_chart_gemini(png_path, symbol)
-    if ctx is None or "unavailable" in ctx.lower() or "failed" in ctx.lower():
-        ctx = analyze_chart_groq(png_path, symbol)
+    if ctx is None or "unavailable" in (ctx or "").lower() or "failed" in (ctx or "").lower():
+        fb = analyze_chart_groq(png_path, symbol)
+        if fb:
+            return fb
+        # Prefer a specific gemini reason over bare None when fallback also fails.
+        return ctx
     return ctx
 
 

@@ -46,9 +46,12 @@ def _now_iso() -> str:
 
 from hermes_core.adapters import make_aggregator_fetch, make_default_fetch, seed_history
 from hermes_core.config.loader import load_config, load_strategy_for_pair
+from hermes_core.env import get_env, load_env
+
+load_env()  # before chart_vision so get_env sees .env keys on first call
+
 from hermes_core.engines.chart_vision import get_chart_context
 from hermes_core.engines.loop import run_cycle
-from hermes_core.env import get_env, load_env
 
 # One reusable HTTP client per bot process. httpx pools keep-alive connections
 # (no per-tick socket churn) and is thread-safe for .post() from the forwarder

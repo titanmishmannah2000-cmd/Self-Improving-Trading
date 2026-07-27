@@ -236,6 +236,25 @@ def test_callers_missing_key_raises(monkeypatch):
         rf.call_groq("x")
 
 
+def test_l2_keys_read_at_call_time(monkeypatch):
+    """Keys must resolve after env is set (not frozen empty at import)."""
+    from hermes_core.engines import reflect as rf
+
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    st = rf.l2_keys_status()
+    assert st == {"deepseek": False, "gemini": False, "groq": False}
+
+    monkeypatch.setenv("GEMINI_API_KEY", " late-gemini ")
+    monkeypatch.setenv("GROQ_API_KEY", "late-groq")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "late-deepseek")
+    st2 = rf.l2_keys_status()
+    assert st2 == {"deepseek": True, "gemini": True, "groq": True}
+    # Strip whitespace so Railway/paste mistakes still work.
+    assert rf._env("GEMINI_API_KEY") == "late-gemini"
+
+
 def test_default_callers_no_sdk_import(monkeypatch):
     """Production path must not require openai / google.generativeai packages."""
     from hermes_core.engines import reflect as rf
