@@ -220,6 +220,36 @@ def test_chart_vision_health_false_on_unavailable_string():
     assert health.get("chart_vision") is False
 
 
+def test_chart_context_survives_flatline_early_continue():
+    """Pairs that skip on flatline pause must still stamp chart_contexts.
+
+    Live bug: BTC had price+regime but missing chart_contexts because chart
+    vision ran only after the flatline continue.
+    """
+    health = {}
+    feed = FakeFeed("fresh")
+    hist = [{"price": 1.08 + i * 0.0001} for i in range(80)]
+    run_cycle._flatline_pause = {"EUR/USD": 3}
+    try:
+        run_cycle(
+            "forex",
+            1,
+            fetch_fn=feed,
+            history_fn=lambda _pair: hist,
+            now_fn=lambda: 12 * 3600,
+            health_registry=health,
+            chart_context_fn=lambda p: f"trend: uptrend for {p}",
+            open_positions={},
+        )
+    finally:
+        run_cycle._flatline_pause = {}
+    hb = _hb()
+    ctxs = hb.get("chart_contexts") or {}
+    assert "EUR/USD" in ctxs
+    assert "trend: uptrend" in str(ctxs["EUR/USD"])
+    assert health.get("chart_vision") is True
+
+
 def test_loop_is_generic_no_bot_branch():
     # running the gold bot exercises a different config/strategy without code change
     feed = FakeFeed("fresh")

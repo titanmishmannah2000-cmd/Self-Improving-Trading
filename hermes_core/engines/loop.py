@@ -263,6 +263,50 @@ def _log_skip(bot: str, pair: str, cycle: int, reason: str) -> None:
         pass
 
 
+def _capture_chart_context(
+    pair: str,
+    *,
+    chart_context_fn: Callable | None,
+    chart_contexts: dict[str, str],
+    health_registry: dict,
+    bot: str,
+    cycle: int,
+) -> str:
+    """Fetch chart vision for ``pair`` and stamp heartbeat health.
+
+    Called as soon as a pair has a live quote/regime so early entry guards
+    (flat-price, flatline pause, BB, etc.) cannot leave ``chart_contexts`` empty
+    for priced pairs (e.g. BTC missing while ETH is present).
+    """
+    _UNUSABLE_EXACT = (
+        "",
+        "chart data unavailable.",
+        "chart generation failed.",
+    )
+    context = ""
+    try:
+        if chart_context_fn is None:
+            chart_contexts[pair] = ""
+            health_registry.setdefault("chart_vision", False)
+            return ""
+        context = chart_context_fn(pair) or ""
+        chart_contexts[pair] = context
+        low = str(context).strip().lower()
+        usable = bool(low) and low not in _UNUSABLE_EXACT and not low.startswith(
+            "chart: unavailable"
+        )
+        if usable:
+            health_registry["chart_vision"] = True
+        else:
+            health_registry.setdefault("chart_vision", False)
+    except Exception as exc:  # noqa: BLE001 — fail-open, never crash
+        context = ""
+        chart_contexts[pair] = ""
+        health_registry["chart_vision"] = False
+        _log_skip(bot, pair, cycle, f"chart_error:{exc!r}")
+    return context
+
+
 def _log_trade(bot: str, rec: dict) -> bool:
     """Append a closed-trade row. Returns False if disk write failed."""
     return append_trade(bot, rec)
@@ -1497,6 +1541,16 @@ def run_cycle(
 
         # EXIT-BEFORE-GUARD: always manage opens (even on fetch failure).
         if pos is not None:
+            # Still refresh chart for the dashboard even while managing an open.
+            if price is not None:
+                _capture_chart_context(
+                    pair,
+                    chart_context_fn=chart_context_fn,
+                    chart_contexts=chart_contexts,
+                    health_registry=health_registry,
+                    bot=bot,
+                    cycle=cycle,
+                )
             _handled, _lp, consecutive_failures = _try_manage_open(
                 bot,
                 pair,
@@ -1560,6 +1614,17 @@ def run_cycle(
             continue
         health_registry["indicators"] = True
         regimes[pair] = ind.get("regime", "range")  # 'trend'|'range' for dashboard
+
+        # Chart vision ASAP after regime so flatline/BB/param early-continues
+        # still populate heartbeat chart_contexts (BTC was missing for this).
+        context = _capture_chart_context(
+            pair,
+            chart_context_fn=chart_context_fn,
+            chart_contexts=chart_contexts,
+            health_registry=health_registry,
+            bot=bot,
+            cycle=cycle,
+        )
 
         # [GUARD L02] flat-price / stale-data gate
         is_flat, flat_reason = flat_price_guard(ind, prices)
@@ -1646,39 +1711,6 @@ def run_cycle(
             cortex=cortex,
             sig=gp_shadow_sig,
         )
-
-        # --- chart context (fail-open; an error yields neutral) -------------
-        # Health must be honest: missing fn or empty/unavailable context is NOT
-        # a green chart_vision signal (false-green hid the unwired runner gap).
-        context = ""
-        _UNUSABLE_EXACT = (
-            "",
-            "chart data unavailable.",
-            "chart generation failed.",
-        )
-        try:
-            if chart_context_fn is None:
-                chart_contexts[pair] = ""
-                # Leave chart_vision unset/false — never claim healthy when unwired.
-                health_registry.setdefault("chart_vision", False)
-            else:
-                context = chart_context_fn(pair) or ""
-                chart_contexts[pair] = context
-                low = str(context).strip().lower()
-                usable = bool(low) and low not in _UNUSABLE_EXACT and not low.startswith(
-                    "chart: unavailable"
-                )
-                # Any pair with usable context flips health True; unavailable
-                # keeps False unless a prior pair already succeeded this cycle.
-                if usable:
-                    health_registry["chart_vision"] = True
-                else:
-                    health_registry.setdefault("chart_vision", False)
-        except Exception as exc:  # noqa: BLE001 — fail-open, never crash
-            context = ""
-            chart_contexts[pair] = ""
-            health_registry["chart_vision"] = False
-            _log_skip(bot, pair, cycle, f"chart_error:{exc!r}")
 
         # Injected ensemble_fn wins (tests); else live GP consensus for L13.
         ensemble = (
