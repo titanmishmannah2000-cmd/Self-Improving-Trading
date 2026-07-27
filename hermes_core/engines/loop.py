@@ -230,6 +230,10 @@ def write_heartbeat(
     }
     if hif_flags is not None:
         data["hif_flags"] = hif_flags
+    with contextlib.suppress(Exception):
+        from hermes_core.env import llm_keys_present
+
+        data["llm_keys"] = llm_keys_present()
     disc_ts = _LAST_DISCOVERY_RUN.get(asset)
     if disc_ts:
         data["last_discovery_run_ts"] = datetime.fromtimestamp(disc_ts, UTC).isoformat()

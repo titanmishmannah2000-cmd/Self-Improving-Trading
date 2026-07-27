@@ -44,6 +44,19 @@ def test_api_keys_read_at_call_time(monkeypatch, tmp_path):
     assert out is not None and "no gemini key" in out
 
 
+def test_unavailable_context_not_cached(tmp_path, monkeypatch):
+    monkeypatch.setattr(cv, "_cache_dir", lambda: tmp_path)
+    cv._context_cache.clear()
+    bad = "CHART: unavailable (no gemini key)"
+    cv._set_cached("EUR/USD", bad)
+    assert cv._get_cached("EUR/USD") is None
+    assert not list(tmp_path.glob("chart_ctx_*.json"))
+
+    good = "trend: uptrend (conf=0.80). SR: 1.10. Rec: enter long"
+    cv._set_cached("EUR/USD", good)
+    assert cv._get_cached("EUR/USD") == good
+
+
 def test_symbol_map_covers_soak_bots():
     for pair in (
         "EUR/USD",

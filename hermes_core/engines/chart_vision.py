@@ -126,6 +126,28 @@ def soft_block(context: str) -> bool:
     return "sell" in c and _quality_of(context) < 5.0
 
 
+def _is_cacheable_context(context: str | None) -> bool:
+    """Only persist real vision text — never cache fail-open unavailable strings.
+
+    Caching ``CHART: unavailable (no gemini key)`` for 60m made live bots look
+    broken long after Railway keys were fixed.
+    """
+    low = (context or "").strip().lower()
+    if not low:
+        return False
+    if low in {
+        "chart data unavailable.",
+        "chart generation failed.",
+        "chart: unavailable",
+    }:
+        return False
+    if low.startswith("chart: unavailable") or low.startswith("chart data unavailable"):
+        return False
+    if "unavailable" in low or "failed" in low:
+        return False
+    return True
+
+
 # ── cache ────────────────────────────────────────────────────────────────
 def _cache_file(symbol: str) -> Path:
     return _cache_dir() / f"chart_ctx_{symbol.replace('/', '_')}.json"
@@ -134,21 +156,30 @@ def _cache_file(symbol: str) -> Path:
 def _get_cached(symbol: str, now: float = time.time()) -> str | None:
     if symbol in _context_cache:
         context, ts = _context_cache[symbol]
-        if now - ts < CACHE_INTERVAL_S:
+        if now - ts < CACHE_INTERVAL_S and _is_cacheable_context(context):
             return context
+        if not _is_cacheable_context(context):
+            _context_cache.pop(symbol, None)
     fp = _cache_file(symbol)
     if fp.exists():
         try:
             data = json.loads(fp.read_text(encoding="utf-8"))
-            if now - data.get("ts", 0) < CACHE_INTERVAL_S:
-                _context_cache[symbol] = (data["context"], data["ts"])
-                return data["context"]
+            ctx = data.get("context")
+            if now - data.get("ts", 0) < CACHE_INTERVAL_S and _is_cacheable_context(ctx):
+                _context_cache[symbol] = (ctx, data["ts"])
+                return ctx
+            # Drop poisoned fail-open cache entries so keys/API recovery can retry.
+            if not _is_cacheable_context(ctx):
+                with contextlib.suppress(OSError):
+                    fp.unlink()
         except Exception:  # noqa: BLE001 — corrupt cache is not fatal
             pass
     return None
 
 
 def _set_cached(symbol: str, context: str, now: float = time.time()) -> None:
+    if not _is_cacheable_context(context):
+        return
     _context_cache[symbol] = (context, now)
     with contextlib.suppress(OSError):
         _cache_file(symbol).write_text(

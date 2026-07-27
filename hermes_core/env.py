@@ -27,8 +27,13 @@ _env_loaded = False
 
 
 def load_env() -> None:
-    """Load .env into os.environ (fail-soft). Idempotent. override=True so the
-    file's values win over any stale process env (e.g. PRICE_BACKEND)."""
+    """Load .env into os.environ (fail-soft). Idempotent.
+
+    Uses override=False so Railway/process secrets always win. A blank or
+    stale repo ``.env`` must never wipe ``GEMINI_API_KEY`` / ``GROQ_API_KEY``
+    / ``DEEPSEEK_API_KEY`` injected by the platform (soak incident: live bots
+    reported ``no gemini key`` while Railway vars were set).
+    """
     global _env_loaded
     if _env_loaded:
         return
@@ -36,7 +41,7 @@ def load_env() -> None:
     try:
         from dotenv import load_dotenv  # lazy import so tests/CI don't require it
 
-        load_dotenv(_ENV_FILE, override=True)  # explicit path + override
+        load_dotenv(_ENV_FILE, override=False)
     except Exception:  # noqa: BLE001 — fail-soft; [GUARD L62]
         # No dotenv installed, or no .env file: fall back to process env.
         pass
@@ -47,6 +52,15 @@ def get_env(name: str, default: str = "") -> str:
     if not _env_loaded:
         load_env()
     return os.environ.get(name, default)
+
+
+def llm_keys_present() -> dict[str, bool]:
+    """Presence-only map for heartbeat/ops (never returns secret values)."""
+    return {
+        "GEMINI_API_KEY": bool((get_env("GEMINI_API_KEY", "") or "").strip()),
+        "GROQ_API_KEY": bool((get_env("GROQ_API_KEY", "") or "").strip()),
+        "DEEPSEEK_API_KEY": bool((get_env("DEEPSEEK_API_KEY", "") or "").strip()),
+    }
 
 
 # Auto-load on import so any module importing this gets .env applied.

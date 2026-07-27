@@ -1572,6 +1572,7 @@ def chart_analysis(bot_name: str):
         "cycle": hb.get("cycle"),
         "ts": hb.get("ts"),
         "market_closed": bool(hb.get("market_closed")),
+        "llm_keys": hb.get("llm_keys") if isinstance(hb.get("llm_keys"), dict) else {},
         "pairs": pairs_out,
         "n_usable": sum(1 for p in pairs_out if p.get("usable")),
         "n_blocked": sum(1 for p in pairs_out if p.get("hard_block") or p.get("soft_block")),

@@ -1625,6 +1625,23 @@ function ChartAnalysis({ apiBase, initialBot = "forex" }) {
                 hb {timeAgo(data.ts)}
               </span>
             )}
+            {data.llm_keys && Object.keys(data.llm_keys).length > 0 && (
+              <>
+                {["GEMINI_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY"].map((k) => {
+                  const ok = !!data.llm_keys[k];
+                  const short = k.replace("_API_KEY", "");
+                  return (
+                    <span
+                      key={k}
+                      className={`ca-pill ${ok ? "ca-pill-ok" : "ca-pill-bad"}`}
+                      title={k}
+                    >
+                      {short}:{ok ? "on" : "off"}
+                    </span>
+                  );
+                })}
+              </>
+            )}
           </div>
           {(!data.pairs || data.pairs.length === 0) && (
             <div className="detail-muted">
