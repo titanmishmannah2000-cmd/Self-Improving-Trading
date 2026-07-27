@@ -129,6 +129,26 @@ def test_health_reflects_last_status_from_hypotheses():
     assert p["proven"] is True
 
 
+def test_health_includes_pending_deploys():
+    goal = {"reflection_every": 5, "max_drawdown": 10.0}
+    from hermes_core.engines import experiment_control as ec
+
+    ec.record_shadow_challenger(
+        "forex",
+        "EUR/USD",
+        variable="trailing_stop_pct",
+        old=0.0,
+        new=0.4,
+        reason="auto_deploy_off",
+        version="02",
+    )
+    health = reflection_health("forex", ["EUR/USD"], goal=goal)
+    assert health["pending_deploys"]
+    assert health["pending_deploys"][0]["pair"] == "EUR/USD"
+    assert health["pending_deploys"][0]["variable"] == "trailing_stop_pct"
+    assert health["pairs"]["EUR/USD"]["shadow"]["variable"] == "trailing_stop_pct"
+
+
 def test_health_reflects_latch_after_fire():
     goal = {"reflection_every": 5, "max_drawdown": 10.0}
     for _ in range(5):

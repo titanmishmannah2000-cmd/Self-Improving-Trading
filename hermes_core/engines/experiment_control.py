@@ -1193,6 +1193,7 @@ def record_shadow_challenger(
     new,
     reason: str = "",
     backtest: dict | None = None,
+    version: str | None = None,
 ) -> None:
     """Paper-track an approved-but-not-deployed (or explore) challenger (#11)."""
     data = _load(bot, _SHADOW)
@@ -1201,6 +1202,7 @@ def record_shadow_challenger(
         "old": old,
         "new": new,
         "reason": reason,
+        "version": version,
         "backtest": {
             k: (backtest or {}).get(k)
             for k in (
@@ -1227,3 +1229,130 @@ def clear_shadow_challenger(bot: str, pair: str) -> None:
     data = _load(bot, _SHADOW)
     data.pop(pair, None)
     _save(bot, _SHADOW, data)
+
+
+def list_pending_deploys(bot: str, pairs: list[str] | None = None) -> list[dict]:
+    """Approved-but-not-deployed challengers waiting for operator approve."""
+    shadows = _load(bot, _SHADOW)
+    out: list[dict] = []
+    for pair, rec in shadows.items():
+        if pairs is not None and pair not in pairs:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        if not rec.get("variable"):
+            continue
+        out.append(
+            {
+                "bot": bot,
+                "pair": pair,
+                "variable": rec.get("variable"),
+                "old": rec.get("old"),
+                "new": rec.get("new"),
+                "reason": rec.get("reason"),
+                "version": rec.get("version"),
+                "backtest": rec.get("backtest") or {},
+                "ts": rec.get("ts"),
+                "status": "approved_pending_deploy",
+                "deployable": True,
+            }
+        )
+    out.sort(key=lambda r: float(r.get("ts") or 0.0), reverse=True)
+    return out
+
+
+def approve_pending_deploy(
+    bot: str,
+    pair: str,
+    *,
+    variable: str | None = None,
+    old=None,
+    new=None,
+    version: str | None = None,
+    source: str = "operator_approve",
+) -> dict:
+    """Apply a pending reflection challenger to live strategy YAML.
+
+    Prefers ``shadow_challengers.json`` for the pair; optional kwargs override
+    fields when the approval was queued from the dashboard without a local shadow.
+    """
+    import copy
+
+    from hermes_core.config import load_strategy_for_pair
+    from hermes_core.engines.reflect import _log_hypothesis, apply_strategy_change
+
+    shadow = shadow_challenger(bot, pair) or {}
+    var = variable or shadow.get("variable")
+    old_val = old if old is not None else shadow.get("old")
+    new_val = new if new is not None else shadow.get("new")
+    ver = version if version is not None else shadow.get("version")
+    if not var or new_val is None:
+        return {
+            "ok": False,
+            "status": "error",
+            "reason": "no_pending_challenger",
+            "pair": pair,
+            "bot": bot,
+        }
+
+    closed_now = 0
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.reflect import _closed_trades_for_pair
+
+        closed_now = len(_closed_trades_for_pair(bot, pair))
+    block = deploy_blocked(bot, pair, closed_count=closed_now)
+    if block:
+        return {
+            "ok": False,
+            "status": "deploy_cooldown",
+            "reason": block.get("reason"),
+            "block": block,
+            "pair": pair,
+            "bot": bot,
+        }
+
+    prior = copy.deepcopy(load_strategy_for_pair(pair, bot) or {})
+    written = apply_strategy_change(
+        pair,
+        str(var),
+        new_val,
+        bot=bot,
+        version=str(ver) if ver is not None else None,
+        strategy=prior,
+    )
+    _log_hypothesis(
+        {
+            "pair": pair,
+            "bot": bot,
+            "variable": var,
+            "old": old_val,
+            "new": new_val,
+            "status": "deployed",
+            "version": written.get("version"),
+            "source": source,
+            "ts": time.time(),
+        }
+    )
+    record_deployment(
+        bot,
+        pair,
+        variable=str(var),
+        old=old_val,
+        new=new_val,
+        version_from=str(prior.get("version", "00")),
+        version_to=written.get("version"),
+        prior_strategy=prior,
+        closed_count=closed_now,
+    )
+    clear_shadow_challenger(bot, pair)
+    return {
+        "ok": True,
+        "status": "deployed",
+        "pair": pair,
+        "bot": bot,
+        "variable": var,
+        "old": old_val,
+        "new": new_val,
+        "version": written.get("version"),
+        "strategy": written,
+    }

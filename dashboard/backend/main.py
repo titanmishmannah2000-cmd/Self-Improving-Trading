@@ -25,6 +25,7 @@ import sys
 import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 # Ensure sibling modules (live_compat, audit_*, etc.) resolve whether this file
 # is run directly (python main.py) or imported as dashboard.backend.main.
@@ -403,6 +404,21 @@ def init_db():
             metric_value REAL,
             recorded_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS pending_deploy_approvals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bot TEXT NOT NULL,
+            pair TEXT NOT NULL,
+            variable TEXT NOT NULL,
+            old_value TEXT,
+            new_value TEXT,
+            version TEXT,
+            status TEXT NOT NULL DEFAULT 'queued',
+            reason TEXT,
+            created_at TEXT NOT NULL,
+            applied_at TEXT,
+            result_json TEXT
+        );
         """
     )
     conn.commit()
@@ -410,6 +426,32 @@ def init_db():
 
 
 init_db()
+
+# ── Migration: pending_deploy_approvals for older dashboard DBs ──
+try:
+    conn = get_conn()
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pending_deploy_approvals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bot TEXT NOT NULL,
+            pair TEXT NOT NULL,
+            variable TEXT NOT NULL,
+            old_value TEXT,
+            new_value TEXT,
+            version TEXT,
+            status TEXT NOT NULL DEFAULT 'queued',
+            reason TEXT,
+            created_at TEXT NOT NULL,
+            applied_at TEXT,
+            result_json TEXT
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+except sqlite3.OperationalError:
+    pass
 
 # ── Migration: add open_trades_json column to existing databases ──
 try:
@@ -3082,6 +3124,52 @@ def reflections_ledger(bot_name: str, pair: str | None = None):
         if not pairs_out and not health:
             return {"bot": bot_name, "status": "no_data", "pairs": {}}
 
+        pending_deploys = _pending_deploys_from_health(health, bot_name)
+        # Overlay queue state so the UI can show queued / applied.
+        conn = get_conn()
+        queued_rows = conn.execute(
+            "SELECT * FROM pending_deploy_approvals WHERE bot=? AND status IN ('queued','applying') "
+            "ORDER BY id DESC",
+            (bot_name,),
+        ).fetchall()
+        recent_applied = conn.execute(
+            "SELECT * FROM pending_deploy_approvals WHERE bot=? AND status IN ('applied','failed') "
+            "ORDER BY id DESC LIMIT 20",
+            (bot_name,),
+        ).fetchall()
+        conn.close()
+        queued_by_pair = {
+            r["pair"]: dict(r) for r in reversed(list(queued_rows))
+        }
+        for item in pending_deploys:
+            q = queued_by_pair.get(item.get("pair"))
+            if q:
+                item["approval_status"] = q["status"]
+                item["approval_id"] = q["id"]
+            else:
+                item["approval_status"] = "awaiting_operator"
+                item["approval_id"] = None
+        # Include queued rows that health no longer lists (race after shadow clear).
+        pending_pairs = {p.get("pair") for p in pending_deploys}
+        for pair, q in queued_by_pair.items():
+            if pair in pending_pairs:
+                continue
+            pending_deploys.append(
+                {
+                    "bot": bot_name,
+                    "pair": pair,
+                    "variable": q.get("variable"),
+                    "old": _json_loads_maybe(q.get("old_value")),
+                    "new": _json_loads_maybe(q.get("new_value")),
+                    "version": q.get("version"),
+                    "reason": q.get("reason"),
+                    "status": "approved_pending_deploy",
+                    "deployable": True,
+                    "approval_status": q["status"],
+                    "approval_id": q["id"],
+                }
+            )
+
         return {
             "bot": bot_name,
             "status": "ok",
@@ -3091,10 +3179,243 @@ def reflections_ledger(bot_name: str, pair: str | None = None):
             "adaptive": health.get("adaptive") or {},
             "history": health.get("history") or [],
             "gp_handoff_pairs": health.get("gp_handoff_pairs") or [],
+            "pending_deploys": pending_deploys,
+            "recent_approvals": [
+                {
+                    "id": r["id"],
+                    "pair": r["pair"],
+                    "variable": r["variable"],
+                    "status": r["status"],
+                    "created_at": r["created_at"],
+                    "applied_at": r["applied_at"],
+                    "result": _json_loads_maybe(r["result_json"]),
+                }
+                for r in recent_applied
+            ],
             "pairs": pairs_out,
         }
     except Exception as e:
         return {"bot": bot_name, "status": "error", "error": str(e), "pairs": {}}
+
+
+def _json_loads_maybe(raw):
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        return raw
+    with contextlib.suppress(Exception):
+        return json.loads(raw)
+    return raw
+
+
+def _pending_deploys_from_health(health: dict, bot_name: str) -> list[dict]:
+    """Build operator-facing pending list from bot-pushed reflection_health."""
+    out: list[dict] = []
+    raw = health.get("pending_deploys")
+    if isinstance(raw, list) and raw:
+        for item in raw:
+            if not isinstance(item, dict) or not item.get("variable"):
+                continue
+            row = dict(item)
+            row.setdefault("bot", bot_name)
+            row.setdefault("status", "approved_pending_deploy")
+            row.setdefault("deployable", True)
+            out.append(row)
+        return out
+    # Fallback: per-pair shadow challengers (older pushes without pending_deploys).
+    for pair, info in (health.get("pairs") or {}).items():
+        if not isinstance(info, dict):
+            continue
+        shadow = info.get("shadow")
+        if not isinstance(shadow, dict) or not shadow.get("variable"):
+            continue
+        out.append(
+            {
+                "bot": bot_name,
+                "pair": pair,
+                "variable": shadow.get("variable"),
+                "old": shadow.get("old"),
+                "new": shadow.get("new"),
+                "version": shadow.get("version"),
+                "reason": shadow.get("reason") or "shadow_challenger",
+                "backtest": shadow.get("backtest") or {},
+                "ts": shadow.get("ts"),
+                "status": "approved_pending_deploy",
+                "deployable": True,
+            }
+        )
+    return out
+
+
+class ReflectionApproveRequest(BaseModel):
+    pair: str
+    variable: str | None = None
+    old: Any = None
+    new: Any = None
+    version: str | None = None
+    reason: str | None = None
+
+
+@app.post("/api/reflections/{bot_name}/approve")
+def reflections_approve_deploy(bot_name: str, body: ReflectionApproveRequest):
+    """Queue operator approval for a backtest-approved pending deploy.
+
+    Dashboard cannot write bot strategy YAML (separate Railway volumes). The
+    owning bot drains this queue each cycle and applies via approve_pending_deploy.
+    """
+    if bot_name not in VALID_BOTS:
+        raise HTTPException(404, f"Unknown bot '{bot_name}'")
+    pair = (body.pair or "").strip()
+    if not pair:
+        raise HTTPException(400, "pair is required")
+
+    # Prefer fields from the live pending list / shadow when the UI omits them.
+    conn = get_conn()
+    state_row = conn.execute(
+        "SELECT cortex_json FROM latest_state WHERE bot=?", (bot_name,)
+    ).fetchone()
+    health = {}
+    if state_row and state_row["cortex_json"]:
+        with contextlib.suppress(Exception):
+            cortex = json.loads(state_row["cortex_json"] or "{}") or {}
+            health = cortex.get("reflection_health") or {}
+    pending = _pending_deploys_from_health(health if isinstance(health, dict) else {}, bot_name)
+    match = next((p for p in pending if p.get("pair") == pair), None) or {}
+
+    variable = body.variable or match.get("variable")
+    if not variable:
+        conn.close()
+        raise HTTPException(400, "variable is required (no pending challenger for pair)")
+    old_v = body.old if body.old is not None else match.get("old")
+    new_v = body.new if body.new is not None else match.get("new")
+    if new_v is None:
+        conn.close()
+        raise HTTPException(400, "new value is required")
+    version = body.version if body.version is not None else match.get("version")
+    reason = body.reason or match.get("reason") or "operator_approve"
+
+    existing = conn.execute(
+        "SELECT id FROM pending_deploy_approvals WHERE bot=? AND pair=? AND status='queued'",
+        (bot_name, pair),
+    ).fetchone()
+    if existing:
+        conn.close()
+        return {
+            "ok": True,
+            "status": "already_queued",
+            "approval_id": existing["id"],
+            "bot": bot_name,
+            "pair": pair,
+            "variable": variable,
+        }
+
+    cur = conn.execute(
+        """
+        INSERT INTO pending_deploy_approvals
+            (bot, pair, variable, old_value, new_value, version, status, reason, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?)
+        """,
+        (
+            bot_name,
+            pair,
+            variable,
+            json.dumps(old_v),
+            json.dumps(new_v),
+            None if version is None else str(version),
+            reason,
+            utcnow_iso(),
+        ),
+    )
+    conn.commit()
+    approval_id = cur.lastrowid
+    conn.close()
+    return {
+        "ok": True,
+        "status": "queued",
+        "approval_id": approval_id,
+        "bot": bot_name,
+        "pair": pair,
+        "variable": variable,
+        "old": old_v,
+        "new": new_v,
+        "version": version,
+        "message": "Queued — bot applies on next cycle",
+    }
+
+
+@app.get("/api/reflections/{bot_name}/pending-approvals")
+def reflections_pending_approvals(bot_name: str, request: Request):
+    """Bot drain: list queued operator approvals (ingest-token auth)."""
+    if bot_name not in VALID_BOTS:
+        raise HTTPException(404, f"Unknown bot '{bot_name}'")
+    if INGEST_TOKEN and request.headers.get("X-Ingest-Token", "") != INGEST_TOKEN:
+        raise HTTPException(401, "Invalid ingest token")
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM pending_deploy_approvals WHERE bot=? AND status='queued' ORDER BY id ASC",
+        (bot_name,),
+    ).fetchall()
+    conn.close()
+    return {
+        "bot": bot_name,
+        "approvals": [
+            {
+                "id": r["id"],
+                "pair": r["pair"],
+                "variable": r["variable"],
+                "old": _json_loads_maybe(r["old_value"]),
+                "new": _json_loads_maybe(r["new_value"]),
+                "version": r["version"],
+                "reason": r["reason"],
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ],
+    }
+
+
+class ReflectionApprovalAck(BaseModel):
+    ok: bool = True
+    status: str = "applied"
+    result: dict | None = None
+    error: str | None = None
+
+
+@app.post("/api/reflections/{bot_name}/pending-approvals/{approval_id}/ack")
+def reflections_ack_approval(bot_name: str, approval_id: int, body: ReflectionApprovalAck, request: Request):
+    """Bot drain: mark a queued approval applied or failed."""
+    if bot_name not in VALID_BOTS:
+        raise HTTPException(404, f"Unknown bot '{bot_name}'")
+    if INGEST_TOKEN and request.headers.get("X-Ingest-Token", "") != INGEST_TOKEN:
+        raise HTTPException(401, "Invalid ingest token")
+    new_status = "applied" if body.ok and body.status in ("applied", "deployed", "ok") else (
+        body.status if body.status in ("applied", "failed", "deploy_cooldown") else "failed"
+    )
+    if body.ok and body.status == "deployed":
+        new_status = "applied"
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT id FROM pending_deploy_approvals WHERE id=? AND bot=?",
+        (approval_id, bot_name),
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "approval not found")
+    result = body.result or {}
+    if body.error:
+        result = dict(result)
+        result["error"] = body.error
+    conn.execute(
+        """
+        UPDATE pending_deploy_approvals
+        SET status=?, applied_at=?, result_json=?
+        WHERE id=? AND bot=?
+        """,
+        (new_status, utcnow_iso(), json.dumps(result), approval_id, bot_name),
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True, "id": approval_id, "status": new_status}
 
 
 @app.get("/api/audit/findings/{finding_id}")

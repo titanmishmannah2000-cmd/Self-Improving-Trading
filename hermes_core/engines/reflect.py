@@ -1239,6 +1239,9 @@ def run_reflection_pipeline(
 
         stage = _exp.get_deploy_stage(bot)
     if not auto_deploy or stage == "prove":
+        pending_reason = (
+            "stage_prove_shadow_only" if stage == "prove" and auto_deploy else "auto_deploy_off"
+        )
         with contextlib.suppress(Exception):
             from hermes_core.engines import experiment_control as _exp
 
@@ -1248,13 +1251,21 @@ def run_reflection_pipeline(
                 variable=str(prop.get("variable")),
                 old=prop.get("old"),
                 new=prop.get("new"),
-                reason=(
-                    "stage_prove_shadow_only"
-                    if stage == "prove" and auto_deploy
-                    else "auto_deploy_off"
-                ),
+                reason=pending_reason,
                 backtest=verdict,
+                version=bumped,
             )
+        _log_hypothesis(
+            {
+                **{k: prop.get(k) for k in ("pair", "bot", "variable", "old", "new")},
+                "status": "approved_pending_deploy",
+                "version": bumped,
+                "deploy_stage": stage,
+                "reason": pending_reason,
+                "deployable": True,
+                "ts": __import__("time").time(),
+            }
+        )
         return {
             "status": "approved_pending_deploy",
             "pair": pair,
@@ -1263,9 +1274,7 @@ def run_reflection_pipeline(
             "verdict": verdict,
             "version": bumped,
             "deploy_stage": stage,
-            "reason": (
-                "stage_prove_shadow_only" if stage == "prove" and auto_deploy else "auto_deploy_off"
-            ),
+            "reason": pending_reason,
         }
 
     closed_now = 0
@@ -1758,6 +1767,12 @@ def reflection_health(bot: str, pairs: list[str] | None = None, *, goal: dict | 
 
         adaptive_state = _adapt_summary(bot)
 
+    pending_deploys: list[dict] = []
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.experiment_control import list_pending_deploys
+
+        pending_deploys = list_pending_deploys(bot, pairs)
+
     return {
         "bot": bot,
         "auto_deploy": auto_deploy,
@@ -1771,4 +1786,5 @@ def reflection_health(bot: str, pairs: list[str] | None = None, *, goal: dict | 
         "gp_handoff_pairs": [
             p for p, info in out_pairs.items() if info.get("gp_handoff")
         ],
+        "pending_deploys": pending_deploys,
     }

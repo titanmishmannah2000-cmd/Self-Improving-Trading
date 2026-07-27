@@ -2115,7 +2115,16 @@ function ReflectionsPairCard({ pair, info, defaultOpen = true }) {
             <div className="dc-label">Plan / shadow challenger</div>
             <div className="refl-kv">
               <div><span>Plan</span><span>{plan ? _fmtVal(plan) : "—"}{info.plan_reason ? ` · ${info.plan_reason}` : ""}</span></div>
-              <div><span>Shadow</span><span>{shadow ? _fmtVal(shadow) : "—"}</span></div>
+              <div>
+                <span>Shadow</span>
+                <span>
+                  {shadow?.variable
+                    ? `${shadow.variable}: ${_fmtVal(shadow.old)} → ${_fmtVal(shadow.new)}${shadow.version != null ? ` · v${_fmtVal(shadow.version)}` : ""}${shadow.reason ? ` · ${shadow.reason}` : ""}`
+                    : shadow
+                      ? _fmtVal(shadow)
+                      : "—"}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -2202,6 +2211,8 @@ function ReflectionsView({ apiBase, initialBot = "forex" }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [approvingKey, setApprovingKey] = useState(null);
+  const [approveMsg, setApproveMsg] = useState(null);
 
   useEffect(() => {
     if (REFLECTIONS_BOTS.includes(initialBot)) setBotName(initialBot);
@@ -2231,8 +2242,40 @@ function ReflectionsView({ apiBase, initialBot = "forex" }) {
     };
   }, [load]);
 
+  const approveDeploy = async (item) => {
+    const key = `${item.pair}:${item.variable}`;
+    setApprovingKey(key);
+    setApproveMsg(null);
+    try {
+      const res = await fetch(`${apiBase}/api/reflections/${botName}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pair: item.pair,
+          variable: item.variable,
+          old: item.old,
+          new: item.new,
+          version: item.version ?? null,
+          reason: item.reason || "operator_approve",
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.detail || body.message || `API ${res.status}`);
+      setApproveMsg(
+        body.status === "already_queued"
+          ? `${item.pair}: already queued — bot applies next cycle`
+          : `${item.pair}: queued — bot applies on next cycle`,
+      );
+      await load();
+    } catch (e) {
+      setApproveMsg(`Approve failed: ${e.message || e}`);
+    }
+    setApprovingKey(null);
+  };
+
   const pairs = data?.pairs ? Object.entries(data.pairs) : [];
   const adaptiveAxes = data?.adaptive?.axes || {};
+  const pendingDeploys = Array.isArray(data?.pending_deploys) ? data.pending_deploys : [];
 
   return (
     <div className="reflections-view" data-testid="reflections-view">
@@ -2240,6 +2283,7 @@ function ReflectionsView({ apiBase, initialBot = "forex" }) {
         Complete reflection ledger for one bot at a time — every knob, live experiment,
         champion / explore / safe-mode, cooldowns, GP handoff, adaptive learning, plan /
         shadow, and hypothesis timeline. Not part of Versions (that tab is trade performance only).
+        With auto-deploy OFF, backtest-approved changes land here for manual Approve.
       </p>
 
       <div className="activity-page-tabs refl-bot-tabs" role="tablist" aria-label="Reflections bot">
@@ -2278,8 +2322,76 @@ function ReflectionsView({ apiBase, initialBot = "forex" }) {
               {data.gp_handoff_pairs?.length
                 ? ` · GP handoff: ${data.gp_handoff_pairs.join(", ")}`
                 : ""}
+              {pendingDeploys.length
+                ? ` · ${pendingDeploys.length} pending deploy${pendingDeploys.length === 1 ? "" : "s"}`
+                : ""}
             </span>
           </div>
+
+          {pendingDeploys.length > 0 && (
+            <div
+              className="refl-section"
+              data-testid="pending-deploys"
+              style={{
+                marginBottom: 14,
+                padding: 10,
+                border: "1px solid var(--amber, #c9a227)",
+                borderRadius: 6,
+              }}
+            >
+              <div className="dc-label">
+                Pending deploys — backtest approved, awaiting your Approve
+              </div>
+              <p className="activity-help" style={{ marginBottom: 8 }}>
+                REFLECT_AUTO_DEPLOY is off. Approving queues a write; the bot applies the
+                strategy YAML on its next cycle.
+              </p>
+              {approveMsg && (
+                <div className="activity-help" style={{ marginBottom: 8 }}>{approveMsg}</div>
+              )}
+              <table className="mini-table" style={{ width: "100%", fontSize: "0.85em" }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: "left" }}>Pair</th>
+                    <th style={{ textAlign: "left" }}>Change</th>
+                    <th>Version</th>
+                    <th>Reason</th>
+                    <th>Status</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {pendingDeploys.map((item) => {
+                    const key = `${item.pair}:${item.variable}`;
+                    const queued = item.approval_status === "queued" || item.approval_status === "applying";
+                    return (
+                      <tr key={key}>
+                        <td style={{ textAlign: "left" }}>{item.pair}</td>
+                        <td style={{ textAlign: "left" }}>
+                          {item.variable}: {_fmtVal(item.old)} → {_fmtVal(item.new)}
+                        </td>
+                        <td style={{ textAlign: "center" }}>{item.version != null ? `v${_fmtVal(item.version)}` : "—"}</td>
+                        <td style={{ textAlign: "center" }}>{item.reason || "—"}</td>
+                        <td style={{ textAlign: "center", color: queued ? "#3498db" : "#c9a227" }}>
+                          {queued ? "queued" : "awaiting approve"}
+                        </td>
+                        <td style={{ textAlign: "right" }}>
+                          <button
+                            type="button"
+                            className="af-btn af-btn-approve"
+                            disabled={queued || approvingKey === key}
+                            onClick={() => approveDeploy(item)}
+                          >
+                            {queued ? "Queued" : approvingKey === key ? "…" : "Approve"}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {pairs.length > 0 && (
             <div className="refl-section" style={{ marginBottom: 14 }}>

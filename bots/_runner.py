@@ -334,6 +334,70 @@ def _push_prices(bot: str, prices: dict[str, float]) -> None:
         )
 
 
+def _drain_pending_approvals(bot: str) -> None:
+    """Apply operator-approved reflection deploys queued by the dashboard.
+
+    Dashboard cannot write this bot's strategy YAML (separate Railway volumes).
+    Operator clicks Approve on Reflections → queue row → we apply here and ack.
+    Fail-soft: a dead dashboard or bad challenger must never stall the cycle.
+    """
+    client = _get_client()
+    if client is None:
+        return
+    base = get_env("DASHBOARD_API_URL", "").rstrip("/")
+    headers = {"X-Ingest-Token": get_env("INGEST_TOKEN", "")}
+    try:
+        resp = client.get(f"{base}/api/reflections/{bot}/pending-approvals", headers=headers)
+        if resp.status_code != 200:
+            return
+        approvals = (resp.json() or {}).get("approvals") or []
+    except Exception:
+        return
+    if not approvals:
+        return
+    from hermes_core.engines.experiment_control import approve_pending_deploy
+
+    for item in approvals:
+        if not isinstance(item, dict):
+            continue
+        approval_id = item.get("id")
+        pair = item.get("pair")
+        if approval_id is None or not pair:
+            continue
+        try:
+            result = approve_pending_deploy(
+                bot,
+                pair,
+                variable=item.get("variable"),
+                old=item.get("old"),
+                new=item.get("new"),
+                version=item.get("version"),
+                source="operator_approve",
+            )
+            ok = bool(result.get("ok"))
+            status = str(result.get("status") or ("applied" if ok else "failed"))
+            client.post(
+                f"{base}/api/reflections/{bot}/pending-approvals/{approval_id}/ack",
+                json={"ok": ok, "status": status, "result": result},
+                headers=headers,
+            )
+            print(
+                f"[hermes] pending-deploy {bot}/{pair} id={approval_id} → {status}",
+                flush=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            with contextlib.suppress(Exception):
+                client.post(
+                    f"{base}/api/reflections/{bot}/pending-approvals/{approval_id}/ack",
+                    json={"ok": False, "status": "failed", "error": str(exc)},
+                    headers=headers,
+                )
+            print(
+                f"[hermes] pending-deploy {bot}/{pair} id={approval_id} failed: {exc}",
+                flush=True,
+            )
+
+
 # Throttle the websocket tick forwarder: a live crypto feed delivers many ticks
 # per second, and pushing every one would replay the connection storm. Cap to at
 # most one push per PAIR every 2 s (last-value wins). [GUARD L61]
@@ -573,6 +637,7 @@ async def run_bot(bot_name: str) -> None:
                 # overview populate. Fail-soft; a dead dashboard must never
                 # stall the bot. [Gap 1]
                 _push_state(bot, cfg, cycle, summary)
+                _drain_pending_approvals(bot)
             _persist_book()
             # Interruptible sleep so SIGTERM can stop promptly.
             if _stop.wait(cycle_seconds):

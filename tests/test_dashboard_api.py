@@ -538,6 +538,119 @@ def test_reflections_ledger_merges_health_strategy_hypotheses():
     assert body["adaptive"]["axes"]["stop_loss_pct"]["attempts"] == 2
 
 
+def test_reflections_pending_deploys_and_approve_queue():
+    """Pending shadow challengers surface on Reflections; Approve queues for bot drain."""
+    import json
+    from datetime import datetime
+
+    health = {
+        "bot": "forex",
+        "auto_deploy": False,
+        "reflection_every": 5,
+        "deploy_stage": "full",
+        "pending_deploys": [
+            {
+                "bot": "forex",
+                "pair": "EUR/USD",
+                "variable": "trailing_stop_pct",
+                "old": 0.0,
+                "new": 0.4,
+                "version": "02",
+                "reason": "auto_deploy_off",
+                "status": "approved_pending_deploy",
+                "deployable": True,
+            }
+        ],
+        "pairs": {
+            "EUR/USD": {
+                "closed": 10,
+                "last_status": "approved_pending_deploy",
+                "last_status_class": "proven",
+                "shadow": {
+                    "variable": "trailing_stop_pct",
+                    "old": 0.0,
+                    "new": 0.4,
+                    "version": "02",
+                    "reason": "auto_deploy_off",
+                },
+            }
+        },
+    }
+    ts = datetime.now(UTC).isoformat()
+    conn = m.get_conn()
+    conn.execute(
+        """INSERT INTO latest_state
+           (bot, strategy_json, goal_json, heartbeat_json, open_trades_json,
+            discovered_json, cortex_json, flatlined_json, received_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        (
+            "forex",
+            "{}",
+            "{}",
+            "{}",
+            "[]",
+            "{}",
+            json.dumps({"reflection_health": health}),
+            "{}",
+            ts,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    r = client.get("/api/reflections/forex")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "ok"
+    pending = body["pending_deploys"]
+    assert len(pending) == 1
+    assert pending[0]["variable"] == "trailing_stop_pct"
+    assert pending[0]["approval_status"] == "awaiting_operator"
+
+    q = client.post(
+        "/api/reflections/forex/approve",
+        json={
+            "pair": "EUR/USD",
+            "variable": "trailing_stop_pct",
+            "old": 0.0,
+            "new": 0.4,
+            "version": "02",
+        },
+    )
+    assert q.status_code == 200, q.text
+    qbody = q.json()
+    assert qbody["ok"] is True
+    assert qbody["status"] == "queued"
+    approval_id = qbody["approval_id"]
+
+    # Bot drain list (ingest auth).
+    bad = client.get("/api/reflections/forex/pending-approvals")
+    assert bad.status_code == 401
+    drain = client.get(
+        "/api/reflections/forex/pending-approvals",
+        headers={"X-Ingest-Token": "secret-token"},
+    )
+    assert drain.status_code == 200
+    approvals = drain.json()["approvals"]
+    assert len(approvals) == 1
+    assert approvals[0]["id"] == approval_id
+    assert approvals[0]["new"] == 0.4
+
+    ack = client.post(
+        f"/api/reflections/forex/pending-approvals/{approval_id}/ack",
+        headers={"X-Ingest-Token": "secret-token"},
+        json={"ok": True, "status": "deployed", "result": {"version": "02"}},
+    )
+    assert ack.status_code == 200
+    assert ack.json()["status"] == "applied"
+
+    drain2 = client.get(
+        "/api/reflections/forex/pending-approvals",
+        headers={"X-Ingest-Token": "secret-token"},
+    )
+    assert drain2.json()["approvals"] == []
+
+
 def test_reflections_ledger_no_data():
     r = client.get("/api/reflections/forex")
     assert r.status_code == 200

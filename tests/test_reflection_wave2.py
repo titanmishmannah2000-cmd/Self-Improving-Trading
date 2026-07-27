@@ -255,10 +255,59 @@ def test_shadow_challenger_recorded():
         new=0.4,
         reason="auto_deploy_off",
         backtest={"approved": True, "improvement_full": 0.5},
+        version="02",
     )
     sh = ec.shadow_challenger(BOT, PAIR)
     assert sh["variable"] == "trailing_stop_pct"
     assert sh["status"] == "shadow"
+    assert sh["version"] == "02"
+    pending = ec.list_pending_deploys(BOT, [PAIR])
+    assert len(pending) == 1
+    assert pending[0]["status"] == "approved_pending_deploy"
+    assert pending[0]["deployable"] is True
+
+
+def test_approve_pending_deploy_writes_yaml(monkeypatch):
+    applied = {}
+
+    def _fake_load(pair, bot=None):
+        return {
+            "pair": pair,
+            "version": "01",
+            "stop_loss_pct": 1.5,
+            "profit_target_pct": 3.0,
+            "trailing_stop_pct": 0.0,
+        }
+
+    def _fake_apply(pair, variable, new_val, *, bot="forex", version=None, strategy=None):
+        applied.update(
+            {"pair": pair, "variable": variable, "new": new_val, "version": version, "bot": bot}
+        )
+        out = dict(strategy or {})
+        out[variable] = new_val
+        if version is not None:
+            out["version"] = str(version)
+        return out
+
+    monkeypatch.setattr("hermes_core.config.load_strategy_for_pair", _fake_load)
+    monkeypatch.setattr("hermes_core.engines.reflect.apply_strategy_change", _fake_apply)
+    monkeypatch.setattr(ec, "deploy_blocked", lambda *a, **k: None)
+
+    ec.record_shadow_challenger(
+        BOT,
+        PAIR,
+        variable="trailing_stop_pct",
+        old=0.0,
+        new=0.4,
+        reason="auto_deploy_off",
+        version="02",
+    )
+    out = ec.approve_pending_deploy(BOT, PAIR, source="test_approve")
+    assert out.get("ok") is True
+    assert out.get("status") == "deployed"
+    assert applied["variable"] == "trailing_stop_pct"
+    assert applied["new"] == 0.4
+    assert ec.shadow_challenger(BOT, PAIR) is None
 
 
 def test_maybe_reflect_uses_adaptive_every_without_breaking_latch():
