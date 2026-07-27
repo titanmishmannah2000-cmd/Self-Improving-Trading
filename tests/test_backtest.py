@@ -278,6 +278,69 @@ def test_gate_cooldown_after_stop():
     assert res_no["entries"] >= res_cd["entries"]
 
 
+def test_trailing_stop_pct_changes_simulate_pnl(monkeypatch):
+    """%-trail must alter hold-path PnL vs trail=0 (was a delta=0 reflection bug)."""
+    # Warmup + climb + giveback. Entry signal forced so we isolate exit math.
+    prices = [100.0] * 30
+    for _ in range(25):
+        prices.append(prices[-1] * 1.008)
+    for _ in range(25):
+        prices.append(prices[-1] * 0.994)
+    n = len(prices)
+    forced = [0.0] * 30 + [1.0] * (n - 30)
+    monkeypatch.setattr(bt, "_entry_signal", lambda *a, **k: list(forced))
+
+    strat = {
+        "strategy_type": "rsi_momentum",
+        "session_filter": "24h",
+        "entry": {"threshold": 55, "session_filter": "24h"},
+        "stop_loss_pct": 8.0,
+        "profit_target_pct": 50.0,
+        "trailing_stop_pct": 0.0,
+        "time_exit_cycles": 40,
+        "version": "00",
+    }
+    no_trail = bt._simulate(
+        prices,
+        "rsi_momentum",
+        55,
+        8.0,
+        50.0,
+        strategy=strat,
+        ensemble_consensus="neutral",
+        apply_cooldown=False,
+        trail_pct=0.0,
+        max_hold=40,
+    )
+    with_trail = bt._simulate(
+        prices,
+        "rsi_momentum",
+        55,
+        8.0,
+        50.0,
+        strategy=strat,
+        ensemble_consensus="neutral",
+        apply_cooldown=False,
+        trail_pct=0.8,
+        max_hold=40,
+    )
+    assert no_trail["entries"] > 0 and with_trail["entries"] > 0
+    assert with_trail["pnl"] != no_trail["pnl"]
+
+    verdict = backtest_with_history(
+        "ETH/USD",
+        "trailing_stop_pct",
+        0.0,
+        0.8,
+        strategy=strat,
+        prices=prices,
+        ensemble_consensus="neutral",
+        strict=False,
+    )
+    hist = (verdict.get("phases") or {}).get("phase1_hist") or {}
+    assert hist.get("delta") != 0.0
+
+
 def test_default_fetch_uses_shared_ticker_map(monkeypatch):
     """Non-FX pairs must not be passed to Yahoo as raw XAU/USD / BTC/USD."""
     calls: list[tuple] = []

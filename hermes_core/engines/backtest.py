@@ -323,12 +323,17 @@ def _simulate(
     ensemble_consensus: str | list[str] | None = None,
     relax_adx: bool = False,
     apply_cooldown: bool = True,
+    trail_pct: float = 0.0,
+    max_hold: int | None = None,
 ) -> dict:
     """Backtest entries with live BB/RSI/ADX + session/ensemble/cooldown gates.
 
-    Stop-loss exits arm a re-entry cooldown (L15/L23). Target/flat exits do not
-    — matching the spirit of not immediately re-buying after getting stopped
-    in this next-bar PnL model.
+    Default path is next-bar clip to stop/target (legacy reflection SL/TP proofs).
+
+    When ``max_hold`` is set (used for ``trailing_stop_pct`` proofs), holds the
+    trade up to ``max_hold`` bars and applies hard SL/TP plus optional %-trail
+    from peak MFE — matching live ``trailing_stop_pct`` semantics so trail
+    proposals are not identical no-ops.
     """
     from hermes_core.engines.entry import REENTRY_COOLDOWN_CYCLES
 
@@ -348,6 +353,12 @@ def _simulate(
     n = len(p)
     trade_moves: list[float] = []
     last_stop_bar: int | None = None
+    hold = int(max_hold) if max_hold is not None else 0
+    try:
+        trail = max(0.0, float(trail_pct or 0.0))
+    except (TypeError, ValueError):
+        trail = 0.0
+
     for i in range(1, n - 1):
         if raw[i] == 0.0:
             continue
@@ -357,11 +368,49 @@ def _simulate(
             and (i - last_stop_bar) < REENTRY_COOLDOWN_CYCLES
         ):
             continue
-        move = (p[i + 1] - p[i]) / p[i] * 100.0
-        clipped = float(np.clip(move, -stop_pct, target_pct))
-        trade_moves.append(clipped)
-        if move <= -stop_pct:
+
+        if hold <= 0:
+            move = (p[i + 1] - p[i]) / p[i] * 100.0
+            clipped = float(np.clip(move, -stop_pct, target_pct))
+            trade_moves.append(clipped)
+            if move <= -stop_pct:
+                last_stop_bar = i
+            continue
+
+        entry = float(p[i])
+        if entry <= 0:
+            continue
+        peak_mfe = 0.0
+        pnl = 0.0
+        hit_stop = False
+        end = min(n - 1, i + hold)
+        exited = False
+        for j in range(i + 1, end + 1):
+            mfe = (float(p[j]) - entry) / entry * 100.0
+            if mfe > peak_mfe:
+                peak_mfe = mfe
+            if mfe <= -stop_pct:
+                pnl = -float(stop_pct)
+                hit_stop = True
+                exited = True
+                break
+            if mfe >= target_pct:
+                pnl = float(target_pct)
+                exited = True
+                break
+            if trail > 0 and peak_mfe > trail:
+                floor = peak_mfe - trail
+                if mfe <= floor:
+                    pnl = float(floor)
+                    exited = True
+                    break
+        if not exited:
+            mfe = (float(p[end]) - entry) / entry * 100.0
+            pnl = float(np.clip(mfe, -stop_pct, target_pct))
+        trade_moves.append(pnl)
+        if hit_stop:
             last_stop_bar = i
+
     if not trade_moves:
         return {"pnl": 0.0, "wr": 0.0, "entries": 0, "max_dd": 0.0}
     tm = np.asarray(trade_moves, dtype=float)
@@ -425,6 +474,8 @@ def _crisis_backtest(
     pair: str = "EUR/USD",
     candle_ts: list[float] | None = None,
     ensemble_consensus: str | list[str] | None = None,
+    trail_pct: float = 0.0,
+    max_hold: int | None = None,
 ) -> dict:
     """Crisis stress: a change must survive a high-vol drawdown regime.
 
@@ -446,6 +497,8 @@ def _crisis_backtest(
         ensemble_consensus=ensemble_consensus,
         relax_adx=True,
         apply_cooldown=False,  # stress the stop itself, not re-entry spacing
+        trail_pct=trail_pct,
+        max_hold=max_hold,
     )
     approved = res["max_dd"] <= CRISIS_DD_LIMIT
     return {
@@ -662,21 +715,45 @@ def backtest_with_history(
     # differs in simulation (stop_loss_pct OR profit_target_pct).
     base_stop = float(strategy.get("stop_loss_pct", 1.5))
     base_target = float(strategy.get("profit_target_pct", 3.0))
+    try:
+        base_trail = float(strategy.get("trailing_stop_pct", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        base_trail = 0.0
     if param == "stop_loss_pct":
         old_stop = float(old_val)
         new_stop = float(new_val)
         old_target = base_target
         new_target = base_target
+        old_trail = base_trail
+        new_trail = base_trail
     elif param == "profit_target_pct":
         old_stop = base_stop
         new_stop = base_stop
         old_target = float(old_val)
         new_target = float(new_val)
+        old_trail = base_trail
+        new_trail = base_trail
+    elif param == "trailing_stop_pct":
+        old_stop = base_stop
+        new_stop = base_stop
+        old_target = base_target
+        new_target = base_target
+        old_trail = float(old_val)
+        new_trail = float(new_val)
     else:
         old_stop = base_stop
         new_stop = base_stop
         old_target = base_target
         new_target = base_target
+        old_trail = base_trail
+        new_trail = base_trail
+
+    # Trail proofs need a multi-bar hold path; otherwise old/new are identical.
+    try:
+        te = int(strategy.get("time_exit_cycles") or 24)
+    except (TypeError, ValueError):
+        te = 24
+    trail_hold = max(8, min(te, 48)) if param == "trailing_stop_pct" else None
 
     if prices is None:
         prices = fetch_prices(pair)
@@ -706,6 +783,7 @@ def backtest_with_history(
         pair=pair,
         candle_ts=candle_ts,
         ensemble_consensus=ensemble_consensus,
+        max_hold=trail_hold,
     )
 
     phases: dict[str, object] = {}
@@ -745,6 +823,7 @@ def backtest_with_history(
         pair=pair,
         candle_ts=oos_ts,
         ensemble_consensus=oos_ens,
+        max_hold=trail_hold,
     )
     oos_old = _simulate(
         oos_prices,
@@ -752,6 +831,7 @@ def backtest_with_history(
         threshold,
         old_stop,
         old_target,
+        trail_pct=old_trail,
         **oos_kw,
     )
     oos_new = _simulate(
@@ -760,6 +840,7 @@ def backtest_with_history(
         threshold,
         new_stop,
         new_target,
+        trail_pct=new_trail,
         **oos_kw,
     )
     oos_delta = oos_new["pnl"] - oos_old["pnl"]
@@ -774,8 +855,24 @@ def backtest_with_history(
         reasons.append(f"OOS FAIL: corr={oos_corr} (>= {OOS_CORR_MIN}) delta={oos_delta} (>-0.2)")
 
     # Phase 1 — historical delta (full window, old vs new)
-    old_res = _simulate(prices, strat_type, threshold, old_stop, old_target, **sim_kw)
-    new_res = _simulate(prices, strat_type, threshold, new_stop, new_target, **sim_kw)
+    old_res = _simulate(
+        prices,
+        strat_type,
+        threshold,
+        old_stop,
+        old_target,
+        trail_pct=old_trail,
+        **sim_kw,
+    )
+    new_res = _simulate(
+        prices,
+        strat_type,
+        threshold,
+        new_stop,
+        new_target,
+        trail_pct=new_trail,
+        **sim_kw,
+    )
     delta = new_res["pnl"] - old_res["pnl"]
     hist_ok = delta > HIST_DELTA_OK
     phases["phase1_hist"] = {"delta": round(delta, 4), "ok": hist_ok}
@@ -789,6 +886,7 @@ def backtest_with_history(
         threshold,
         new_stop,
         new_target,
+        trail_pct=new_trail,
         **sim_kw,
     )
     phases["phase1_5_crisis"] = crisis
