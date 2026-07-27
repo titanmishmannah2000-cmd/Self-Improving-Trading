@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from hermes_core.config import load_config, load_strategy_for_pair
@@ -696,6 +698,11 @@ APPLY_CONFIDENCE = 0.40  # [GUARD L53] min confidence to apply any change
 # google.generativeai SDKs, which are absent from the bot image and caused
 # live ModuleNotFoundError → false 0/3 L2 rejects.
 DEFAULT_MODELS = ("deepseek", "gemini", "groq")
+# Models that get the micro brief (small/fast); others get the full brief.
+_L2_MICRO_MODELS = frozenset({"groq"})
+# Matches experiment_control.l2_model_weight upper bound (cascade early-exit).
+_L2_MAX_MODEL_WEIGHT = 1.75
+_L2_MAX_TOKENS = 96
 
 _DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
 _GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -744,7 +751,7 @@ def _openai_chat_completion(
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.0,
-            "max_tokens": 64,
+            "max_tokens": _L2_MAX_TOKENS,
         },
         headers={
             "Authorization": f"Bearer {api_key}",
@@ -812,19 +819,157 @@ _MODEL_CALLERS = {
 
 
 def _parse_vote(text: str) -> bool:
-    """A model 'votes yes' if its reply contains an affirmative token (whole word).
+    """Parse a model reply into a yes-vote (fail-closed).
 
-    Conservative: only explicit YES / APPROVE / AGREE / ACCEPT counts. We use
-    word-boundary matching so the word "applied" (in the prompt) does NOT falsely
-    read as a YES. Everything else (silence, errors, hedging, "NO") is a NO.
-    Fail-closed.
+    Prefer a last-line ``VOTE: YES|NO`` contract. Else accept whole-word
+    YES / APPROVE / AGREE / ACCEPT. Hedging, silence, and NO are all NO.
     """
-    import re
-
-    t = (text or "").strip().upper()
-    if not t:
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    if lines:
+        m = re.match(r"^VOTE\s*:\s*(YES|NO)\b", lines[-1], flags=re.IGNORECASE)
+        if m:
+            return m.group(1).upper() == "YES"
+        # Also accept VOTE on any line if last line was a reason-only fragment.
+        for ln in reversed(lines):
+            m = re.match(r"^VOTE\s*:\s*(YES|NO)\b", ln, flags=re.IGNORECASE)
+            if m:
+                return m.group(1).upper() == "YES"
+    t = raw.upper()
+    if re.search(r"\bVOTE\s*:\s*NO\b", t):
         return False
     return bool(re.search(r"\b(YES|APPROVE|AGREE|ACCEPT)\b", t))
+
+
+def _l2_axis_kind(variable: str) -> str:
+    """Map a proposal variable to an evidence bucket for adaptive context."""
+    v = (variable or "").lower()
+    if any(k in v for k in ("trail", "giveback", "mfe", "trailing")):
+        return "trail"
+    if any(
+        k in v
+        for k in (
+            "session",
+            "rsi",
+            "entry",
+            "threshold",
+            "bb_",
+            "bandwidth",
+            "filter",
+            "oversold",
+            "overbought",
+        )
+    ):
+        return "entry"
+    if any(
+        k in v
+        for k in (
+            "stop_loss",
+            "profit_target",
+            "risk_reward",
+            "rr_",
+            "target",
+            "time_exit",
+            "max_hold",
+        )
+    ):
+        return "exit"
+    return "generic"
+
+
+def _l2_prompt_tier(model: str) -> str:
+    return "micro" if model in _L2_MICRO_MODELS else "full"
+
+
+def _context_bullets(context: str, *, limit: int = 5) -> list[str]:
+    """Split assembled L2 context into short bullets for the micro brief."""
+    bullets: list[str] = []
+    for chunk in re.split(r"\s*\|\s*", (context or "").strip()):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if len(chunk) > 100:
+            chunk = chunk[:97] + "..."
+        bullets.append(chunk)
+        if len(bullets) >= limit:
+            break
+    return bullets
+
+
+def build_l2_prompt(proposal: dict, context: str = "", *, tier: str = "full") -> str:
+    """Build a capability-tiered L2 critic prompt with a strict VOTE contract."""
+    variable = proposal.get("variable")
+    pair = proposal.get("pair")
+    old = proposal.get("old")
+    new = proposal.get("new")
+    reason = proposal.get("reason") or ""
+    header = (
+        f"PROPOSAL: {variable} {old} -> {new} on {pair}\n"
+        f"REASON: {reason}"
+    )
+    vote_rule = (
+        "End your reply with exactly one line: VOTE: YES or VOTE: NO\n"
+        "(YES = worth a backtest of this reversible paper-soak YAML change; "
+        "NO = harmful, oscillating, or unsupported.)"
+    )
+    if tier == "micro":
+        bullets = _context_bullets(context, limit=5)
+        facts = "\n".join(f"- {b}" for b in bullets) if bullets else "- (no extra evidence)"
+        return (
+            "You are a fast trading-risk sanity voter (paper soak).\n"
+            f"{header}\n"
+            f"FACTS:\n{facts}\n"
+            f"{vote_rule}"
+        )
+    evidence = (context or "").strip() or "(none)"
+    return (
+        "You are a senior trading-risk reviewer for a paper-soak HERMES bot.\n"
+        "This is a reversible YAML parameter change; YES only advances the "
+        "proposal to a backtest — it is not a claim of guaranteed profit.\n"
+        "Vote NO if the change looks harmful, oscillates a failed axis, or "
+        "lacks supporting evidence.\n"
+        f"{header}\n"
+        f"EVIDENCE:\n{evidence}\n"
+        f"{vote_rule}"
+    )
+
+
+def _model_weight(bot: str | None, name: str) -> float:
+    if not bot:
+        return 1.0
+    try:
+        from hermes_core.engines.experiment_control import l2_model_weight
+
+        return float(l2_model_weight(bot, name))
+    except Exception:  # noqa: BLE001
+        return 1.0
+
+
+def _cascade_skip_third(
+    *,
+    first_two: list[str],
+    vote_map: dict[str, bool],
+    weights: dict[str, float],
+    required: int,
+    required_weight: float,
+) -> bool:
+    """True when the 3rd model call cannot change the weighted outcome."""
+    if len(first_two) < 2:
+        return True
+    yeses = [n for n in first_two if vote_map.get(n)]
+    yes_w = sum(weights.get(n, 1.0) for n in yeses)
+    if len(yeses) == 2 and required <= 2:
+        return True
+    if yes_w + 1e-9 >= required_weight:
+        return True
+    # Both NO (or errors-as-NO): even max-weight YES from #3 cannot clear the bar.
+    if len(yeses) == 0 and yes_w + _L2_MAX_MODEL_WEIGHT + 1e-9 < required_weight:
+        return True
+    if yes_w + _L2_MAX_MODEL_WEIGHT + 1e-9 < required_weight:
+        return True
+    return False
 
 
 class ConsensusResult:
@@ -905,6 +1050,10 @@ def call_llm_consensus(
     decision is REJECT (L1 must stand/rejected on its own). At/above the bar the
     required weighted vote count (2/3 or 3/3) must be met AND confidence >= APPLY.
     Model weights come from live outcome calibration (#10).
+
+    Efficiency: models are ordered by trust weight; top-2 run in parallel; the
+    3rd is skipped when it cannot change the weighted outcome. Each model gets
+    a capability-tiered prompt (full vs micro).
     """
     score = float(score if score is not None else proposal.get("confidence", 0.0) * 100)
     confidence = float(confidence if confidence is not None else proposal.get("confidence", 0.0))
@@ -933,40 +1082,67 @@ def call_llm_consensus(
             f"(present={[n for n, ok in key_status.items() if ok]})",
             flush=True,
         )
-    prompt = (
-        f"You are a senior trading-risk reviewer. Proposal: change "
-        f"{proposal.get('variable')} from {proposal.get('old')} to "
-        f"{proposal.get('new')} for {proposal.get('pair')}. Reason: "
-        f"{proposal.get('reason')}. Context: {context}. Reply only YES or NO: "
-        f"should this parameter change be applied?"
-    )
+
+    order_index = {n: i for i, n in enumerate(models)}
+    available = [n for n in models if n in callers]
+    weights = {n: _model_weight(bot, n) for n in available}
+    ordered = sorted(available, key=lambda n: (-weights[n], order_index.get(n, 99)))
 
     votes_yes = 0
     reached = 0
     yes_weight = 0.0
     call_errors: list[str] = []
+    cascade_note: str | None = None
     vote_map: dict[str, bool] = {}
-    for name in models:
-        if name not in callers:
-            continue
-        reached += 1
-        weight = 1.0
-        if bot:
-            with contextlib.suppress(Exception):
-                from hermes_core.engines.experiment_control import l2_model_weight
 
-                weight = float(l2_model_weight(bot, name))
+    def _invoke(name: str) -> tuple[str, bool | None, str | None]:
+        """Return (name, yes_or_None_on_error, error_or_None)."""
+        tier = _l2_prompt_tier(name)
+        prompt = build_l2_prompt(proposal, context, tier=tier)
         try:
             reply = callers[name](prompt)
         except Exception as exc:  # noqa: BLE001 — fail-closed: a model error = NO
-            call_errors.append(f"{name}:{type(exc).__name__}")
+            return name, None, f"{name}:{type(exc).__name__}"
+        return name, _parse_vote(reply), None
+
+    def _record(name: str, yes: bool | None, err: str | None) -> None:
+        nonlocal votes_yes, reached, yes_weight
+        reached += 1
+        if err:
+            call_errors.append(err)
             vote_map[name] = False
-            continue
-        yes = _parse_vote(reply)
-        vote_map[name] = yes
+            return
+        vote_map[name] = bool(yes)
         if yes:
             votes_yes += 1
-            yes_weight += weight
+            yes_weight += weights.get(name, 1.0)
+
+    if not ordered:
+        pass
+    elif len(ordered) == 1:
+        name, yes, err = _invoke(ordered[0])
+        _record(name, yes, err)
+    else:
+        first_two = ordered[:2]
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futs = [pool.submit(_invoke, n) for n in first_two]
+            for fut in as_completed(futs):
+                name, yes, err = fut.result()
+                _record(name, yes, err)
+
+        required_weight = float(required)
+        rest = ordered[2:]
+        if rest and not _cascade_skip_third(
+            first_two=first_two,
+            vote_map=vote_map,
+            weights=weights,
+            required=required,
+            required_weight=required_weight,
+        ):
+            name, yes, err = _invoke(rest[0])
+            _record(name, yes, err)
+        elif rest:
+            cascade_note = f"cascade_skip:{rest[0]}"
 
     # Weighted bar: default weights=1 → identical to classic 2/3 or 3/3.
     required_weight = float(required)
@@ -974,6 +1150,8 @@ def call_llm_consensus(
         f"score {score:.0f} -> {label}; votes {votes_yes}/{reached} "
         f"(required {required}, yes_w={yes_weight:.2f}/{required_weight:.2f})"
     ]
+    if cascade_note:
+        reasons.append(cascade_note)
     if call_errors:
         reasons.append("errors: " + ",".join(call_errors))
 
@@ -1103,18 +1281,25 @@ def apply_strategy_change(
 
 
 def _build_l2_context(
-    pair: str, bot: str, *, chart_context: str = "", skipped_json: str = ""
+    pair: str,
+    bot: str,
+    *,
+    chart_context: str = "",
+    skipped_json: str = "",
+    variable: str = "",
 ) -> str:
-    """Assemble the critic brief for L2 (Phase 2.5).
+    """Assemble a variable-aware critic brief for L2.
 
-    Gives the consensus models what a human reviewer would want: the pair's
-    Cortex win-rate/exile picture, the last few reflection hypotheses (so a
-    model can spot an oscillation or a repeatedly-failing axis), and the recent
-    skip context. Fail-soft — returns at least the chart context.
+    Evidence is chosen by proposal axis so small models are not drowned in
+    unrelated skips/chart. Hard caps keep prompts efficient.
     """
+    kind = _l2_axis_kind(variable)
     parts: list[str] = []
+
     if chart_context:
-        parts.append(f"CHART: {chart_context[:400]}")
+        cap = 120 if kind == "trail" else 200
+        parts.append(f"CHART: {chart_context[:cap]}")
+
     with contextlib.suppress(Exception):
         from hermes_core.engines.decision_cortex import Cortex
 
@@ -1122,20 +1307,30 @@ def _build_l2_context(
         summ = cx.summary() or {}
         s = summ.get("summary", {})
         type_wr = summ.get("type_wr", {})
+        wr_compact = {
+            k: (round(v, 2) if isinstance(v, (int, float)) else v)
+            for k, v in (type_wr or {}).items()
+        }
         parts.append(
             "CORTEX: best_entry="
             f"{s.get('best_entry_type')} exiled={s.get('exiled_indicators')} "
-            f"type_wr={ {k: (round(v, 2) if isinstance(v, (int, float)) else v) for k, v in type_wr.items()} }"
+            f"type_wr={wr_compact}"
         )
-        recent = cx.recent_hypotheses(pair=pair, limit=3)
-        if recent:
+        recent = cx.recent_hypotheses(pair=pair, limit=6) or []
+        axis = _l2_axis_kind(variable)
+        same = [h for h in recent if _l2_axis_kind(str(h.get("variable") or "")) == axis]
+        picked = (same or recent)[:2]
+        if picked:
             hist = "; ".join(
                 f"{h.get('variable')} {h.get('old')}->{h.get('new')} [{h.get('status')}]"
-                for h in recent
+                for h in picked
             )
             parts.append(f"LAST_HYPOTHESES: {hist}")
-    if skipped_json:
-        parts.append(f"SKIPS: {skipped_json[:300]}")
+
+    # Skips matter for entry filters; omit noisy skip dumps for exit/trail axes.
+    if skipped_json and kind in ("entry", "generic"):
+        parts.append(f"SKIPS: {skipped_json[:120]}")
+
     return " | ".join(parts) if parts else chart_context
 
 
@@ -1193,7 +1388,11 @@ def run_reflection_pipeline(
 
     if score >= l2_min:
         critic_context = _build_l2_context(
-            pair, bot, chart_context=chart_context, skipped_json=skipped_json
+            pair,
+            bot,
+            chart_context=chart_context,
+            skipped_json=skipped_json,
+            variable=str(prop.get("variable") or ""),
         )
         cons = call_llm_consensus(
             prop,

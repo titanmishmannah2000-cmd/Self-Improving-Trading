@@ -282,7 +282,11 @@ def test_default_callers_no_sdk_import(monkeypatch):
 
 
 def test_consensus_uses_httpx_callers_end_to_end(monkeypatch):
-    """With httpx fakes, real DEFAULT callers can produce a real APPLY."""
+    """With httpx fakes, real DEFAULT callers can produce a real APPLY.
+
+    At score=70 (required 2/3), trust-ordered cascade skips the 3rd model when
+    the top-2 already agree YES — so votes_yes is 2, not 3.
+    """
     from hermes_core.engines import reflect as rf
     import httpx as hx
 
@@ -296,6 +300,188 @@ def test_consensus_uses_httpx_callers_end_to_end(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "b")
     monkeypatch.setenv("GROQ_API_KEY", "c")
     res = call_llm_consensus(_proposal(70), score=70)  # default _MODEL_CALLERS
+    assert res.votes_yes == 2
+    assert res.votes_total == 2
+    assert res.decision is True
+    assert any("cascade_skip:groq" in r for r in res.reasons)
+    assert not any("ModuleNotFoundError" in r for r in res.reasons)
+
+
+# ── adaptive prompt / context / cascade / parse ─────────────────────────────
+def test_parse_vote_prefers_last_line_vote_contract():
+    from hermes_core.engines import reflect as rf
+
+    assert rf._parse_vote("Looks fine.\nVOTE: YES") is True
+    assert rf._parse_vote("Risky oscillation.\nVOTE: NO") is False
+    assert rf._parse_vote("YES, apply this change.") is True
+    assert rf._parse_vote("APPROVE") is True
+    assert rf._parse_vote("should this be applied?") is False
+    assert rf._parse_vote("") is False
+    assert rf._parse_vote("maybe") is False
+
+
+def test_build_l2_prompt_full_vs_micro():
+    from hermes_core.engines import reflect as rf
+
+    prop = _proposal(70)
+    ctx = "CHART: trend up | CORTEX: type_wr={'mr':0.4} | SKIPS: session_filter=3"
+    full = rf.build_l2_prompt(prop, ctx, tier="full")
+    micro = rf.build_l2_prompt(prop, ctx, tier="micro")
+    assert "senior trading-risk reviewer" in full
+    assert "EVIDENCE:" in full
+    assert "VOTE: YES or VOTE: NO" in full
+    assert "fast trading-risk sanity voter" in micro
+    assert "FACTS:" in micro
+    assert "EVIDENCE:" not in micro
+    assert len(micro) < len(full)
+    assert "VOTE: YES or VOTE: NO" in micro
+
+
+def test_build_l2_context_omits_skips_for_trail_includes_for_rsi():
+    from hermes_core.engines import reflect as rf
+
+    chart = "x" * 250
+    skips = "session_filter=9," + ("y" * 200)
+    trail_ctx = rf._build_l2_context(
+        "EUR/USD",
+        "forex",
+        chart_context=chart,
+        skipped_json=skips,
+        variable="trailing_stop_pct",
+    )
+    assert "SKIPS:" not in trail_ctx
+    assert "CHART:" in trail_ctx
+    # trail chart cap is 120
+    chart_part = [p for p in trail_ctx.split(" | ") if p.startswith("CHART:")][0]
+    assert len(chart_part) <= len("CHART: ") + 120
+
+    entry_ctx = rf._build_l2_context(
+        "EUR/USD",
+        "forex",
+        chart_context=chart,
+        skipped_json=skips,
+        variable="entry.threshold",
+    )
+    assert "SKIPS:" in entry_ctx
+    skip_part = [p for p in entry_ctx.split(" | ") if p.startswith("SKIPS:")][0]
+    assert len(skip_part) <= len("SKIPS: ") + 120
+
+
+def test_cascade_skips_third_when_top_two_agree_yes():
+    calls = {"deepseek": 0, "gemini": 0, "groq": 0}
+
+    def _count(name):
+        def _fn(_p):
+            calls[name] += 1
+            return "VOTE: YES"
+
+        return _fn
+
+    callers = {n: _count(n) for n in ("deepseek", "gemini", "groq")}
+    res = call_llm_consensus(_proposal(70), score=70, callers=callers)
+    assert res.decision is True
+    assert res.votes_yes == 2
+    assert calls["deepseek"] == 1
+    assert calls["gemini"] == 1
+    assert calls["groq"] == 0
+    assert any("cascade_skip:groq" in r for r in res.reasons)
+
+
+def test_cascade_calls_third_on_split_votes():
+    calls = {"deepseek": 0, "gemini": 0, "groq": 0}
+
+    def _yes_count(name):
+        def _fn(_p):
+            calls[name] += 1
+            return "VOTE: YES"
+
+        return _fn
+
+    def _no_count(name):
+        def _fn(_p):
+            calls[name] += 1
+            return "VOTE: NO"
+
+        return _fn
+
+    callers = {
+        "deepseek": _yes_count("deepseek"),
+        "gemini": _no_count("gemini"),
+        "groq": _yes_count("groq"),
+    }
+    res = call_llm_consensus(_proposal(70), score=70, callers=callers)
+    assert calls["deepseek"] == 1
+    assert calls["gemini"] == 1
+    assert calls["groq"] == 1
+    assert res.votes_yes == 2
+    assert res.decision is True
+    assert not any(r.startswith("cascade_skip:") for r in res.reasons)
+
+
+def test_cascade_skips_third_when_top_two_both_no():
+    calls = {"deepseek": 0, "gemini": 0, "groq": 0}
+
+    def _no_count(name):
+        def _fn(_p):
+            calls[name] += 1
+            return "VOTE: NO"
+
+        return _fn
+
+    callers = {n: _no_count(n) for n in ("deepseek", "gemini", "groq")}
+    res = call_llm_consensus(_proposal(70), score=70, callers=callers)
+    assert res.decision is False
+    assert res.votes_yes == 0
+    assert calls["groq"] == 0
+    assert any("cascade_skip:groq" in r for r in res.reasons)
+
+
+def test_unanimous_still_calls_third():
+    calls = {"deepseek": 0, "gemini": 0, "groq": 0}
+
+    def _yes_count(name):
+        def _fn(_p):
+            calls[name] += 1
+            return "VOTE: YES"
+
+        return _fn
+
+    callers = {n: _yes_count(n) for n in ("deepseek", "gemini", "groq")}
+    res = call_llm_consensus(_proposal(80), score=80, callers=callers)
+    assert res.required == 3
+    assert calls["groq"] == 1
     assert res.votes_yes == 3
     assert res.decision is True
-    assert not any("ModuleNotFoundError" in r for r in res.reasons)
+
+
+def test_micro_prompt_sent_to_groq_only():
+    seen: dict[str, str] = {}
+
+    def _deep(prompt: str):
+        seen["deepseek"] = prompt
+        return "VOTE: YES"
+
+    def _gem(prompt: str):
+        seen["gemini"] = prompt
+        return "VOTE: NO"
+
+    def _groq(prompt: str):
+        seen["groq"] = prompt
+        return "VOTE: YES"
+
+    call_llm_consensus(
+        _proposal(70),
+        score=70,
+        callers={"deepseek": _deep, "gemini": _gem, "groq": _groq},
+    )
+    assert "senior trading-risk reviewer" in seen["deepseek"]
+    assert "fast trading-risk sanity voter" in seen["groq"]
+    assert "FACTS:" in seen["groq"]
+    assert "EVIDENCE:" in seen["deepseek"]
+
+
+def test_l2_max_tokens_bumped():
+    from hermes_core.engines import reflect as rf
+
+    assert rf._L2_MAX_TOKENS == 96
+
