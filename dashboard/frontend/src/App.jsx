@@ -2045,8 +2045,8 @@ function ReflectionsKnobGrid({ knobs }) {
   );
 }
 
-function ReflectionsPairCard({ pair, info }) {
-  const [open, setOpen] = useState(false);
+function ReflectionsPairCard({ pair, info, defaultOpen = true }) {
+  const [open, setOpen] = useState(defaultOpen);
   const exp = info.experiment;
   const timeline = info.timeline || [];
   const learned = info.learned_axes || {};
@@ -2054,6 +2054,7 @@ function ReflectionsPairCard({ pair, info }) {
   const dirCd = info.direction_cooldown || {};
   const plan = info.plan;
   const shadow = info.shadow;
+  const knobs = info.strategy || {};
 
   return (
     <div className="sa-pair refl-pair" data-testid={`refl-pair-${pair}`}>
@@ -2066,6 +2067,7 @@ function ReflectionsPairCard({ pair, info }) {
         <span style={{ color: _statusColor(info.last_status_class), fontSize: 11 }}>
           {info.last_status || "no proposal yet"}
         </span>
+        {knobs.version != null ? <span className="sa-pair-count">v{_fmtVal(knobs.version)}</span> : null}
         {exp ? (
           <span className="sa-pair-count" style={{ color: "#3498db" }}>
             exp: {exp.variable} [{exp.status}]
@@ -2081,47 +2083,47 @@ function ReflectionsPairCard({ pair, info }) {
       {open && (
         <div className="refl-pair-body">
           <div className="refl-section">
-            <div className="dc-label">Strategy knobs</div>
-            <ReflectionsKnobGrid knobs={info.strategy} />
+            <div className="dc-label">Strategy knobs (live)</div>
+            <ReflectionsKnobGrid knobs={knobs} />
           </div>
 
           <div className="refl-section">
-            <div className="dc-label">Live experiment / champion</div>
+            <div className="dc-label">Live experiment / champion / gates</div>
             <div className="refl-kv">
               <div><span>Experiment</span><span>{exp ? `${exp.variable}: ${_fmtVal(exp.old)} → ${_fmtVal(exp.new)} (${exp.version_from}→${exp.version_to}) [${exp.status}]` : "—"}</span></div>
+              <div><span>Deployed at</span><span>{exp?.deployed_ts ? _fmtVal(exp.deployed_ts) : "—"} · closed @ deploy {_fmtVal(exp?.deployed_closed)}</span></div>
               <div><span>Champion</span><span>{info.champion_status || "—"}{info.champion_version ? ` · v${info.champion_version}` : ""}{info.revert_count ? ` · ${info.revert_count}× revert` : ""}</span></div>
               <div><span>Safe mode</span><span>{info.safe_mode || "—"}{info.safe_mode_reason ? ` · ${info.safe_mode_reason}` : ""}</span></div>
               <div><span>Explore</span><span>{info.explore ? (info.explore_reason || "active") : "off"}</span></div>
               <div><span>Deploy cooldown</span><span>{info.deploy_cooldown ? _fmtVal(info.deploy_cooldown) : "—"}</span></div>
-              <div><span>GP handoff</span><span>{info.gp_handoff ? (info.gp_handoff_reason || info.gp_handoff_variable || "priority") : "—"}</span></div>
-              <div><span>Cadence</span><span>every {info.reflection_every ?? "—"} · latched @ {info.latched_at ?? "—"} · last {info.last_ts || "—"}</span></div>
+              <div><span>GP handoff</span><span>{info.gp_handoff ? `${info.gp_handoff_variable || "priority"}${info.gp_handoff_reason ? ` · ${info.gp_handoff_reason}` : ""}` : "—"}</span></div>
+              <div><span>Cadence</span><span>every {info.reflection_every ?? "—"} closes · latched @ {info.latched_at ?? "—"} · last {info.last_ts || "—"}{info.last_reason ? ` · ${info.last_reason}` : ""}</span></div>
+              <div><span>Proven</span><span>{info.proven ? "yes" : "no"}</span></div>
             </div>
           </div>
 
-          {(Object.keys(axisCd).length > 0 || Object.keys(dirCd).length > 0 || (info.cooldown_axes || []).length > 0) && (
-            <div className="refl-section">
-              <div className="dc-label">Cooldowns / quarantine</div>
-              <div className="refl-kv">
-                <div><span>Axes</span><span>{(info.cooldown_axes || []).join(", ") || "—"}</span></div>
-                <div><span>Axis detail</span><span>{Object.keys(axisCd).length ? _fmtVal(axisCd) : "—"}</span></div>
-                <div><span>Direction</span><span>{Object.keys(dirCd).length ? _fmtVal(dirCd) : "—"}</span></div>
-              </div>
+          <div className="refl-section">
+            <div className="dc-label">Cooldowns / quarantine</div>
+            <div className="refl-kv">
+              <div><span>Axes</span><span>{(info.cooldown_axes || []).join(", ") || "—"}</span></div>
+              <div><span>Axis detail</span><span>{Object.keys(axisCd).length ? _fmtVal(axisCd) : "—"}</span></div>
+              <div><span>Direction</span><span>{Object.keys(dirCd).length ? _fmtVal(dirCd) : "—"}</span></div>
             </div>
-          )}
+          </div>
 
-          {(plan || shadow) && (
-            <div className="refl-section">
-              <div className="dc-label">Plan / shadow</div>
-              <div className="refl-kv">
-                <div><span>Plan</span><span>{plan ? _fmtVal(plan) : "—"}{info.plan_reason ? ` · ${info.plan_reason}` : ""}</span></div>
-                <div><span>Shadow</span><span>{shadow ? _fmtVal(shadow) : "—"}</span></div>
-              </div>
+          <div className="refl-section">
+            <div className="dc-label">Plan / shadow challenger</div>
+            <div className="refl-kv">
+              <div><span>Plan</span><span>{plan ? _fmtVal(plan) : "—"}{info.plan_reason ? ` · ${info.plan_reason}` : ""}</span></div>
+              <div><span>Shadow</span><span>{shadow ? _fmtVal(shadow) : "—"}</span></div>
             </div>
-          )}
+          </div>
 
-          {Object.keys(learned).length > 0 && (
-            <div className="refl-section">
-              <div className="dc-label">Learned axes (this pair)</div>
+          <div className="refl-section">
+            <div className="dc-label">Learned axes (this pair)</div>
+            {Object.keys(learned).length === 0 ? (
+              <div className="detail-muted">No axis outcomes recorded yet.</div>
+            ) : (
               <table className="mini-table" style={{ width: "100%", fontSize: "0.8em" }}>
                 <thead>
                   <tr>
@@ -2129,8 +2131,11 @@ function ReflectionsPairCard({ pair, info }) {
                     <th>Tried</th>
                     <th>Worked</th>
                     <th>Reverted</th>
+                    <th>Pipeline ✕</th>
                     <th>Reliability</th>
                     <th>Step ×</th>
+                    <th>Avg gain</th>
+                    <th>Fail streak</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2140,22 +2145,21 @@ function ReflectionsPairCard({ pair, info }) {
                       <td style={{ textAlign: "center" }}>{a.attempts}</td>
                       <td style={{ textAlign: "center", color: "#2ecc71" }}>{a.improved}</td>
                       <td style={{ textAlign: "center", color: "#e67e22" }}>{a.reverted}</td>
+                      <td style={{ textAlign: "center" }}>{a.pipeline_rejects ?? "—"}</td>
                       <td style={{ textAlign: "center" }}>{a.reliability}</td>
                       <td style={{ textAlign: "center" }}>{a.step_scale}</td>
+                      <td style={{ textAlign: "center" }}>{a.avg_gain ?? "—"}</td>
+                      <td style={{ textAlign: "center" }}>{a.fail_streak || "—"}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {info.pathology_bars ? (
-                <div className="activity-help" style={{ marginTop: 4 }}>
-                  Pathology bars: {_fmtVal(info.pathology_bars)}
-                </div>
-              ) : null}
-              {info.cadence ? (
-                <div className="activity-help">Pair cadence: {_fmtVal(info.cadence)}</div>
-              ) : null}
+            )}
+            <div className="refl-kv" style={{ marginTop: 6 }}>
+              <div><span>Pathology bars</span><span>{info.pathology_bars ? _fmtVal(info.pathology_bars) : "—"}</span></div>
+              <div><span>Pair cadence</span><span>{info.cadence ? _fmtVal(info.cadence) : "—"}</span></div>
             </div>
-          )}
+          </div>
 
           <div className="refl-section">
             <div className="dc-label">Hypothesis timeline ({timeline.length})</div>
@@ -2169,7 +2173,15 @@ function ReflectionsPairCard({ pair, info }) {
                     <span className="refl-tl-status" style={{ color: _statusColor(h.status) }}>{h.status || "—"}</span>
                     <span className="refl-tl-var">{h.variable || "—"}</span>
                     <span className="refl-tl-chg">{_fmtVal(h.old)} → {_fmtVal(h.new)}</span>
-                    <span className="refl-tl-reason">{h.reason || ""}</span>
+                    <span className="refl-tl-reason">
+                      {h.version_from || h.version_to
+                        ? `v${h.version_from || "?"}→${h.version_to || h.version || "?"} · `
+                        : h.version
+                          ? `v${h.version} · `
+                          : ""}
+                      {h.reason || ""}
+                      {h.confidence != null ? ` · conf ${h.confidence}` : ""}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -2180,6 +2192,8 @@ function ReflectionsPairCard({ pair, info }) {
     </div>
   );
 }
+
+const REFLECTIONS_BOT_LABELS = { forex: "Forex", gold: "Gold", crypto: "Crypto" };
 
 function ReflectionsView({ apiBase, initialBot = "forex" }) {
   const [botName, setBotName] = useState(
@@ -2223,22 +2237,24 @@ function ReflectionsView({ apiBase, initialBot = "forex" }) {
   return (
     <div className="reflections-view" data-testid="reflections-view">
       <p className="activity-help">
-        Full reflection ledger per pair for one bot — strategy knobs, live experiment,
+        Complete reflection ledger for one bot at a time — every knob, live experiment,
         champion / explore / safe-mode, cooldowns, GP handoff, adaptive learning, plan /
-        shadow, and hypothesis timeline. Source: bot-pushed reflection health + strategy + hypotheses.
+        shadow, and hypothesis timeline. Not part of Versions (that tab is trade performance only).
       </p>
-      <div className="activity-bot-tabs" role="tablist" aria-label="Reflections bot">
+
+      <div className="activity-page-tabs refl-bot-tabs" role="tablist" aria-label="Reflections bot">
         {REFLECTIONS_BOTS.map((b) => (
           <button
             key={b}
             type="button"
-            className={`activity-bot-tab${botName === b ? " active" : ""}`}
+            className={`ltab ${botName === b ? "ltab-active" : ""}`}
             onClick={() => setBotName(b)}
           >
-            {b}
+            {REFLECTIONS_BOT_LABELS[b] || b}
           </button>
         ))}
       </div>
+
       {loading && !data && <SkeletonActivity rows={6} />}
       {error && (
         <p className="error">
@@ -2248,13 +2264,14 @@ function ReflectionsView({ apiBase, initialBot = "forex" }) {
       )}
       {!error && data && data.status === "no_data" && (
         <div className="detail-muted">
-          No reflection ledger for {botName} yet — waiting on bot ingest of reflection_health.
+          No reflection ledger for {REFLECTIONS_BOT_LABELS[botName] || botName} yet — waiting on
+          bot ingest of reflection_health.
         </div>
       )}
       {!error && data && data.status !== "no_data" && (
         <>
           <div className="dc-label">
-            Reflections · {botName}
+            {REFLECTIONS_BOT_LABELS[botName] || botName} ledger
             <span className="activity-help" style={{ marginLeft: 8 }}>
               every {data.reflection_every ?? "—"} closes · auto-deploy{" "}
               {data.auto_deploy ? "ON" : "OFF"} · stage {data.deploy_stage || "—"}
@@ -2263,6 +2280,52 @@ function ReflectionsView({ apiBase, initialBot = "forex" }) {
                 : ""}
             </span>
           </div>
+
+          {pairs.length > 0 && (
+            <div className="refl-section" style={{ marginBottom: 14 }}>
+              <div className="dc-label">Pair overview</div>
+              <table className="mini-table" style={{ width: "100%", fontSize: "0.85em" }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: "left" }}>Pair</th>
+                    <th>Closed</th>
+                    <th>Next</th>
+                    <th>To go</th>
+                    <th>Last status</th>
+                    <th>Experiment</th>
+                    <th>Champion</th>
+                    <th>Safe</th>
+                    <th>GP</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pairs.map(([pair, p]) => (
+                    <tr key={pair}>
+                      <td style={{ textAlign: "left" }}>{pair}</td>
+                      <td style={{ textAlign: "center" }}>{p.closed ?? "—"}</td>
+                      <td style={{ textAlign: "center" }}>{p.next_fire_at ?? "—"}</td>
+                      <td style={{ textAlign: "center" }}>{p.trades_until_next ?? "—"}</td>
+                      <td style={{ textAlign: "center", color: _statusColor(p.last_status_class) }}>
+                        {p.last_status || "—"}
+                      </td>
+                      <td style={{ textAlign: "center" }}>
+                        {p.experiment
+                          ? `${p.experiment.variable} [${p.experiment.status}]`
+                          : "—"}
+                      </td>
+                      <td style={{ textAlign: "center" }}>{p.champion_status || "—"}</td>
+                      <td style={{ textAlign: "center", color: p.safe_mode && p.safe_mode !== "normal" ? "#e74c3c" : undefined }}>
+                        {p.safe_mode || "—"}
+                      </td>
+                      <td style={{ textAlign: "center", color: p.gp_handoff ? "#3498db" : undefined }}>
+                        {p.gp_handoff ? "yes" : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {Object.keys(adaptiveAxes).length > 0 && (
             <div className="refl-section" data-testid={`adaptive-${botName}`} style={{ marginBottom: 12 }}>
@@ -2295,14 +2358,25 @@ function ReflectionsView({ apiBase, initialBot = "forex" }) {
                   ))}
                 </tbody>
               </table>
+              {data.adaptive?.cadence ? (
+                <div className="activity-help" style={{ marginTop: 4 }}>
+                  Adaptive cadence: {_fmtVal(data.adaptive.cadence)}
+                </div>
+              ) : null}
+              {data.adaptive?.confidence_weights ? (
+                <div className="activity-help">
+                  Confidence weights: {_fmtVal(data.adaptive.confidence_weights)}
+                </div>
+              ) : null}
             </div>
           )}
 
+          <div className="dc-label" style={{ marginTop: 8 }}>Per-pair full ledger</div>
           {pairs.length === 0 ? (
             <div className="detail-muted">No pairs in the reflection ledger yet.</div>
           ) : (
             pairs.map(([pair, info]) => (
-              <ReflectionsPairCard key={pair} pair={pair} info={info || {}} />
+              <ReflectionsPairCard key={pair} pair={pair} info={info || {}} defaultOpen />
             ))
           )}
 
@@ -2310,7 +2384,7 @@ function ReflectionsView({ apiBase, initialBot = "forex" }) {
             <div className="refl-section" style={{ marginTop: 16 }}>
               <div className="dc-label">Experiment history (recent)</div>
               <div className="refl-timeline">
-                {[...(data.history || [])].reverse().slice(0, 30).map((h, i) => (
+                {[...(data.history || [])].reverse().slice(0, 40).map((h, i) => (
                   <div className="refl-tl-row" key={`hist-${i}`}>
                     <span className="refl-tl-ts">{h.ts || h.deployed_ts || "—"}</span>
                     <span className="refl-tl-var">{h.pair || "—"}</span>
@@ -2367,7 +2441,6 @@ function VersionView({ perVersion }) {
         <p className="activity-help">
           Groups closed trades by <strong>strategy_version</strong> (or entry style:
           mean_reversion / rsi_momentum / gp_ensemble). Empty until closes are ingested.
-          Live reflection knobs and experiments are under the Reflections tab.
         </p>
         No version data yet.
       </div>

@@ -1767,9 +1767,14 @@ body {
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
   min-width: 20px;
+  text-align: right;
+  color: var(--ghost);
 }
 
 /* Reflections ledger (Activity → Reflections) */
+.refl-bot-tabs {
+  margin-bottom: 14px;
+}
 .refl-pair-head {
   width: 100%;
   background: transparent;
@@ -1851,9 +1856,6 @@ body {
     grid-template-columns: 1fr;
     gap: 2px;
   }
-}
-  text-align: right;
-  color: var(--ghost);
 }
 
 .sa-reason {
