@@ -131,6 +131,27 @@ def test_trail_fires_before_time_exit():
     assert ex is not None and ex.reason == "trailing"
 
 
+def test_pct_trailing_stop_from_peak_mfe():
+    """YAML/reflection trailing_stop_pct raises stop from peak MFE."""
+    t = trade(
+        100.0,
+        held=10,
+        time_exit_cycles=150,
+        tp=3.0,
+        sl=1.5,
+        unrealised_pct=1.0,
+        peak_mfe_pct=1.5,
+        trailing_stop_pct=0.5,
+        trailing_atr_mult=None,
+        current_stop=98.5,
+        mfe_giveback_enabled=False,
+    )
+    ex = evaluate_exit(t, 101.0, None)
+    assert ex is not None and ex.reason == "trailing"
+    # peak 1.5% - trail 0.5% → lock 1.0% → stop at 101.0
+    assert ex.new_stop == pytest.approx(101.0)
+
+
 def test_time_exit_is_last_resort():
     """At the clock with no TP/giveback/trail action → time_exit."""
     t = trade(

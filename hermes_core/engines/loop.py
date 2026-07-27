@@ -162,10 +162,25 @@ def _precount_oversold(bot: str, pairs: list, fetch_fn, history_fn) -> int:
 
 
 def _atr_stop_for(strategy: dict, entry: float, atr: float) -> float:
+    """ATR stop price, never tighter than ``stop_loss_pct`` (long: lower stop).
+
+    ``honor_current_stop`` used to arm a sub-``stop_loss_pct`` ATR floor (~0.3%)
+    that exited as ``stop_loss`` before the YAML SL mattered. Clamp so %-SL is
+    the minimum initial risk distance.
+    """
     mult = float(strategy.get("atr_multiplier", 1.5))
     floor = float(strategy.get("atr_floor_pct", 0.0))
     use_floor = strategy.get("use_atr_floor", True) is not False
-    return compute_atr_stop(entry, atr, mult, floor, use_atr_floor=use_floor)
+    stop = compute_atr_stop(entry, atr, mult, floor, use_atr_floor=use_floor)
+    try:
+        sl_pct = float(strategy.get("stop_loss_pct") or 0.0)
+    except (TypeError, ValueError):
+        sl_pct = 0.0
+    if sl_pct > 0 and entry > 0:
+        sl_stop = float(entry) * (1.0 - sl_pct / 100.0)
+        # Wider long stop = lower price → take the farther (min) stop.
+        stop = min(float(stop), sl_stop)
+    return stop
 
 
 def write_heartbeat(
@@ -513,8 +528,9 @@ def _try_manage_open(
             mark = pos.get("last_mark") or pos.get("entry_price")
             mark_fails[pair] = int(mark_fails.get(pair) or 0) + 1
         elif quote_unchanged:
-            if not market_closed:
-                mark_fails[pair] = int(mark_fails.get(pair) or 0) + 1
+            # Identical recycled quote (delayed FX / flat metals) is not a mark
+            # loss — do not escalate toward data_halt_exit. True misses still
+            # count via price is None / invalid above.
             mark = prev_f
             summary["prices"][pair] = float(prev_f)
         else:
@@ -2128,6 +2144,7 @@ def run_cycle(
                 "honor_current_stop": _honor,
                 "be_trigger_frac": _xi.get("be_trigger_frac"),
                 "trailing_atr_mult": _trail,
+                "trailing_stop_pct": float(strategy.get("trailing_stop_pct", 0.0) or 0.0),
                 "exit_intel_n": _xi.get("exit_intel_n"),
                 "exit_intel_reasons": _xi.get("exit_intel_reasons") or [],
                 "avg_giveback_frac": _xi.get("avg_giveback_frac"),

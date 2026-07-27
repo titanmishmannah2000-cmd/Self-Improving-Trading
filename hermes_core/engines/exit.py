@@ -135,7 +135,9 @@ def evaluate_exit(
     if tp is not None and not breakeven_set and unreal >= tp * be_frac:
         return Exit("breakeven", current_price, new_stop=entry)
 
-    # 6) ATR-based trailing stop (raises the stop only) — before time_exit
+    # 6) Trailing stop (raises the stop only) — before time_exit
+    # Prefer live ATR trail; also honor YAML/reflection ``trailing_stop_pct``
+    # from peak MFE (was written by reflections but previously unwired).
     mult = trade.get("trailing_atr_mult")
     if mult is not None and unreal > 0 and prices:
         atr = compute_atr(prices)
@@ -144,6 +146,22 @@ def evaluate_exit(
             cur = trade.get("current_stop")
             if cur is None or trail_stop > cur:
                 return Exit("trailing", current_price, new_stop=trail_stop)
+
+    try:
+        trail_pct = float(trade.get("trailing_stop_pct") or 0.0)
+    except (TypeError, ValueError):
+        trail_pct = 0.0
+    if trail_pct > 0 and unreal > 0:
+        try:
+            peak = float(trade.get("peak_mfe_pct") or unreal)
+        except (TypeError, ValueError):
+            peak = unreal
+        if peak > trail_pct:
+            # Lock (peak - trail_pct) of entry as a raised stop.
+            pct_trail_stop = entry * (1.0 + (peak - trail_pct) / 100.0)
+            cur = trade.get("current_stop")
+            if cur is None or pct_trail_stop > float(cur):
+                return Exit("trailing", current_price, new_stop=pct_trail_stop)
 
     # 7) time-based exit — last resort after TP / giveback / BE / trail
     if te is not None and held >= te:

@@ -335,6 +335,10 @@ def test_unchanged_fx_ages_out_without_refreshing_ts(monkeypatch):
     import hermes_core.adapters.aggregate as agg_mod
 
     monkeypatch.setattr(agg_mod, "UNCHANGED_STALE_FX_S", 0.05)
+    monkeypatch.setattr(agg_mod, "UNCHANGED_STALE_FX_WEEKEND_S", 0.05)
+    monkeypatch.setattr(
+        "hermes_core.engines.market_hours.is_fx_market_closed", lambda *_a, **_k: False
+    )
     agg = PriceAggregator(
         ["EUR/USD"],
         sources=_fake_sources(frank=1.10, alpha=None, yf=None),
@@ -347,6 +351,30 @@ def test_unchanged_fx_ages_out_without_refreshing_ts(monkeypatch):
     _time.sleep(0.06)
     c2 = agg.fetch_fn("EUR/USD")
     assert c2 is None
+
+
+def test_unchanged_fx_survives_weekday_short_flat(monkeypatch):
+    """Weekday delayed FX re-prints must not mass-trigger no_candle each cycle."""
+    import time as _time
+
+    import hermes_core.adapters.aggregate as agg_mod
+
+    monkeypatch.setattr(agg_mod, "UNCHANGED_STALE_FX_S", 2.0)
+    monkeypatch.setattr(
+        "hermes_core.engines.market_hours.is_fx_market_closed", lambda *_a, **_k: False
+    )
+    agg = PriceAggregator(
+        ["EUR/USD"],
+        sources=_fake_sources(frank=1.10, alpha=None, yf=None),
+        stale_s=0.05,
+    )
+    c1 = agg.fetch_fn("EUR/USD")
+    assert c1 is not None and abs(c1["price"] - 1.10) < 1e-9
+    _time.sleep(0.06)
+    c2 = agg.fetch_fn("EUR/USD")
+    assert c2 is not None, "weekday unchanged FX must stay available within TTL"
+    assert abs(c2["price"] - 1.10) < 1e-9
+    assert float(c2["ts"]) == float(c1["ts"])
 
 
 def test_disagreement_prefers_fresh_last_good():

@@ -40,9 +40,24 @@ from hermes_core.adapters.ws_price import STALE_S_MAX, PriceStream
 # [L01] stale window for a cached consensus candle (seconds).
 STALE_S_MAX_LOCAL = STALE_S_MAX
 # Unchanged re-prints (same spot, new poll) must not refresh ts forever.
-# FX weekend/holiday freezes age out quickly; metals GoldAPI may be flat for hours.
-UNCHANGED_STALE_FX_S = STALE_S_MAX_LOCAL
+# Free FX (Frankfurter daily / delayed AV+YF) often re-prints the same spot for
+# many weekday cycles — a 60s age-out caused mass false ``no_candle`` → feed_slo.
+# Keep a short weekend TTL so Friday close freezes still age out.
+UNCHANGED_STALE_FX_S = 30 * 60.0
+UNCHANGED_STALE_FX_WEEKEND_S = STALE_S_MAX_LOCAL
 UNCHANGED_STALE_METALS_S = 6 * 3600.0
+
+
+def _fx_unchanged_limit(*, now_ts: float | None = None) -> float:
+    """Weekday: long recycle window. Weekend: short freeze → no_candle."""
+    try:
+        from hermes_core.engines.market_hours import is_fx_market_closed
+
+        if is_fx_market_closed(now_ts):
+            return UNCHANGED_STALE_FX_WEEKEND_S
+    except Exception:  # noqa: BLE001 — fail-soft to weekday limit
+        pass
+    return UNCHANGED_STALE_FX_S
 CONSENSUS_PCT = 0.01  # sources must agree within 1% or consensus is rejected
 SOURCE_TIMEOUT = 3.0  # per-source httpx timeout (seconds)
 # Indicator seeding needs a real multi-bar series. Prefer yfinance 5m (live
@@ -671,6 +686,8 @@ class PriceAggregator:
                     limit = UNCHANGED_STALE_METALS_S
                 elif pair in _CRYPTO_PAIRS:
                     limit = self.stale_s
+                elif pair in _FX_PAIRS:
+                    limit = _fx_unchanged_limit()
                 else:
                     limit = UNCHANGED_STALE_FX_S
                 if age > limit:
@@ -725,6 +742,8 @@ class PriceAggregator:
         """
         if pair in _METAL_PAIRS:
             return max(self.stale_s, UNCHANGED_STALE_METALS_S)
+        if pair in _FX_PAIRS:
+            return max(self.stale_s, _fx_unchanged_limit())
         return self.stale_s
 
     def fetch_fn(self, pair: str, *, force: bool = False) -> dict | None:

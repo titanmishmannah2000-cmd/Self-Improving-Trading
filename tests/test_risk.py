@@ -97,6 +97,21 @@ def test_atr_stop_floor():
     assert no_floor == pytest.approx(1.1000 - 0.0001 * 1.5)
 
 
+def test_atr_stop_clamped_to_stop_loss_pct():
+    """Initial current_stop must not be tighter than YAML stop_loss_pct."""
+    from hermes_core.engines.loop import _atr_stop_for
+
+    strategy = {
+        "atr_multiplier": 2.0,
+        "atr_floor_pct": 0.3,
+        "use_atr_floor": True,
+        "stop_loss_pct": 1.5,
+    }
+    # Tiny ATR → floor alone would be 0.3%; clamp to 1.5% SL.
+    stop = _atr_stop_for(strategy, 100.0, atr=0.01)
+    assert stop == pytest.approx(98.5)
+
+
 # --- [GUARD L40] param-range gate ------------------------------------------
 def test_param_gate_pass():
     ok, reason = param_range_gate(

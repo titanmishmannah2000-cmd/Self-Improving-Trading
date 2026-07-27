@@ -19,7 +19,8 @@ from hermes_core.state.paths import bot_state_dir
 # FX stub ladder observed in polluted local heartbeats.
 _FX_STUB_SET = frozenset({1.1, 1.11, 1.12, 1.13})
 _FX_PAIRS = frozenset({"EUR/USD", "GBP/USD", "AUD/USD", "GBP/JPY"})
-_FEED_SKIP_PREFIXES = ("fetch_error", "no_candle", "chart_error")
+# chart_error is fail-open in the loop (cycle continues) — do not trip feed SLO.
+_FEED_SKIP_PREFIXES = ("fetch_error", "no_candle")
 _STATE_TOUCH_FILES = (
     "trades.jsonl",
     "skips.jsonl",

@@ -432,3 +432,18 @@ def test_price_sanity_passes_when_market_closed_and_prices_empty(tmp_path, monke
     assert by_name["price_sanity"]["passed"] is True
     assert "market_closed_ok" in (by_name["price_sanity"].get("detail") or "")
 
+
+def test_feed_error_rate_ignores_fail_open_chart_error(tmp_path):
+    """chart_error is fail-open in the loop — must not trip feed SLO."""
+    import json
+
+    from hermes_core.engines.soak_controls import feed_error_rate
+
+    skips = tmp_path / "skips.jsonl"
+    rows = [{"reason": "chart_error:RuntimeError('chart api down')"} for _ in range(50)]
+    rows += [{"reason": "no_signal"} for _ in range(50)]
+    skips.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    out = feed_error_rate(skips, window=200)
+    assert out["feed_n"] == 0
+    assert out["ok"] is True
+
