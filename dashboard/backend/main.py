@@ -2972,6 +2972,131 @@ def reflection_health_dashboard(bot_name: str):
         return {"bot": bot_name, "error": str(e)}
 
 
+@app.get("/api/reflections/{bot_name}")
+def reflections_ledger(bot_name: str, pair: str | None = None):
+    """Full per-pair reflection ledger for the Reflections Activity tab.
+
+    Prefers the bot-pushed ``reflection_health`` block (knobs, experiment,
+    cooldowns, timeline). Merges live strategy_json knobs and recent hypotheses
+    from the dashboard DB so the tab stays useful even if a field was missing
+    from an older push.
+    """
+    if bot_name not in VALID_BOTS:
+        raise HTTPException(404, f"Unknown bot '{bot_name}'")
+    try:
+        conn = get_conn()
+        state_row = conn.execute(
+            "SELECT cortex_json, strategy_json FROM latest_state WHERE bot=?",
+            (bot_name,),
+        ).fetchone()
+        hyp_q = "SELECT * FROM hypotheses WHERE bot=? ORDER BY ts DESC LIMIT 200"
+        hyp_params: list = [bot_name]
+        if pair:
+            hyp_q = (
+                "SELECT * FROM hypotheses WHERE bot=? AND pair=? "
+                "ORDER BY ts DESC LIMIT 100"
+            )
+            hyp_params = [bot_name, pair]
+        hyps = conn.execute(hyp_q, hyp_params).fetchall()
+        conn.close()
+
+        if not state_row:
+            return {"bot": bot_name, "status": "no_data", "pairs": {}}
+
+        cortex = {}
+        with contextlib.suppress(Exception):
+            cortex = json.loads(state_row["cortex_json"] or "{}") or {}
+        if not isinstance(cortex, dict):
+            cortex = {}
+        health = cortex.get("reflection_health") or {}
+        if not isinstance(health, dict):
+            health = {}
+
+        strategies = {}
+        with contextlib.suppress(Exception):
+            strategies = json.loads(state_row["strategy_json"] or "{}") or {}
+        if not isinstance(strategies, dict):
+            strategies = {}
+
+        pairs_out = {
+            p: dict(info) if isinstance(info, dict) else {}
+            for p, info in (health.get("pairs") or {}).items()
+        }
+
+        # Attach / refresh strategy knobs from ingest when missing.
+        for p, strat in strategies.items():
+            if not isinstance(strat, dict):
+                continue
+            if pair and p != pair:
+                continue
+            entry = dict(pairs_out.get(p) or {})
+            knobs = dict(entry.get("strategy") or {})
+            for k, v in strat.items():
+                if k.startswith("_"):
+                    continue
+                if isinstance(v, (int, float, str, bool)) or v is None:
+                    knobs.setdefault(k, v)
+            entry["strategy"] = knobs
+            pairs_out[p] = entry
+
+        # Merge DB hypotheses into each pair timeline (oldest → newest).
+        by_pair: dict[str, list] = {}
+        for h in reversed(list(hyps)):
+            try:
+                row = dict(h)
+            except Exception:
+                continue
+            raw = {}
+            with contextlib.suppress(Exception):
+                raw = json.loads(row.get("raw_json") or "{}") or {}
+            if not isinstance(raw, dict):
+                raw = {}
+            p = row.get("pair") or raw.get("pair")
+            if not p:
+                continue
+            by_pair.setdefault(p, []).append(
+                {
+                    "ts": row.get("ts") or raw.get("ts"),
+                    "status": row.get("mode") or raw.get("status") or raw.get("mode"),
+                    "variable": row.get("variable") or raw.get("variable"),
+                    "old": row.get("old_value") if row.get("old_value") is not None else raw.get("old"),
+                    "new": row.get("new_value") if row.get("new_value") is not None else raw.get("new"),
+                    "reason": row.get("reasoning") or raw.get("reason") or raw.get("reasoning"),
+                    "confidence": raw.get("confidence"),
+                    "version": raw.get("version") or row.get("version_to"),
+                    "version_from": row.get("version_from") or raw.get("version_from"),
+                    "version_to": row.get("version_to") or raw.get("version_to"),
+                }
+            )
+        for p, timeline in by_pair.items():
+            if pair and p != pair:
+                continue
+            entry = dict(pairs_out.get(p) or {})
+            pushed = list(entry.get("timeline") or [])
+            entry["timeline"] = timeline if len(timeline) >= len(pushed) else pushed
+            pairs_out[p] = entry
+
+        if pair:
+            pairs_out = {pair: pairs_out[pair]} if pair in pairs_out else {}
+
+        if not pairs_out and not health:
+            return {"bot": bot_name, "status": "no_data", "pairs": {}}
+
+        return {
+            "bot": bot_name,
+            "status": "ok",
+            "auto_deploy": health.get("auto_deploy"),
+            "reflection_every": health.get("reflection_every"),
+            "deploy_stage": health.get("deploy_stage"),
+            "adaptive": health.get("adaptive") or {},
+            "history": health.get("history") or [],
+            "gp_handoff_pairs": health.get("gp_handoff_pairs") or [],
+            "pairs": pairs_out,
+        }
+    except Exception as e:
+        return {"bot": bot_name, "status": "error", "error": str(e), "pairs": {}}
+
+
 @app.get("/api/audit/findings/{finding_id}")
 def audit_get_finding(finding_id: str):
     """Get a single finding by ID."""

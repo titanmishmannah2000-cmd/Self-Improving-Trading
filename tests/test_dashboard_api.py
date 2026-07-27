@@ -446,6 +446,108 @@ def test_reflection_health_unknown_bot_404():
     assert client.get("/api/reflection-health/unknown_bot").status_code == 404
 
 
+def test_reflections_ledger_merges_health_strategy_hypotheses():
+    """Activity Reflections tab: /api/reflections/{bot} full pair ledger."""
+    import json
+    from datetime import datetime
+
+    health = {
+        "bot": "forex",
+        "auto_deploy": False,
+        "reflection_every": 5,
+        "deploy_stage": "prove",
+        "adaptive": {"axes": {"stop_loss_pct": {"attempts": 2, "improved": 1, "reverted": 1, "reliability": 0.5, "step_scale": 1.0}}},
+        "history": [{"pair": "EUR/USD", "status": "improved", "variable": "stop_loss_pct"}],
+        "gp_handoff_pairs": [],
+        "pairs": {
+            "EUR/USD": {
+                "closed": 3,
+                "reflection_every": 5,
+                "next_fire_at": 5,
+                "trades_until_next": 2,
+                "last_status": "approved_pending_deploy",
+                "last_status_class": "proven",
+                "experiment": {
+                    "status": "active",
+                    "variable": "stop_loss_pct",
+                    "old": 1.2,
+                    "new": 0.9,
+                    "version_from": "1.0",
+                    "version_to": "1.1",
+                },
+                "champion_status": "stable",
+                "safe_mode": "normal",
+                "strategy": {"stop_loss_pct": 0.9},
+                "timeline": [],
+            }
+        },
+    }
+    strategy = {
+        "EUR/USD": {
+            "version": "1.1",
+            "stop_loss_pct": 0.9,
+            "trailing_stop_pct": 0.4,
+            "profit_target_pct": 1.5,
+            "position_size_r": 0.5,
+        }
+    }
+    ts = datetime.now(UTC).isoformat()
+    hyp = {
+        "ts": ts,
+        "pair": "EUR/USD",
+        "variable": "stop_loss_pct",
+        "old": 1.2,
+        "new": 0.9,
+        "reason": "dd_tighten",
+        "status": "approved_pending_deploy",
+        "version": "1.1",
+    }
+    conn = m.get_conn()
+    conn.execute(
+        """INSERT INTO latest_state
+           (bot, strategy_json, goal_json, heartbeat_json, open_trades_json,
+            discovered_json, cortex_json, flatlined_json, received_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        (
+            "forex",
+            json.dumps(strategy),
+            "{}",
+            "{}",
+            "[]",
+            "{}",
+            json.dumps({"reflection_health": health}),
+            "{}",
+            ts,
+        ),
+    )
+    m.upsert_hypotheses(conn, "forex", [hyp])
+    conn.commit()
+    conn.close()
+
+    r = client.get("/api/reflections/forex")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "ok"
+    assert body["deploy_stage"] == "prove"
+    assert body["reflection_every"] == 5
+    pair = body["pairs"]["EUR/USD"]
+    assert pair["experiment"]["variable"] == "stop_loss_pct"
+    assert pair["strategy"]["trailing_stop_pct"] == 0.4  # merged from strategy_json
+    assert pair["strategy"]["stop_loss_pct"] == 0.9
+    assert any(h.get("variable") == "stop_loss_pct" for h in pair["timeline"])
+    assert body["adaptive"]["axes"]["stop_loss_pct"]["attempts"] == 2
+
+
+def test_reflections_ledger_no_data():
+    r = client.get("/api/reflections/forex")
+    assert r.status_code == 200
+    assert r.json().get("status") == "no_data"
+
+
+def test_reflections_unknown_bot_404():
+    assert client.get("/api/reflections/unknown_bot").status_code == 404
+
+
 def test_per_version_uses_entry_type_when_strategy_version_missing():
     import json
     from datetime import datetime

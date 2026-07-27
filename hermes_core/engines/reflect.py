@@ -1597,13 +1597,77 @@ def _last_hypothesis_for_pair(bot: str, pair: str) -> dict | None:
     return last
 
 
-def reflection_health(bot: str, pairs: list[str] | None = None, *, goal: dict | None = None) -> dict:
-    """Per-pair reflection health snapshot (Phase 0.2).
+# Strategy knobs the Reflections ledger surfaces per pair (risk / exit / size).
+_REFLECTION_KNOB_KEYS = (
+    "version",
+    "strategy_type",
+    "stop_loss_pct",
+    "trailing_stop_pct",
+    "profit_target_pct",
+    "position_size_r",
+    "time_exit_cycles",
+    "rsi_entry",
+    "rsi_exit",
+    "session_filter",
+)
 
-    For each pair reports how many closes reflection can see, when it will next
-    fire, the latch position, and the last recorded status — the data an
-    operator needs to answer "is reflection firing / proving / deploying?"
-    without guessing from the Versions tab. Pure reads; never raises.
+
+def _strategy_knobs(bot: str, pair: str) -> dict:
+    """Current live YAML knobs for ``pair`` (fail-soft → {})."""
+    out: dict = {}
+    with contextlib.suppress(Exception):
+        strat = load_strategy_for_pair(pair, bot) or {}
+        for k in _REFLECTION_KNOB_KEYS:
+            if k in strat and strat[k] is not None:
+                out[k] = strat[k]
+        # Keep any other numeric risk-ish fields operators might have tuned.
+        for k, v in strat.items():
+            if k in out or k.startswith("_"):
+                continue
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                out[k] = v
+    return out
+
+
+def _recent_hypotheses_for_pair(bot: str, pair: str, *, limit: int = 40) -> list[dict]:
+    """Newest-last hypothesis rows for one pair (timeline for Reflections tab)."""
+    path = hypotheses_path(bot)
+    if not path.exists():
+        return []
+    rows: list[dict] = []
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("pair") != pair:
+                continue
+            rows.append(
+                {
+                    "ts": rec.get("ts"),
+                    "status": rec.get("status"),
+                    "variable": rec.get("variable"),
+                    "old": rec.get("old"),
+                    "new": rec.get("new"),
+                    "reason": rec.get("reason"),
+                    "confidence": rec.get("confidence"),
+                    "version": rec.get("version"),
+                }
+            )
+    except OSError:
+        return []
+    return rows[-limit:]
+
+
+def reflection_health(bot: str, pairs: list[str] | None = None, *, goal: dict | None = None) -> dict:
+    """Per-pair reflection health + full ledger snapshot for the Reflections tab.
+
+    Pure reads; never raises. Includes cadence, live experiment, champion/explore,
+    cooldowns, plans, shadow, strategy knobs, adaptive learning, and a short
+    hypothesis timeline so operators can see everything a pair has gone through.
     """
     import os
 
@@ -1620,12 +1684,14 @@ def reflection_health(bot: str, pairs: list[str] | None = None, *, goal: dict | 
     auto_deploy = os.getenv("REFLECT_AUTO_DEPLOY", "0") != "0"
     latches = _load_reflection_latches(bot)
 
-    # Phase 3.6: fold live-experiment / champion / safe-mode state into health.
     exp_summary: dict = {}
+    exp_history: list = []
     with contextlib.suppress(Exception):
         from hermes_core.engines import experiment_control as _exp
 
-        exp_summary = _exp.experiments_summary(bot, pairs).get("pairs", {})
+        summ = _exp.experiments_summary(bot, pairs)
+        exp_summary = summ.get("pairs", {})
+        exp_history = list(summ.get("history") or [])
 
     out_pairs: dict[str, dict] = {}
     for pair in pairs:
@@ -1633,14 +1699,13 @@ def reflection_health(bot: str, pairs: list[str] | None = None, *, goal: dict | 
         total = len(closed)
         latch_entry = latches.get(pair) or {}
         latched_at = latch_entry.get("reflected_count")
-        # Next multiple of `every` strictly greater than the current count (or
-        # `total` itself if it is a not-yet-reflected multiple).
         if total > 0 and total % every == 0 and latched_at != total:
-            next_fire_at = total  # due now
+            next_fire_at = total
         else:
             next_fire_at = ((total // every) + 1) * every
         last_hyp = _last_hypothesis_for_pair(bot, pair)
         last_status = last_hyp.get("status") if last_hyp else None
+        info = exp_summary.get(pair) or {}
         out_pairs[pair] = {
             "closed": total,
             "reflection_every": every,
@@ -1652,20 +1717,34 @@ def reflection_health(bot: str, pairs: list[str] | None = None, *, goal: dict | 
             "last_reason": (last_hyp or {}).get("reason"),
             "last_ts": (last_hyp or {}).get("ts"),
             "proven": is_soak_success(last_status),
-            "experiment": (exp_summary.get(pair) or {}).get("experiment"),
-            "champion_status": (exp_summary.get(pair) or {}).get("champion_status"),
-            "revert_count": (exp_summary.get(pair) or {}).get("revert_count", 0),
-            "safe_mode": (exp_summary.get(pair) or {}).get("safe_mode"),
-            "cooldown_axes": (exp_summary.get(pair) or {}).get("cooldown_axes", []),
-            "gp_handoff": (exp_summary.get(pair) or {}).get("gp_handoff", False),
+            "experiment": info.get("experiment"),
+            "champion_status": info.get("champion_status"),
+            "champion_version": info.get("champion_version"),
+            "revert_count": info.get("revert_count", 0),
+            "safe_mode": info.get("safe_mode"),
+            "safe_mode_reason": info.get("safe_mode_reason"),
+            "cooldown_axes": info.get("cooldown_axes", []),
+            "axis_cooldown": info.get("axis_cooldown", {}),
+            "direction_cooldown": info.get("direction_cooldown", {}),
+            "gp_handoff": info.get("gp_handoff", False),
+            "gp_handoff_reason": info.get("gp_handoff_reason"),
+            "gp_handoff_variable": info.get("gp_handoff_variable"),
+            "plan": info.get("plan"),
+            "plan_reason": info.get("plan_reason"),
+            "shadow": info.get("shadow"),
+            "explore": info.get("explore", False),
+            "explore_reason": info.get("explore_reason"),
+            "deploy_cooldown": info.get("deploy_cooldown"),
+            "strategy": _strategy_knobs(bot, pair),
+            "timeline": _recent_hypotheses_for_pair(bot, pair, limit=40),
         }
-        # Phase 6: what the engine has learned about this pair's axes.
         with contextlib.suppress(Exception):
             from hermes_core.engines.adaptive import summary as _adapt_summary
 
             learned = _adapt_summary(bot, pair)
             out_pairs[pair]["learned_axes"] = learned.get("axes", {})
             out_pairs[pair]["pathology_bars"] = adaptive_bars(bot, pair, closed)
+            out_pairs[pair]["cadence"] = learned.get("cadence", {})
 
     deploy_stage = "full"
     with contextlib.suppress(Exception):
@@ -1686,6 +1765,9 @@ def reflection_health(bot: str, pairs: list[str] | None = None, *, goal: dict | 
         "deploy_stage": deploy_stage,
         "pairs": out_pairs,
         "adaptive": adaptive_state,
+        "history": [
+            h for h in exp_history if not pairs or h.get("pair") in set(pairs)
+        ][-40:],
         "gp_handoff_pairs": [
             p for p, info in out_pairs.items() if info.get("gp_handoff")
         ],

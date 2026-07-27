@@ -1767,6 +1767,91 @@ body {
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
   min-width: 20px;
+}
+
+/* Reflections ledger (Activity → Reflections) */
+.refl-pair-head {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  flex-wrap: wrap;
+}
+.refl-chevron {
+  margin-left: auto;
+  color: var(--ghost);
+  font-size: 12px;
+}
+.refl-pair-body {
+  padding: 4px 0 8px 2px;
+}
+.refl-section {
+  margin-bottom: 10px;
+}
+.refl-knob-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 6px 10px;
+}
+.refl-knob {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  background: var(--ink);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.refl-knob-k {
+  font-size: 10px;
+  color: var(--ghost);
+  text-transform: none;
+}
+.refl-knob-v {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+.refl-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+.refl-kv > div {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 8px;
+}
+.refl-kv > div > span:first-child {
+  color: var(--ghost);
+}
+.refl-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.refl-tl-row {
+  display: grid;
+  grid-template-columns: 150px 110px 100px 140px 1fr;
+  gap: 8px;
+  font-size: 11px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+.refl-tl-ts { color: var(--ghost); font-family: 'JetBrains Mono', monospace; }
+.refl-tl-var { font-family: 'JetBrains Mono', monospace; }
+.refl-tl-reason { color: var(--ghost-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 900px) {
+  .refl-tl-row {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
   text-align: right;
   color: var(--ghost);
 }

@@ -2006,156 +2006,323 @@ function OnboardingTour({ step, onNext, onSkip, selectedPair }) {
   );
 }
 
-// ── Per-Version View (tab content with copy) ──
-function ReflectionHealthPanel() {
-  const botNames = { forex: "Forex", gold: "Gold", crypto: "Crypto" };
-  const [health, setHealth] = useState({});
+// ───────────────────────── Reflections ledger ─────────────────────────
 
-  useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      const out = {};
-      for (const bot of ["forex", "gold", "crypto"]) {
-        try {
-          const r = await fetch(`${API_BASE}/api/reflection-health/${bot}`);
-          if (r.ok) out[bot] = await r.json();
-        } catch (e) { /* silent */ }
-      }
-      if (alive) setHealth(out);
-    };
-    load();
-    const id = setInterval(load, POLL_MS);
-    return () => { alive = false; clearInterval(id); };
-  }, []);
+const REFLECTIONS_BOTS = ["forex", "gold", "crypto"];
 
-  const statusLabel = (s) => {
-    if (!s) return "—";
-    return s;
-  };
-  const statusColor = (cls) => ({
+function _fmtVal(v) {
+  if (v === null || v === undefined || v === "") return "—";
+  if (typeof v === "number") return Number.isInteger(v) ? String(v) : v.toFixed(4).replace(/\.?0+$/, "");
+  if (typeof v === "boolean") return v ? "yes" : "no";
+  if (typeof v === "object") {
+    try { return JSON.stringify(v); } catch { return String(v); }
+  }
+  return String(v);
+}
+
+function _statusColor(cls) {
+  return ({
     deployed: "#2ecc71",
     proven: "#3498db",
     rejected: "#e67e22",
     no_proposal: "#95a5a6",
     error: "#e74c3c",
   }[cls] || "#95a5a6");
+}
 
-  const bots = Object.entries(health).filter(
-    ([, h]) => h && h.pairs && Object.keys(h.pairs).length,
+function ReflectionsKnobGrid({ knobs }) {
+  const entries = Object.entries(knobs || {}).filter(([, v]) => v !== undefined);
+  if (!entries.length) return <div className="detail-muted">No strategy knobs on record.</div>;
+  return (
+    <div className="refl-knob-grid">
+      {entries.map(([k, v]) => (
+        <div className="refl-knob" key={k}>
+          <span className="refl-knob-k">{k}</span>
+          <span className="refl-knob-v">{_fmtVal(v)}</span>
+        </div>
+      ))}
+    </div>
   );
+}
+
+function ReflectionsPairCard({ pair, info }) {
+  const [open, setOpen] = useState(false);
+  const exp = info.experiment;
+  const timeline = info.timeline || [];
+  const learned = info.learned_axes || {};
+  const axisCd = info.axis_cooldown || {};
+  const dirCd = info.direction_cooldown || {};
+  const plan = info.plan;
+  const shadow = info.shadow;
 
   return (
-    <div className="reflection-health" data-testid="reflection-health">
-      <div className="dc-label" style={{ marginBottom: 6 }}>
-        Reflection health — is it firing / proving / deploying?
-      </div>
-      <p className="activity-help" style={{ marginTop: 0 }}>
-        Source of truth: closed trades + reflection latch + hypotheses. A proposal can
-        be <strong>proven</strong> (approved_pending_deploy) without creating a new version
-        while auto-deploy is off — the Versions tab only changes on an actual deploy.
-      </p>
-      {bots.length === 0 ? (
-        <div className="version-placeholder">No reflection activity yet.</div>
-      ) : (
-        bots.map(([bot, h]) => (
-          <div key={bot} style={{ marginBottom: 12 }}>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>
-              {botNames[bot] || bot}
-              <span className="activity-help" style={{ marginLeft: 8 }}>
-                every {h.reflection_every} closes · auto-deploy {h.auto_deploy ? "ON" : "OFF"}
-              </span>
-            </div>
-            <table className="mini-table" style={{ width: "100%", fontSize: "0.85em" }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left" }}>Pair</th>
-                  <th>Closed</th>
-                  <th>Next fire</th>
-                  <th>To go</th>
-                  <th>Last status</th>
-                  <th>Experiment</th>
-                  <th>Champion</th>
-                  <th>Safe mode</th>
-                  <th>GP handoff</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(h.pairs).map(([pair, p]) => (
-                  <tr key={pair}>
-                    <td style={{ textAlign: "left" }}>{pair}</td>
-                    <td style={{ textAlign: "center" }}>{p.closed}</td>
-                    <td style={{ textAlign: "center" }}>{p.next_fire_at}</td>
-                    <td style={{ textAlign: "center" }}>{p.trades_until_next}</td>
-                    <td style={{ textAlign: "center", color: statusColor(p.last_status_class) }}>
-                      {statusLabel(p.last_status)}
-                    </td>
-                    <td style={{ textAlign: "center" }}>
-                      {p.experiment
-                        ? `${p.experiment.variable} ${p.experiment.version_from}→${p.experiment.version_to} [${p.experiment.status}]`
-                        : "—"}
-                    </td>
-                    <td
-                      style={{
-                        textAlign: "center",
-                        color: p.champion_status === "underperforming" ? "#e67e22" : "#95a5a6",
-                      }}
-                    >
-                      {p.champion_status || "—"}
-                      {p.revert_count ? ` (${p.revert_count}×)` : ""}
-                    </td>
-                    <td style={{ textAlign: "center", color: p.safe_mode ? "#e74c3c" : "#95a5a6" }}>
-                      {p.safe_mode || "—"}
-                    </td>
-                    <td style={{ textAlign: "center", color: p.gp_handoff ? "#3498db" : "#95a5a6" }}>
-                      {p.gp_handoff ? "priority" : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {h.adaptive && h.adaptive.axes && Object.keys(h.adaptive.axes).length ? (
-              <div style={{ marginTop: 6 }} data-testid={`adaptive-${bot}`}>
-                <div className="activity-help" style={{ marginBottom: 2 }}>
-                  What it has learned — axis reliability from live outcomes (drives step
-                  size, axis order and cooldown length):
-                </div>
-                <table className="mini-table" style={{ width: "100%", fontSize: "0.8em" }}>
-                  <thead>
-                    <tr>
-                      <th style={{ textAlign: "left" }}>Axis</th>
-                      <th>Tried</th>
-                      <th>Worked</th>
-                      <th>Reverted</th>
-                      <th>Reliability</th>
-                      <th>Step ×</th>
-                      <th>Fail streak</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(h.adaptive.axes).map(([axis, a]) => (
-                      <tr key={axis}>
-                        <td style={{ textAlign: "left" }}>{axis}</td>
-                        <td style={{ textAlign: "center" }}>{a.attempts}</td>
-                        <td style={{ textAlign: "center", color: "#2ecc71" }}>{a.improved}</td>
-                        <td style={{ textAlign: "center", color: "#e67e22" }}>{a.reverted}</td>
-                        <td
-                          style={{
-                            textAlign: "center",
-                            color: a.reliability >= 0.5 ? "#2ecc71" : "#e74c3c",
-                          }}
-                        >
-                          {a.reliability}
-                        </td>
-                        <td style={{ textAlign: "center" }}>{a.step_scale}</td>
-                        <td style={{ textAlign: "center" }}>{a.fail_streak || "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : null}
+    <div className="sa-pair refl-pair" data-testid={`refl-pair-${pair}`}>
+      <button type="button" className="sa-pair-head refl-pair-head" onClick={() => setOpen((o) => !o)}>
+        <span className="sa-pair-name">{pair}</span>
+        <span className="sa-pair-count">{info.closed ?? "—"} closed</span>
+        <span className="sa-pair-count">
+          next {info.next_fire_at ?? "—"} · {info.trades_until_next ?? "—"} to go
+        </span>
+        <span style={{ color: _statusColor(info.last_status_class), fontSize: 11 }}>
+          {info.last_status || "no proposal yet"}
+        </span>
+        {exp ? (
+          <span className="sa-pair-count" style={{ color: "#3498db" }}>
+            exp: {exp.variable} [{exp.status}]
+          </span>
+        ) : null}
+        {info.gp_handoff ? <span className="sa-pair-count" style={{ color: "#3498db" }}>GP handoff</span> : null}
+        {info.explore ? <span className="sa-pair-count">explore</span> : null}
+        {info.safe_mode && info.safe_mode !== "normal" ? (
+          <span className="sa-pair-count" style={{ color: "#e74c3c" }}>{info.safe_mode}</span>
+        ) : null}
+        <span className="refl-chevron">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <div className="refl-pair-body">
+          <div className="refl-section">
+            <div className="dc-label">Strategy knobs</div>
+            <ReflectionsKnobGrid knobs={info.strategy} />
           </div>
-        ))
+
+          <div className="refl-section">
+            <div className="dc-label">Live experiment / champion</div>
+            <div className="refl-kv">
+              <div><span>Experiment</span><span>{exp ? `${exp.variable}: ${_fmtVal(exp.old)} → ${_fmtVal(exp.new)} (${exp.version_from}→${exp.version_to}) [${exp.status}]` : "—"}</span></div>
+              <div><span>Champion</span><span>{info.champion_status || "—"}{info.champion_version ? ` · v${info.champion_version}` : ""}{info.revert_count ? ` · ${info.revert_count}× revert` : ""}</span></div>
+              <div><span>Safe mode</span><span>{info.safe_mode || "—"}{info.safe_mode_reason ? ` · ${info.safe_mode_reason}` : ""}</span></div>
+              <div><span>Explore</span><span>{info.explore ? (info.explore_reason || "active") : "off"}</span></div>
+              <div><span>Deploy cooldown</span><span>{info.deploy_cooldown ? _fmtVal(info.deploy_cooldown) : "—"}</span></div>
+              <div><span>GP handoff</span><span>{info.gp_handoff ? (info.gp_handoff_reason || info.gp_handoff_variable || "priority") : "—"}</span></div>
+              <div><span>Cadence</span><span>every {info.reflection_every ?? "—"} · latched @ {info.latched_at ?? "—"} · last {info.last_ts || "—"}</span></div>
+            </div>
+          </div>
+
+          {(Object.keys(axisCd).length > 0 || Object.keys(dirCd).length > 0 || (info.cooldown_axes || []).length > 0) && (
+            <div className="refl-section">
+              <div className="dc-label">Cooldowns / quarantine</div>
+              <div className="refl-kv">
+                <div><span>Axes</span><span>{(info.cooldown_axes || []).join(", ") || "—"}</span></div>
+                <div><span>Axis detail</span><span>{Object.keys(axisCd).length ? _fmtVal(axisCd) : "—"}</span></div>
+                <div><span>Direction</span><span>{Object.keys(dirCd).length ? _fmtVal(dirCd) : "—"}</span></div>
+              </div>
+            </div>
+          )}
+
+          {(plan || shadow) && (
+            <div className="refl-section">
+              <div className="dc-label">Plan / shadow</div>
+              <div className="refl-kv">
+                <div><span>Plan</span><span>{plan ? _fmtVal(plan) : "—"}{info.plan_reason ? ` · ${info.plan_reason}` : ""}</span></div>
+                <div><span>Shadow</span><span>{shadow ? _fmtVal(shadow) : "—"}</span></div>
+              </div>
+            </div>
+          )}
+
+          {Object.keys(learned).length > 0 && (
+            <div className="refl-section">
+              <div className="dc-label">Learned axes (this pair)</div>
+              <table className="mini-table" style={{ width: "100%", fontSize: "0.8em" }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: "left" }}>Axis</th>
+                    <th>Tried</th>
+                    <th>Worked</th>
+                    <th>Reverted</th>
+                    <th>Reliability</th>
+                    <th>Step ×</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(learned).map(([axis, a]) => (
+                    <tr key={axis}>
+                      <td style={{ textAlign: "left" }}>{axis}</td>
+                      <td style={{ textAlign: "center" }}>{a.attempts}</td>
+                      <td style={{ textAlign: "center", color: "#2ecc71" }}>{a.improved}</td>
+                      <td style={{ textAlign: "center", color: "#e67e22" }}>{a.reverted}</td>
+                      <td style={{ textAlign: "center" }}>{a.reliability}</td>
+                      <td style={{ textAlign: "center" }}>{a.step_scale}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {info.pathology_bars ? (
+                <div className="activity-help" style={{ marginTop: 4 }}>
+                  Pathology bars: {_fmtVal(info.pathology_bars)}
+                </div>
+              ) : null}
+              {info.cadence ? (
+                <div className="activity-help">Pair cadence: {_fmtVal(info.cadence)}</div>
+              ) : null}
+            </div>
+          )}
+
+          <div className="refl-section">
+            <div className="dc-label">Hypothesis timeline ({timeline.length})</div>
+            {timeline.length === 0 ? (
+              <div className="detail-muted">No hypotheses logged for this pair yet.</div>
+            ) : (
+              <div className="refl-timeline">
+                {[...timeline].reverse().map((h, i) => (
+                  <div className="refl-tl-row" key={`${h.ts}-${h.variable}-${i}`}>
+                    <span className="refl-tl-ts">{h.ts || "—"}</span>
+                    <span className="refl-tl-status" style={{ color: _statusColor(h.status) }}>{h.status || "—"}</span>
+                    <span className="refl-tl-var">{h.variable || "—"}</span>
+                    <span className="refl-tl-chg">{_fmtVal(h.old)} → {_fmtVal(h.new)}</span>
+                    <span className="refl-tl-reason">{h.reason || ""}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReflectionsView({ apiBase, initialBot = "forex" }) {
+  const [botName, setBotName] = useState(
+    REFLECTIONS_BOTS.includes(initialBot) ? initialBot : "forex",
+  );
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (REFLECTIONS_BOTS.includes(initialBot)) setBotName(initialBot);
+  }, [initialBot]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${apiBase}/api/reflections/${botName}`);
+      if (!res.ok) throw new Error(`API ${res.status}`);
+      setData(await res.json());
+      setError(null);
+    } catch (e) {
+      setError(e.message || "failed to load");
+    }
+    setLoading(false);
+  }, [apiBase, botName]);
+
+  useEffect(() => {
+    load();
+    const id = setInterval(load, POLL_MS);
+    const onVis = () => { if (!document.hidden) load(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [load]);
+
+  const pairs = data?.pairs ? Object.entries(data.pairs) : [];
+  const adaptiveAxes = data?.adaptive?.axes || {};
+
+  return (
+    <div className="reflections-view" data-testid="reflections-view">
+      <p className="activity-help">
+        Full reflection ledger per pair for one bot — strategy knobs, live experiment,
+        champion / explore / safe-mode, cooldowns, GP handoff, adaptive learning, plan /
+        shadow, and hypothesis timeline. Source: bot-pushed reflection health + strategy + hypotheses.
+      </p>
+      <div className="activity-bot-tabs" role="tablist" aria-label="Reflections bot">
+        {REFLECTIONS_BOTS.map((b) => (
+          <button
+            key={b}
+            type="button"
+            className={`activity-bot-tab${botName === b ? " active" : ""}`}
+            onClick={() => setBotName(b)}
+          >
+            {b}
+          </button>
+        ))}
+      </div>
+      {loading && !data && <SkeletonActivity rows={6} />}
+      {error && (
+        <p className="error">
+          {error} —{" "}
+          <button type="button" className="retry-inline" onClick={load}>retry</button>
+        </p>
+      )}
+      {!error && data && data.status === "no_data" && (
+        <div className="detail-muted">
+          No reflection ledger for {botName} yet — waiting on bot ingest of reflection_health.
+        </div>
+      )}
+      {!error && data && data.status !== "no_data" && (
+        <>
+          <div className="dc-label">
+            Reflections · {botName}
+            <span className="activity-help" style={{ marginLeft: 8 }}>
+              every {data.reflection_every ?? "—"} closes · auto-deploy{" "}
+              {data.auto_deploy ? "ON" : "OFF"} · stage {data.deploy_stage || "—"}
+              {data.gp_handoff_pairs?.length
+                ? ` · GP handoff: ${data.gp_handoff_pairs.join(", ")}`
+                : ""}
+            </span>
+          </div>
+
+          {Object.keys(adaptiveAxes).length > 0 && (
+            <div className="refl-section" data-testid={`adaptive-${botName}`} style={{ marginBottom: 12 }}>
+              <div className="dc-label">Bot-level adaptive learning</div>
+              <table className="mini-table" style={{ width: "100%", fontSize: "0.8em" }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: "left" }}>Axis</th>
+                    <th>Tried</th>
+                    <th>Worked</th>
+                    <th>Reverted</th>
+                    <th>Reliability</th>
+                    <th>Step ×</th>
+                    <th>Fail streak</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(adaptiveAxes).map(([axis, a]) => (
+                    <tr key={axis}>
+                      <td style={{ textAlign: "left" }}>{axis}</td>
+                      <td style={{ textAlign: "center" }}>{a.attempts}</td>
+                      <td style={{ textAlign: "center", color: "#2ecc71" }}>{a.improved}</td>
+                      <td style={{ textAlign: "center", color: "#e67e22" }}>{a.reverted}</td>
+                      <td style={{ textAlign: "center", color: a.reliability >= 0.5 ? "#2ecc71" : "#e74c3c" }}>
+                        {a.reliability}
+                      </td>
+                      <td style={{ textAlign: "center" }}>{a.step_scale}</td>
+                      <td style={{ textAlign: "center" }}>{a.fail_streak || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {pairs.length === 0 ? (
+            <div className="detail-muted">No pairs in the reflection ledger yet.</div>
+          ) : (
+            pairs.map(([pair, info]) => (
+              <ReflectionsPairCard key={pair} pair={pair} info={info || {}} />
+            ))
+          )}
+
+          {(data.history || []).length > 0 && (
+            <div className="refl-section" style={{ marginTop: 16 }}>
+              <div className="dc-label">Experiment history (recent)</div>
+              <div className="refl-timeline">
+                {[...(data.history || [])].reverse().slice(0, 30).map((h, i) => (
+                  <div className="refl-tl-row" key={`hist-${i}`}>
+                    <span className="refl-tl-ts">{h.ts || h.deployed_ts || "—"}</span>
+                    <span className="refl-tl-var">{h.pair || "—"}</span>
+                    <span className="refl-tl-status">{h.status || h.event || "—"}</span>
+                    <span className="refl-tl-chg">{h.variable || ""} {_fmtVal(h.old)} → {_fmtVal(h.new)}</span>
+                    <span className="refl-tl-reason">{h.reason || ""}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -2200,6 +2367,7 @@ function VersionView({ perVersion }) {
         <p className="activity-help">
           Groups closed trades by <strong>strategy_version</strong> (or entry style:
           mean_reversion / rsi_momentum / gp_ensemble). Empty until closes are ingested.
+          Live reflection knobs and experiments are under the Reflections tab.
         </p>
         No version data yet.
       </div>
@@ -2813,6 +2981,7 @@ export default function App() {
             {!isWatcher && (
               <>
                 <button className={`ltab ${subTab === "skips" ? "ltab-active" : ""}`} onClick={() => setSubTab("skips")}>Skip Analysis</button>
+                <button className={`ltab ${subTab === "reflections" ? "ltab-active" : ""}`} onClick={() => setSubTab("reflections")}>Reflections</button>
                 <button className={`ltab ${subTab === "versions" ? "ltab-active" : ""}`} onClick={() => setSubTab("versions")}>Versions</button>
               </>
             )}
@@ -2821,10 +2990,9 @@ export default function App() {
             {subTab === "activity" || isWatcher ? (
               <ActivityFeed overview={overview} />
             ) : subTab === "versions" ? (
-              <>
-                <ReflectionHealthPanel />
-                <VersionView perVersion={perVersion} />
-              </>
+              <VersionView perVersion={perVersion} />
+            ) : subTab === "reflections" ? (
+              <ReflectionsView apiBase={API_BASE} initialBot={selectedBotName || "forex"} />
             ) : (
               <SkipAnalysis apiBase={API_BASE} initialBot={selectedBotName || "forex"} />
             )}

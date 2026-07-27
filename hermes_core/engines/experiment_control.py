@@ -700,12 +700,20 @@ def experiments_summary(bot: str, pairs: list[str] | None = None) -> dict:
     safe = _load(bot, _SAFE_MODE)
     cooldowns = _load(bot, _AXIS_COOLDOWN)
     handoffs = _load(bot, _GP_HANDOFF)
+    directions = _load(bot, _DIRECTION_COOLDOWN)
+    plans = _load(bot, _PLANS)
+    shadows = _load(bot, _SHADOW)
+    explore = _load(bot, _EXPLORE)
+    deploy_cd = _load(bot, _DEPLOY_COOLDOWN)
 
     keys = set(pairs or [])
     keys |= {k for k in exps.keys() if k != "_history"}
     keys |= set(champs.keys())
     keys |= set(safe.keys())
     keys |= set(handoffs.keys())
+    keys |= set(plans.keys())
+    keys |= set(shadows.keys())
+    keys |= set(explore.keys())
 
     out: dict[str, dict] = {}
     for pair in sorted(keys):
@@ -714,6 +722,11 @@ def experiments_summary(bot: str, pairs: list[str] | None = None) -> dict:
         sm = safe.get(pair) if isinstance(safe.get(pair), dict) else None
         cd = cooldowns.get(pair) if isinstance(cooldowns.get(pair), dict) else None
         ho = handoffs.get(pair) if isinstance(handoffs.get(pair), dict) else None
+        direc = directions.get(pair) if isinstance(directions.get(pair), dict) else None
+        plan = plans.get(pair) if isinstance(plans.get(pair), dict) else None
+        shadow = shadows.get(pair) if isinstance(shadows.get(pair), dict) else None
+        exp_mode = explore.get(pair) if isinstance(explore.get(pair), dict) else None
+        dcd = deploy_cd.get(pair) if isinstance(deploy_cd.get(pair), dict) else None
         out[pair] = {
             "experiment": (
                 {
@@ -723,24 +736,38 @@ def experiments_summary(bot: str, pairs: list[str] | None = None) -> dict:
                     "new": exp.get("new"),
                     "version_from": exp.get("version_from"),
                     "version_to": exp.get("version_to"),
+                    "deployed_ts": exp.get("deployed_ts"),
+                    "deployed_closed": exp.get("deployed_closed"),
                 }
                 if exp
                 else None
             ),
             "champion_status": (champ or {}).get("status"),
+            "champion_version": (champ or {}).get("version"),
             "revert_count": (champ or {}).get("revert_count", 0),
             "safe_mode": (sm or {}).get("mode"),
+            "safe_mode_reason": (sm or {}).get("reason"),
             "cooldown_axes": list(cd.keys()) if cd else [],
+            "axis_cooldown": dict(cd) if cd else {},
+            "direction_cooldown": dict(direc) if direc else {},
             "gp_handoff": bool(ho and ho.get("active")),
             "gp_handoff_reason": (ho or {}).get("reason"),
+            "gp_handoff_variable": (ho or {}).get("variable"),
+            "plan": (plan.get("steps") if plan else None),
+            "plan_reason": (plan or {}).get("reason"),
+            "shadow": shadow,
+            "explore": bool(exp_mode and exp_mode.get("active")),
+            "explore_reason": (exp_mode or {}).get("reason"),
+            "deploy_cooldown": dcd,
         }
 
     history = exps.get("_history")
     return {
         "bot": bot,
         "pairs": out,
-        "history": history[-20:] if isinstance(history, list) else [],
+        "history": history[-40:] if isinstance(history, list) else [],
         "gp_handoff_pairs": gp_handoff_pairs(bot),
+        "deploy_stage": get_deploy_stage(bot),
     }
 
 
