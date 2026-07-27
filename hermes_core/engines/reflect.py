@@ -691,51 +691,100 @@ L2_MIN_SCORE = 65  # [GUARD L53] below this, L2 is never invoked
 L2_UNANIMOUS_SCORE = 75  # at/above this, 3/3 unanimous required
 APPLY_CONFIDENCE = 0.40  # [GUARD L53] min confidence to apply any change
 
-# Ordered cascade: DeepSeek -> Gemini -> Groq. Each is a backup if the prior
-# call fails (network/quota/empty). Tests inject fakes; prod lazy-imports.
+# Ordered cascade: DeepSeek -> Gemini -> Groq. Tests inject fakes via ``callers``.
+# Production callers use httpx (already a hermes dep) — NOT the openai /
+# google.generativeai SDKs, which are absent from the bot image and caused
+# live ModuleNotFoundError → false 0/3 L2 rejects.
 DEFAULT_MODELS = ("deepseek", "gemini", "groq")
 
-
-def call_deepseek(prompt: str, api_key: str | None = None) -> str:  # pragma: no cover
-    """DeepSeek chat completion. Lazy import; network. Monkeypatch in tests."""
-    from openai import OpenAI
-
-    client = OpenAI(
-        api_key=api_key or _env("DEEPSEEK_API_KEY"), base_url="https://api.deepseek.com"
-    )
-    resp = client.chat.completions.create(
-        model="deepseek-chat", messages=[{"role": "user", "content": prompt}]
-    )
-    return resp.choices[0].message.content or ""
+_DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
+_GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
-def call_gemini(prompt: str, api_key: str | None = None) -> str:  # pragma: no cover
-    """Gemini chat generation. Lazy import; network. Monkeypatch in tests."""
-    import google.generativeai as genai
-
-    genai.configure(api_key=api_key or _env("GEMINI_API_KEY"))
-    model = genai.GenerativeModel("gemini-1.5-flash")
-    resp = model.generate_content(prompt)
-    return resp.text or ""
-
-
-def call_groq(prompt: str, api_key: str | None = None) -> str:  # pragma: no cover
-    """Groq chat completion (fallback). Lazy import; network. Monkeypatch in tests."""
-    from openai import OpenAI
-
-    client = OpenAI(
-        api_key=api_key or _env("GROQ_API_KEY"), base_url="https://api.groq.com/openai/v1"
-    )
-    resp = client.chat.completions.create(
-        model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}]
-    )
-    return resp.choices[0].message.content or ""
-
-
-def _env(name: str) -> str | None:
+def _env(name: str, default: str | None = None) -> str | None:
     import os
 
-    return os.environ.get(name)
+    val = os.environ.get(name)
+    if val is None or val == "":
+        return default
+    return val
+
+
+def _openai_chat_completion(
+    *,
+    url: str,
+    api_key: str,
+    model: str,
+    prompt: str,
+    timeout: float = 30.0,
+) -> str:
+    """POST an OpenAI-compatible chat completion; return assistant text."""
+    import httpx
+
+    resp = httpx.post(
+        url,
+        json={
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.0,
+            "max_tokens": 64,
+        },
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return str((((data.get("choices") or [{}])[0].get("message") or {}).get("content")) or "")
+
+
+def call_deepseek(prompt: str, api_key: str | None = None) -> str:
+    """DeepSeek chat completion via httpx (OpenAI-compatible)."""
+    key = api_key or _env("DEEPSEEK_API_KEY")
+    if not key:
+        raise RuntimeError("DEEPSEEK_API_KEY missing")
+    model = _env("DEEPSEEK_MODEL", "deepseek-chat") or "deepseek-chat"
+    url = _env("DEEPSEEK_URL", _DEEPSEEK_URL) or _DEEPSEEK_URL
+    return _openai_chat_completion(url=url, api_key=key, model=model, prompt=prompt)
+
+
+def call_gemini(prompt: str, api_key: str | None = None) -> str:
+    """Gemini generateContent via httpx (no google.generativeai SDK)."""
+    import httpx
+
+    key = api_key or _env("GEMINI_API_KEY")
+    if not key:
+        raise RuntimeError("GEMINI_API_KEY missing")
+    model = _env("GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+    url = _env(
+        "GEMINI_URL",
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+    ) or (
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    )
+    resp = httpx.post(
+        url,
+        params={"key": key},
+        json={"contents": [{"parts": [{"text": prompt}]}]},
+        timeout=30.0,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    parts = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
+    texts = [str(p.get("text") or "") for p in parts if isinstance(p, dict)]
+    return "".join(texts)
+
+
+def call_groq(prompt: str, api_key: str | None = None) -> str:
+    """Groq chat completion via httpx (OpenAI-compatible)."""
+    key = api_key or _env("GROQ_API_KEY")
+    if not key:
+        raise RuntimeError("GROQ_API_KEY missing")
+    model = _env("GROQ_MODEL", "llama-3.1-8b-instant") or "llama-3.1-8b-instant"
+    url = _env("GROQ_URL", _GROQ_URL) or _GROQ_URL
+    return _openai_chat_completion(url=url, api_key=key, model=model, prompt=prompt)
 
 
 _MODEL_CALLERS = {
@@ -858,7 +907,7 @@ def call_llm_consensus(
             [f"score {score:.0f} < {min_s:.0f}: L2 not invoked; L1 stands on its own"],
         )
 
-    callers = callers or _MODEL_CALLERS
+    callers = _MODEL_CALLERS if callers is None else callers
     prompt = (
         f"You are a senior trading-risk reviewer. Proposal: change "
         f"{proposal.get('variable')} from {proposal.get('old')} to "

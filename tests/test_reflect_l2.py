@@ -126,3 +126,126 @@ def test_confidence_below_040_blocks_apply():
     assert res.votes_yes == 3
     assert res.decision is False  # confidence 0.30 < 0.40 -> blocked
     assert any("confidence" in r for r in res.reasons)
+
+
+# ── httpx callers (no openai / google.generativeai SDKs) ─────────────────
+class _FakeResp:
+    def __init__(self, payload: dict, status: int = 200):
+        self._payload = payload
+        self.status_code = status
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"http {self.status_code}")
+
+    def json(self):
+        return self._payload
+
+
+def test_call_deepseek_httpx(monkeypatch):
+    from hermes_core.engines import reflect as rf
+    import httpx as hx
+
+    calls = {}
+
+    def _post(url, *, json=None, headers=None, timeout=None, params=None):
+        calls["url"] = url
+        calls["json"] = json
+        calls["headers"] = headers
+        return _FakeResp({"choices": [{"message": {"content": "YES"}}]})
+
+    monkeypatch.setattr(hx, "post", _post)
+    out = rf.call_deepseek("should we apply?", api_key="sk-test")
+    assert out == "YES"
+    assert "deepseek.com" in calls["url"]
+    assert calls["json"]["model"] == "deepseek-chat"
+    assert calls["headers"]["Authorization"] == "Bearer sk-test"
+
+
+def test_call_gemini_httpx(monkeypatch):
+    from hermes_core.engines import reflect as rf
+    import httpx as hx
+
+    def _post(url, *, json=None, headers=None, timeout=None, params=None):
+        assert "generativelanguage.googleapis.com" in url
+        assert params and params.get("key") == "gem-key"
+        return _FakeResp(
+            {"candidates": [{"content": {"parts": [{"text": "NO"}]}}]}
+        )
+
+    monkeypatch.setattr(hx, "post", _post)
+    assert rf.call_gemini("vote?", api_key="gem-key") == "NO"
+
+
+def test_call_groq_httpx(monkeypatch):
+    from hermes_core.engines import reflect as rf
+    import httpx as hx
+
+    def _post(url, *, json=None, headers=None, timeout=None, params=None):
+        assert "api.groq.com" in url
+        return _FakeResp(
+            {"choices": [{"message": {"content": "APPROVE"}}]}
+        )
+
+    monkeypatch.setattr(hx, "post", _post)
+    assert rf.call_groq("vote?", api_key="g-key") == "APPROVE"
+
+
+def test_callers_missing_key_raises(monkeypatch):
+    from hermes_core.engines import reflect as rf
+
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY missing"):
+        rf.call_deepseek("x")
+    with pytest.raises(RuntimeError, match="GEMINI_API_KEY missing"):
+        rf.call_gemini("x")
+    with pytest.raises(RuntimeError, match="GROQ_API_KEY missing"):
+        rf.call_groq("x")
+
+
+def test_default_callers_no_sdk_import(monkeypatch):
+    """Production path must not require openai / google.generativeai packages."""
+    from hermes_core.engines import reflect as rf
+    import httpx as hx
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _block_sdks(name, *a, **k):
+        if name in ("openai", "google.generativeai") or name.startswith("google.generativeai"):
+            raise ModuleNotFoundError(name)
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", _block_sdks)
+
+    def _post(url, *, json=None, headers=None, timeout=None, params=None):
+        if "googleapis" in url:
+            return _FakeResp({"candidates": [{"content": {"parts": [{"text": "YES"}]}}]})
+        return _FakeResp({"choices": [{"message": {"content": "YES"}}]})
+
+    monkeypatch.setattr(hx, "post", _post)
+    assert rf.call_deepseek("?", api_key="k") == "YES"
+    assert rf.call_gemini("?", api_key="k") == "YES"
+    assert rf.call_groq("?", api_key="k") == "YES"
+
+
+def test_consensus_uses_httpx_callers_end_to_end(monkeypatch):
+    """With httpx fakes, real DEFAULT callers can produce a real APPLY."""
+    from hermes_core.engines import reflect as rf
+    import httpx as hx
+
+    def _post(url, *, json=None, headers=None, timeout=None, params=None):
+        if "googleapis" in url:
+            return _FakeResp({"candidates": [{"content": {"parts": [{"text": "YES"}]}}]})
+        return _FakeResp({"choices": [{"message": {"content": "YES"}}]})
+
+    monkeypatch.setattr(hx, "post", _post)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "a")
+    monkeypatch.setenv("GEMINI_API_KEY", "b")
+    monkeypatch.setenv("GROQ_API_KEY", "c")
+    res = call_llm_consensus(_proposal(70), score=70)  # default _MODEL_CALLERS
+    assert res.votes_yes == 3
+    assert res.decision is True
+    assert not any("ModuleNotFoundError" in r for r in res.reasons)
