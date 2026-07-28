@@ -3,10 +3,12 @@
 Chart PNG -> vision LLM -> structured text context the entry loop consumes.
 
 Guards (tagged so tools/verify_guard_tags.py can find them):
-  L14  hard block — context containing "avoid" or "downtrend" -> the asset is
-       untradeable; the loop skips it entirely (no_signal).
-  L16  soft filter — context containing "sell" AND a low quality (<5) -> skip
-       (weaker than L14; a confident sell still passes through to the engines).
+  L14  hard block — recommendation contains "avoid" (avoid entirely) -> capital
+       veto; traditional entry AND GP promote both skip. Bare "downtrend" is
+       NOT a hard block (that froze FX whenever vision labeled risk-off).
+  L16  soft filter — legacy: "sell" AND low conf (<5) -> skip. Gray-zone chart
+       (downtrend / wait for pullback) uses soft quality + size mults instead
+       of skipping — feeds ENTRY_RANKING / probe-style sizing.
 
 Behaviour (blueprint Section 7 / Engine 6):
   * PRIMARY  Gemini gemini-2.5-flash, FALLBACK Groq llama-4-scout (vision).
@@ -102,11 +104,24 @@ CHART_PROMPT = (
 )
 
 
+# Soft chart tilt (never zero — capital veto is hard_block only).
+# Downtrend / wait-for-pullback haircut Signal.quality (ENTRY_RANKING) and size.
+CHART_DOWNTREND_QUALITY_MULT = 0.70
+CHART_PULLBACK_QUALITY_MULT = 0.85
+CHART_DOWNTREND_SIZE_MULT = 0.50
+CHART_PULLBACK_SIZE_MULT = 0.50
+
+
 # ── guard predicates (pure, never raise) ──────────────────────────────────
 def hard_block(context: str) -> bool:
-    """[GUARD L14] Hard block: vision flagged this asset as untradeable."""
+    """[GUARD L14] Hard block: vision recommendation is avoid (capital veto).
+
+    Matches structured ``Rec: avoid entirely`` and bare ``avoid`` tokens.
+    Does **not** hard-block on trend label ``downtrend`` alone — that is a soft
+    quality/size tilt via ``chart_quality_mult`` / ``chart_size_mult``.
+    """
     c = (context or "").lower()
-    return "avoid" in c or "downtrend" in c
+    return "avoid" in c
 
 
 def _quality_of(context: str) -> float:
@@ -121,9 +136,79 @@ def _quality_of(context: str) -> float:
 
 
 def soft_block(context: str) -> bool:
-    """[GUARD L16] Soft filter: a low-quality 'sell' recommendation -> skip."""
+    """[GUARD L16] Soft skip: low-confidence explicit sell (legacy schema).
+
+    Vision prompt uses enter long / wait for pullback / avoid entirely — so this
+    rarely fires live. Gray-zone downtrend/pullback must NOT soft-skip; they use
+    ``chart_quality_mult`` / ``chart_size_mult`` instead.
+    """
     c = (context or "").lower()
+    if hard_block(c):
+        return False  # L14 wins; don't double-count
     return "sell" in c and _quality_of(context) < 5.0
+
+
+def chart_soft_reasons(context: str) -> list[str]:
+    """Human-readable soft-tilt tags for skips/position meta (never a hard veto)."""
+    c = (context or "").lower()
+    if not c or hard_block(c):
+        return []
+    reasons: list[str] = []
+    if "downtrend" in c:
+        reasons.append("downtrend")
+    if "wait for pullback" in c or "wait on pullback" in c:
+        reasons.append("wait_for_pullback")
+    return reasons
+
+
+def chart_quality_mult(context: str) -> float:
+    """Multiply Signal.quality for ranking. 1.0 = no chart soft tilt."""
+    reasons = chart_soft_reasons(context)
+    if not reasons:
+        return 1.0
+    mult = 1.0
+    if "downtrend" in reasons:
+        mult *= CHART_DOWNTREND_QUALITY_MULT
+    if "wait_for_pullback" in reasons:
+        mult *= CHART_PULLBACK_QUALITY_MULT
+    return round(mult, 4)
+
+
+def chart_size_mult(context: str) -> float:
+    """Multiply position size for gray-zone chart. Never 0; hard_block handles veto."""
+    reasons = chart_soft_reasons(context)
+    if not reasons:
+        return 1.0
+    # Stacking both still floors at the stronger single tilt (not 0.25).
+    if "downtrend" in reasons:
+        return CHART_DOWNTREND_SIZE_MULT
+    if "wait_for_pullback" in reasons:
+        return CHART_PULLBACK_SIZE_MULT
+    return 1.0
+
+
+def apply_chart_soft_to_signal(sig, context: str):
+    """Haircut ``sig.quality`` and stamp chart soft meta. Returns ``sig`` (mutated).
+
+    No-op when mult == 1.0 or ``sig`` is None. Never blocks.
+    """
+    if sig is None:
+        return None
+    mult = chart_quality_mult(context)
+    reasons = chart_soft_reasons(context)
+    meta = getattr(sig, "meta", None)
+    if meta is None:
+        sig.meta = {}
+        meta = sig.meta
+    meta["chart_quality_mult"] = mult
+    meta["chart_size_mult"] = chart_size_mult(context)
+    meta["chart_soft_reasons"] = reasons
+    if mult < 1.0:
+        try:
+            sig.quality = round(float(sig.quality) * mult, 4)
+        except (TypeError, ValueError):
+            pass
+    return sig
 
 
 def _is_cacheable_context(context: str | None) -> bool:

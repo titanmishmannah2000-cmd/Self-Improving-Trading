@@ -11,6 +11,10 @@ from hermes_core.engines.backtest import (
 from hermes_core.engines.book_risk import apply_book_risk, book_risk_enabled
 from hermes_core.engines.chart_vision import (
     analyze_chart,
+    apply_chart_soft_to_signal,
+    chart_quality_mult,
+    chart_size_mult,
+    chart_soft_reasons,
     get_all_chart_contexts,
     get_chart_context,
     hard_block,
@@ -169,6 +173,10 @@ __all__ = [
     "analyze_chart",
     "hard_block",
     "soft_block",
+    "chart_quality_mult",
+    "chart_size_mult",
+    "chart_soft_reasons",
+    "apply_chart_soft_to_signal",
     "aggregate_trades",
     "layer1_rule_based",
     "combined_reflect",

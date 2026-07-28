@@ -91,9 +91,17 @@ def test_hard_block_avoid():
     assert hard_block("") is False
 
 
-def test_hard_block_downtrend():
-    # L14 must also block a clear downtrend
-    assert hard_block("trend: downtrend (conf=0.70). SR: support at 1.08.") is True
+def test_hard_block_downtrend_is_soft_only():
+    # Bare downtrend must NOT capital-veto (that froze FX in risk-off tapes).
+    assert hard_block("trend: downtrend (conf=0.70). SR: support at 1.08.") is False
+    assert hard_block(
+        "trend: downtrend (conf=0.85). SR: support at 1.1370. Rec: wait for pullback"
+    ) is False
+    from hermes_core.engines.chart_vision import chart_quality_mult, chart_size_mult
+
+    ctx = "trend: downtrend (conf=0.70). Rec: wait for pullback"
+    assert chart_quality_mult(ctx) < 1.0
+    assert chart_size_mult(ctx) < 1.0
 
 
 def test_soft_block_low_quality_sell():
@@ -101,6 +109,10 @@ def test_soft_block_low_quality_sell():
     assert soft_block("trend: sideways (conf=0.20). Rec: sell") is True
     assert soft_block("trend: downtrend (conf=0.90). Rec: sell") is False
     assert soft_block("trend: uptrend (conf=0.80). Rec: enter long") is False
+    # wait/downtrend never soft-skip (size/quality tilt only)
+    assert soft_block("trend: downtrend (conf=0.20). Rec: wait for pullback") is False
+    # avoid is L14, not L16
+    assert soft_block("Rec: avoid entirely") is False
 
 
 def test_context_contains_trend():

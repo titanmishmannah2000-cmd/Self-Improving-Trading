@@ -443,12 +443,13 @@ def test_every_guard_fires_with_log_line(tmp_path):
         )
         fired.add("L13")
 
-        # L14 chart hard-block
+        # L14 chart hard-block (avoid only — bare downtrend is soft tilt)
         assert (
-            hard_block("avoid downtrend")
-            and entry.evaluate_entry("EUR/USD", _prices(1.1), strat, context="avoid downtrend")
+            hard_block("avoid entirely")
+            and entry.evaluate_entry("EUR/USD", _prices(1.1), strat, context="avoid entirely")
             is None
         )
+        assert hard_block("trend: downtrend (conf=0.8). Rec: wait for pullback") is False
         fired.add("L14")
 
         # L16 chart soft-filter (low-quality sell)

@@ -1474,7 +1474,7 @@ def _parse_chart_context(context: str) -> dict:
         "chart generation failed.",
     }
     usable = bool(low) and low not in unusable_exact and not low.startswith("chart: unavailable")
-    hard = "avoid" in low or "downtrend" in low
+    hard = "avoid" in low
     conf_m = re.search(r"conf\s*=\s*([0-9]*\.?[0-9]+)", ctx, re.I)
     quality = 5.0
     confidence = None
@@ -1484,7 +1484,11 @@ def _parse_chart_context(context: str) -> dict:
             quality = round(confidence * 10.0, 2)
         except ValueError:
             pass
-    soft = "sell" in low and quality < 5.0
+    # L16 legacy soft-skip; gray-zone downtrend/pullback is size/quality tilt only.
+    soft = (not hard) and ("sell" in low and quality < 5.0)
+    soft_tilt = (not hard) and (
+        "downtrend" in low or "wait for pullback" in low or "wait on pullback" in low
+    )
     trend_m = re.search(r"trend:\s*([a-zA-Z_]+)", ctx, re.I)
     rec_m = re.search(r"Rec:\s*(.+?)(?:\s*$|\.\s*$)", ctx, re.I)
     sr_m = re.search(r"SR:\s*(.+?)(?:\.\s*Rec:|$)", ctx, re.I)
@@ -1492,6 +1496,7 @@ def _parse_chart_context(context: str) -> dict:
         "usable": usable,
         "hard_block": hard,
         "soft_block": soft,
+        "soft_tilt": soft_tilt,
         "quality": quality,
         "confidence": confidence,
         "trend": (trend_m.group(1).lower() if trend_m else None),

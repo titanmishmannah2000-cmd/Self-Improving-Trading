@@ -91,6 +91,39 @@ def test_eur_mr_chart_block():
     assert sig is None  # hard block from chart vision
 
 
+def test_eur_mr_downtrend_soft_tilt_not_hard_block():
+    """Bare downtrend / wait-for-pullback must not capital-veto MR."""
+    base = evaluate_entry(
+        "EUR/USD",
+        prices_at_bb_lower,
+        mr_strategy(rsi=38, session="LDN", adx=20),
+        "",
+        "neutral",
+        0,
+        False,
+        {},
+        100,
+        "LDN",
+    )
+    assert base is not None
+    soft = evaluate_entry(
+        "EUR/USD",
+        prices_at_bb_lower,
+        mr_strategy(rsi=38, session="LDN", adx=20),
+        "trend: downtrend (conf=0.85). Rec: wait for pullback",
+        "neutral",
+        0,
+        False,
+        {},
+        100,
+        "LDN",
+    )
+    assert soft is not None
+    assert soft.quality < base.quality
+    assert "downtrend" in (soft.meta.get("chart_soft_reasons") or [])
+    assert soft.meta.get("chart_size_mult", 1.0) < 1.0
+
+
 def test_eur_mr_cooldown():
     reentry = {"EUR/USD": {"last_exit_cycle": 85}}  # stopped out 15 cycles ago (100-15)
     sig = evaluate_entry(

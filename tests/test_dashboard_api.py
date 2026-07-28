@@ -441,6 +441,14 @@ def test_parse_chart_context_unavailable_not_usable():
     assert parsed["hard_block"] is False
     soft = m._parse_chart_context("trend: sideways (conf=0.30). Rec: sell")
     assert soft["soft_block"] is True
+    # Bare downtrend is soft_tilt, not hard_block
+    dn = m._parse_chart_context(
+        "trend: downtrend (conf=0.85). SR: 1.13. Rec: wait for pullback"
+    )
+    assert dn["hard_block"] is False
+    assert dn["soft_block"] is False
+    assert dn["soft_tilt"] is True
+    assert dn["trend"] == "downtrend"
 
 
 def test_reflection_health_endpoint_reads_cortex_block():

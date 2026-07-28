@@ -13,15 +13,16 @@ Guards enforced here (tagged so tools/verify_guard_tags.py can find them):
   L18  multi-pair confluence — RSI-momentum needs >= min_oversold_pairs
        (YAML entry.min_oversold_pairs; default 1 after Phase-1 gate relaxation)
   L23  stop-loss cooldown — a stop-loss exit blocks re-entry for 30 cycles
-  L14  chart hard-block — context containing "avoid"/"downtrend" -> skip (from chart vision)
-  L16  chart soft-filter — context containing "sell" + low quality (<5) -> skip
+  L14  chart hard-block — recommendation containing "avoid" -> skip (capital veto)
+  L16  chart soft-filter — context containing "sell" + low quality (<5) -> skip;
+       gray-zone downtrend / wait-for-pullback haircut quality (not skip)
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from hermes_core.engines.chart_vision import hard_block, soft_block
+from hermes_core.engines.chart_vision import apply_chart_soft_to_signal, hard_block, soft_block
 from hermes_core.indicators import compute_all
 
 # Session tokens resolved upstream by _get_session(): LDN/NY/ASIA/OTHER/LDN_NY.
@@ -223,7 +224,7 @@ def evaluate_entry_detailed(
         if not calm:
             return None, "rsi:adx_not_calm"
         quality = (1 - rsi / 100.0) * 0.6 + 0.4
-        return Signal(
+        sig = Signal(
             "mean_reversion",
             round(quality, 4),
             size,
@@ -235,7 +236,9 @@ def evaluate_entry_detailed(
                 "entry_type": "mean_reversion",
                 "rsi_threshold": threshold,
             },
-        ), ""
+        )
+        apply_chart_soft_to_signal(sig, context)
+        return sig, ""
 
     if stype == "rsi_momentum":
         min_pairs = _min_oversold_pairs(strategy)
@@ -247,7 +250,7 @@ def evaluate_entry_detailed(
         if not _vol_gate(strategy, ind["atr"], last, vol_above):
             return None, "vol"
         quality = 0.5 + min(oversold_pairs, 5) * 0.1
-        return Signal(
+        sig = Signal(
             "rsi_momentum",
             round(quality, 4),
             size,
@@ -259,7 +262,9 @@ def evaluate_entry_detailed(
                 "entry_type": "rsi_momentum",
                 "rsi_threshold": threshold,
             },
-        ), ""
+        )
+        apply_chart_soft_to_signal(sig, context)
+        return sig, ""
 
     return None, "other:unknown_strategy_type"
 

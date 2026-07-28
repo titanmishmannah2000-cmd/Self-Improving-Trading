@@ -35,6 +35,11 @@ def _now_iso() -> str:
 
 from hermes_core.adapters import make_default_fetch
 from hermes_core.config import load_config, load_strategy_for_pair, state_root
+from hermes_core.engines.chart_vision import (
+    apply_chart_soft_to_signal,
+    chart_size_mult,
+    hard_block,
+)
 from hermes_core.engines.crisis_learning import (
     check_novel_regime,
     recommend_from_prices,
@@ -1883,6 +1888,16 @@ def run_cycle(
             else:
                 sig = trad_sig if trad_sig is not None else gp_sig
 
+            # L14 capital veto applies to GP promote too (traditional already
+            # filtered in evaluate_entry). Bare downtrend is soft-only.
+            if sig is not None and hard_block(context):
+                _log_skip(bot, pair, cycle, "no_signal:chart:hard_block")
+                summary["skips"] += 1
+                continue
+            # GP signals never pass through evaluate_entry — stamp soft chart tilt.
+            if sig is not None and "chart_quality_mult" not in (sig.meta or {}):
+                apply_chart_soft_to_signal(sig, context)
+
             # Halt blocks NEW entries only (exits still managed above).
             # Check before no_signal logging so idle SLO is not polluted by halt.
             if _halted:
@@ -1895,6 +1910,13 @@ def run_cycle(
                 continue
             if sig is None:
                 _skip = _trad_skip or "no_signal"
+                # Ops clarity: chart capital veto + GP promote silent/absent.
+                if (
+                    _skip == "chart:hard_block"
+                    and _want_gp
+                    and gp_sig is None
+                ):
+                    _skip = "chart:hard_block+gp:silent"
                 if _skip == "no_signal":
                     _skip = "no_signal"
                 elif not _skip.startswith(
@@ -1999,6 +2021,14 @@ def run_cycle(
                 evidence_n=_evidence_n,
             )
             size = float(_probe["size"])
+            # Chart soft size tilt (downtrend / wait-for-pullback) — never a veto.
+            _chart_size_mult = 1.0
+            _chart_soft_reasons: list = []
+            with contextlib.suppress(Exception):
+                _chart_size_mult = float(chart_size_mult(context))
+                _chart_soft_reasons = list((sig.meta or {}).get("chart_soft_reasons") or [])
+                if _chart_size_mult < 1.0:
+                    size = round(max(0.0, size * _chart_size_mult), 6)
             # Phase 3.5: reflection size-down safe mode (all axes exhausted).
             if _safe_mode and _safe_mode.get("mode") == "size_down":
                 try:
@@ -2201,6 +2231,11 @@ def run_cycle(
                 "evidence_state": _probe["evidence_state"],
                 "base_size": _probe.get("base_size"),
                 "probe_fraction": _probe.get("probe_fraction"),
+                # Chart soft tilt (L14 avoid = hard veto earlier; this is size only)
+                "chart_size_mult": _chart_size_mult,
+                "chart_quality_mult": (sig.meta or {}).get("chart_quality_mult"),
+                "chart_soft_reasons": _chart_soft_reasons
+                or list((sig.meta or {}).get("chart_soft_reasons") or []),
                 # HIF Phase-2 dashboard fields
                 "expert_weight": _weighted.get("expert_weight"),
                 "expert_mode": _weighted.get("expert_mode"),
