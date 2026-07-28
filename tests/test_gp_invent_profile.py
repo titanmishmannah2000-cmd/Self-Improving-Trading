@@ -26,18 +26,21 @@ def test_invent_profiles_per_bot():
     assert fx["interval"] == "1d"
     assert fx["horizon"] == 10
     assert fx["timeout_s"] >= 240
+    assert fx["n_islands"] == 1
+    assert fx["generations"] <= 28
 
     gd = invent_profile("gold")
     assert gd["interval"] == "1d"
     assert gd["horizon"] == 20
     assert gd["timeout_s"] >= 240
+    assert gd["n_islands"] == 1
 
     cr = invent_profile("crypto")
     assert cr["interval"] == "1h"
     assert cr["horizon"] == 12
     assert cr["timeout_s"] >= 180
-    assert cr["generations"] <= 24
-    assert cr["pop_size"] <= 30
+    assert cr["generations"] <= 28
+    assert cr["pop_size"] <= 32
     assert cr["n_islands"] == 1
 
 

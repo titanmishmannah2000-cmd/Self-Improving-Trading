@@ -32,16 +32,20 @@ _BASE: dict[str, Any] = {
 # Gold: daily, medium ahead.
 # Crypto: hourly invent (not daily MR), shorter ahead, smaller search + longer
 # timeout so invent can finish and land on Discovered.
+#
+# Budgets are sized to finish inside timeout_s on a single Railway hobby
+# replica. Oversized gens×pop×islands caused chronic 300s TimeoutError →
+# abandoned workers → stacked invents → Discovered UI stuck.
 BOT_INVENT_DEFAULTS: dict[str, dict[str, Any]] = {
     "forex": {
         "interval": "1d",
         "period": "2y",
         "max_candles": 500,
         "horizon": 10,
-        "generations": 40,
-        "pop_size": 40,
-        "n_islands": 2,
-        "timeout_s": 300,
+        "generations": 20,
+        "pop_size": 28,
+        "n_islands": 1,
+        "timeout_s": 420,
         "min_bars": 200,
     },
     "gold": {
@@ -49,10 +53,10 @@ BOT_INVENT_DEFAULTS: dict[str, dict[str, Any]] = {
         "period": "2y",
         "max_candles": 500,
         "horizon": 20,
-        "generations": 25,
-        "pop_size": 30,
+        "generations": 18,
+        "pop_size": 24,
         "n_islands": 1,
-        "timeout_s": 300,
+        "timeout_s": 420,
         "min_bars": 200,
     },
     "crypto": {
@@ -63,7 +67,7 @@ BOT_INVENT_DEFAULTS: dict[str, dict[str, Any]] = {
         "generations": 20,
         "pop_size": 24,
         "n_islands": 1,
-        "timeout_s": 300,
+        "timeout_s": 420,
         "min_bars": 200,
     },
 }

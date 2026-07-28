@@ -78,8 +78,9 @@ def test_invent_timeout_does_not_join_hung_worker(monkeypatch, tmp_path):
         assert any(p.get("status") == "timeout" for p in pulses)
         assert "forex" in loop._LAST_DISCOVERY_RUN
         assert loop._DISCOVERY_TIMEOUT_STREAK.get(key, 0) >= 1
-        # Hard-abandon clears in_flight so the next cadence can invent again.
-        assert key not in loop._DISCOVERY_IN_FLIGHT
+        # Hard-abandon keeps in_flight until the worker exits so the discovery
+        # loop can drain zombies before starting another invent.
+        assert key in loop._DISCOVERY_IN_FLIGHT
         # Abandoned worker token was invalidated — a new begin token is current.
         assert gen.invent_write_token_current(pair) >= 1
     finally:
@@ -288,6 +289,15 @@ def test_chronic_timeout_shrinks_then_cools_down(monkeypatch, tmp_path):
             loop._maybe_discover("forex", pair, prices=[1.1] * 220)
             assert any(p.get("status") == "timeout" for p in pulses)
             pulses.clear()
+            # Release abandoned worker so in_flight clears before the next attempt
+            # (production discovery loop drains zombies between pairs).
+            if releases:
+                releases[-1].set()
+                for _j in range(50):
+                    if key not in loop._DISCOVERY_IN_FLIGHT:
+                        break
+                    time.sleep(0.02)
+                loop._DISCOVERY_IN_FLIGHT.discard(key)
 
         assert loop._DISCOVERY_TIMEOUT_STREAK.get(key, 0) >= 3
         assert key in loop._DISCOVERY_TIMEOUT_COOLDOWN_UNTIL

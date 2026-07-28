@@ -469,9 +469,17 @@ def _discovery_loop(
             if stop.is_set():
                 return
             try:
-                from hermes_core.engines.loop import _DISCOVERY_IN_FLIGHT, _maybe_discover
+                from hermes_core.engines.loop import (
+                    _DISCOVERY_IN_FLIGHT,
+                    _drain_bot_invents,
+                    _maybe_discover,
+                )
 
                 _maybe_discover(bot, pair, cortex=cortex)
+                # If invent hard-timed-out, the GP worker may still be running.
+                # Drain before the next pair so we don't stack invents (that was
+                # starving forex/gold and freezing the Discovered count).
+                _drain_bot_invents(bot)
                 n = len(load_discovered_indicators(pair))
                 in_flight = any(k[0] == bot and k[1] == pair for k in _DISCOVERY_IN_FLIGHT)
                 print(

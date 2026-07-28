@@ -15,14 +15,16 @@ goal:
   gemini_reflection: true
   gemini_min_trades: 5
 # GP invent: daily TF, shorter forward horizon than the old global h=60.
+# Keep search small enough to finish inside timeout on Railway (large
+# gens×islands was timing out → abandoned workers → Discovered stuck).
 invent:
   interval: 1d
   period: 2y
   horizon: 10
-  generations: 40
-  pop_size: 40
-  n_islands: 2
-  timeout_s: 300
+  generations: 20
+  pop_size: 28
+  n_islands: 1
+  timeout_s: 420
 global:
   dashboard_url: ${DASHBOARD_API_URL}
   discord_webhook: ${DISCORD_ALERTS_WEBHOOK}

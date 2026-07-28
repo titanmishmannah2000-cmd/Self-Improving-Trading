@@ -104,23 +104,56 @@ DISCOVERY_INTERVAL_S = int(get_env("DISCOVERY_INTERVAL_S", "3600"))
 # the Discovered UI never shows new exprs.
 DISCOVERY_REINVENT_INTERVAL_S = int(get_env("DISCOVERY_REINVENT_INTERVAL_S", str(6 * 3600)))
 # After this many consecutive invent timeouts, shrink the search budget.
-DISCOVERY_TIMEOUT_SHRINK_AFTER = int(get_env("DISCOVERY_TIMEOUT_SHRINK_AFTER", "2"))
+# First timeout already means the full budget is too heavy for this host —
+# shrink immediately so the next pass can finish and land new formulas.
+DISCOVERY_TIMEOUT_SHRINK_AFTER = int(get_env("DISCOVERY_TIMEOUT_SHRINK_AFTER", "1"))
 # After this many consecutive invent timeouts, skip invent for a cooldown window.
 DISCOVERY_TIMEOUT_SKIP_AFTER = int(get_env("DISCOVERY_TIMEOUT_SKIP_AFTER", "4"))
 DISCOVERY_TIMEOUT_COOLDOWN_S = int(get_env("DISCOVERY_TIMEOUT_COOLDOWN_S", "3600"))
 # Soft Discord alert when admit_zero streaks this high (0 disables).
 DISCOVERY_ADMIT_ZERO_ALERT_AFTER = int(get_env("DISCOVERY_ADMIT_ZERO_ALERT_AFTER", "5"))
+# After hard-timeout abandon, wait this long for the zombie invent thread to
+# finish before starting the next pair (prevents stacking GP workers → more timeouts).
+DISCOVERY_ABANDON_DRAIN_S = int(get_env("DISCOVERY_ABANDON_DRAIN_S", "900"))
 _DISCOVERY_LAST: dict[tuple[str, str], float] = {}  # (bot, pair) -> last pass epoch
 _DISCOVERY_LAST_INVENT: dict[tuple[str, str], float] = {}  # (bot, pair) -> last full invent
 # Per-bot wall-clock of last discovery pass (any outcome) — surfaces on heartbeat
 # as last_discovery_run_ts for dashboard stale-day metrics.
 _LAST_DISCOVERY_RUN: dict[str, float] = {}
 # In-flight invents: timeout abandons the waiter but the worker may still run;
-# skip spawning a second invent for the same (bot, pair) until it finishes.
+# keep the key until the worker exits so we don't spawn another invent on top.
 _DISCOVERY_IN_FLIGHT: set[tuple[str, str]] = set()
 _DISCOVERY_TIMEOUT_STREAK: dict[tuple[str, str], int] = {}
 _DISCOVERY_TIMEOUT_COOLDOWN_UNTIL: dict[tuple[str, str], float] = {}
 _DISCOVERY_ADMIT_ZERO_STREAK: dict[tuple[str, str], int] = {}
+
+
+def _drain_bot_invents(bot: str, *, max_wait_s: float | None = None) -> None:
+    """Block until abandoned invent workers for ``bot`` exit (or max_wait).
+
+    Hard-timeout abandons the waiter but leaves the GP thread running. Starting
+    the next pair's invent on top of that zombie saturates CPU and causes the
+    whole discovery pass to time out — Discovered then looks "stuck".
+    """
+    budget = float(max_wait_s if max_wait_s is not None else DISCOVERY_ABANDON_DRAIN_S)
+    deadline = time.time() + max(0.0, budget)
+    while time.time() < deadline:
+        inflight = [k for k in list(_DISCOVERY_IN_FLIGHT) if k[0] == bot]
+        if not inflight:
+            return
+        print(
+            f"[hermes][discovery] {bot}: draining abandoned invent {inflight}",
+            flush=True,
+        )
+        time.sleep(2.0)
+    # Force-clear so one permanently wedged worker cannot freeze discovery forever.
+    leftover = [k for k in list(_DISCOVERY_IN_FLIGHT) if k[0] == bot]
+    for k in leftover:
+        _DISCOVERY_IN_FLIGHT.discard(k)
+        print(
+            f"[hermes][discovery] {bot}: force-cleared stale in_flight {k}",
+            flush=True,
+        )
 
 
 def _state_dir(bot: str) -> Path:
@@ -1277,10 +1310,10 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
             print(msg, flush=True)
             if should_invent:
                 _note_timeout()
-                # Hard-abandon: fence late writes + unblock the invent loop so the
-                # next cadence can spawn a shrunk/backoff pass.
+                # Hard-abandon: fence late writes. Keep ``key`` in
+                # ``_DISCOVERY_IN_FLIGHT`` until ``_work_guarded`` finishes so the
+                # discovery loop can drain zombies before starting the next pair.
                 begin_invent_write_token(pair)
-                _DISCOVERY_IN_FLIGHT.discard(key)
             _status_pulse(
                 status="timeout",
                 reason=f"invent exceeded {wait_s}s (streak={_DISCOVERY_TIMEOUT_STREAK.get(key, 0)})",
