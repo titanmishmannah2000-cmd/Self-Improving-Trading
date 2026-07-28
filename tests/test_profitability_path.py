@@ -33,6 +33,14 @@ def test_phase0_freeze_ok_when_only_book_risk(monkeypatch):
     assert report["enabled"] == ["BOOK_RISK"]
 
 
+def test_focus_pairs_include_all_three_bots():
+    from hermes_core.engines.profitability_freeze import focus_pairs_for_bot
+
+    assert focus_pairs_for_bot("gold") == ["XAU/USD"]
+    assert focus_pairs_for_bot("forex") == ["EUR/USD", "GBP/USD"]
+    assert focus_pairs_for_bot("crypto") == ["BTC/USD", "ETH/USD"]
+
+
 def test_phase0_freeze_fails_when_soft_weights_on(monkeypatch):
     for key, _ in hf.DORMANT_FLAGS:
         monkeypatch.setenv(key, "0")

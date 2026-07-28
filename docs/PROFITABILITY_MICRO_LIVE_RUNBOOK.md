@@ -3,9 +3,9 @@
 ## Preconditions (all must be green)
 
 1. Phase 0 freeze: `BOOK_RISK=1`, all other HIF off, `REFLECT_AUTO_DEPLOY=0`, `GP_PROMOTE=0` until Phase 4.
-2. Focus universe: gold=`XAU/USD`, forex=`EUR/USD`+`GBP/USD`.
-3. Feed health 24h+: `uv run python -m tools.health_check --bot gold --with-freeze`
-4. Phase 1 exit gate continue on at least one pair: `uv run python -m tools.scorecard --bot <bot> --gate --min-n 20`
+2. Focus universe (all three bots): gold=`XAU/USD`, forex=`EUR/USD`+`GBP/USD`, crypto=`BTC/USD`+`ETH/USD`.
+3. Feed health 24h+: `uv run python -m tools.health_check --bot gold --with-freeze` (also forex + crypto).
+4. Phase 1 exit gate continue on at least one pair per bot: `uv run python -m tools.scorecard --bot <bot> --gate --min-n 20`
 5. Phase 2 Bayesian allocator soak OK (if `SOFT_WEIGHTS=1`).
 6. Phase 3 canary reflection held ≥15 trades (or stay at `REFLECT_DEPLOY_STAGE=prove`).
 7. Phase 4: `GP_PROMOTE=1` only for gate-green pairs (cost-aware expectancy).

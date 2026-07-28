@@ -80,6 +80,9 @@ def test_reflection_every_is_fifteen_profitability_path():
     gold = load_config("gold")
     assert gold["goal"]["reflection_every"] == 15
     assert gold["pairs"] == ["XAU/USD"]
+    crypto = load_config("crypto")
+    assert crypto["goal"]["reflection_every"] == 15
+    assert crypto["pairs"] == ["BTC/USD", "ETH/USD"]
 
 
 def test_valid_strategy_passes_validation():

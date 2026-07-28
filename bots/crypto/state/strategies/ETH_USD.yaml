@@ -1,6 +1,7 @@
 pair: ETH/USD
 version: "00"
 # Crypto trends hard — use momentum (same discipline as gold D8), not FX mean-reversion.
+# Profitability Path Phase 1 — primary tunables (≤4): stop, target, RSI threshold, session.
 strategy_type: rsi_momentum
 entry:
   indicator: rsi
