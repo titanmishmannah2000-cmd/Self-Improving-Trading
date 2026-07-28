@@ -2098,6 +2098,10 @@ def run_cycle(
                     regime=ind.get("regime") or regimes.get(pair),
                     oversold_count=max(int(oversold_pairs), int(oversold_total)),
                     gp_agree=_gp_ok,
+                    chart_context=context,
+                    chart_soft_reasons=list(
+                        (sig.meta or {}).get("chart_soft_reasons") or _chart_soft_reasons or []
+                    ),
                 )
                 if _mg.get("mom_guard_action") == "bench":
                     _log_skip(

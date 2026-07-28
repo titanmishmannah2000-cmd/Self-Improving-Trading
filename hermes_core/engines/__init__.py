@@ -101,6 +101,7 @@ from hermes_core.engines.loop import (
 )
 from hermes_core.engines.mom_range_guard import (
     apply_mom_range_guard,
+    chart_downtrend_hostile,
     gp_agree_bullish,
     mom_range_guard_enabled,
 )
@@ -231,6 +232,7 @@ __all__ = [
     "regime_size_mult",
     "regime_sizing_enabled",
     "apply_mom_range_guard",
+    "chart_downtrend_hostile",
     "gp_agree_bullish",
     "mom_range_guard_enabled",
     "apply_kelly_sizing",
