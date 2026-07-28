@@ -325,6 +325,7 @@ def _simulate(
     apply_cooldown: bool = True,
     trail_pct: float = 0.0,
     max_hold: int | None = None,
+    cost_pct: float = 0.0,
 ) -> dict:
     """Backtest entries with live BB/RSI/ADX + session/ensemble/cooldown gates.
 
@@ -334,6 +335,9 @@ def _simulate(
     trade up to ``max_hold`` bars and applies hard SL/TP plus optional %-trail
     from peak MFE — matching live ``trailing_stop_pct`` semantics so trail
     proposals are not identical no-ops.
+
+    ``cost_pct`` subtracts a round-trip cost (percent) from each closed trade
+    (Phase 1 stress / profitability scorecard alignment).
     """
     from hermes_core.engines.entry import REENTRY_COOLDOWN_CYCLES
 
@@ -358,6 +362,10 @@ def _simulate(
         trail = max(0.0, float(trail_pct or 0.0))
     except (TypeError, ValueError):
         trail = 0.0
+    try:
+        cost = max(0.0, float(cost_pct or 0.0))
+    except (TypeError, ValueError):
+        cost = 0.0
 
     for i in range(1, n - 1):
         if raw[i] == 0.0:
@@ -413,6 +421,8 @@ def _simulate(
 
     if not trade_moves:
         return {"pnl": 0.0, "wr": 0.0, "entries": 0, "max_dd": 0.0}
+    if cost > 0:
+        trade_moves = [float(m) - cost for m in trade_moves]
     tm = np.asarray(trade_moves, dtype=float)
     cum = np.cumsum(tm)
     peak = np.maximum.accumulate(cum)
@@ -476,6 +486,7 @@ def _crisis_backtest(
     ensemble_consensus: str | list[str] | None = None,
     trail_pct: float = 0.0,
     max_hold: int | None = None,
+    cost_pct: float = 0.0,
 ) -> dict:
     """Crisis stress: a change must survive a high-vol drawdown regime.
 
@@ -499,6 +510,7 @@ def _crisis_backtest(
         apply_cooldown=False,  # stress the stop itself, not re-entry spacing
         trail_pct=trail_pct,
         max_hold=max_hold,
+        cost_pct=cost_pct,
     )
     approved = res["max_dd"] <= CRISIS_DD_LIMIT
     return {
@@ -678,6 +690,8 @@ def backtest_with_history(
     fetch_prices: Callable[[str], list[float]] = _default_fetch,
     bot: str = "forex",
     strict: bool = False,
+    cost_pct: float = 0.0,
+    cost_stress_mult: float = 1.0,
 ) -> dict:
     """7-phase validation of a single parameter change. Returns the verdict dict.
 
@@ -690,11 +704,41 @@ def backtest_with_history(
     data, and clear an absolute risk floor — a marginally-worse or "less bad"
     change is rejected even if the permissive delta gates would pass it.
 
-    Entry simulation applies live BB/RSI/ADX plus session (L04), ensemble (L13),
-    and stop-loss cooldown (L15/L23). Optional ``candle_ts`` / ``ensemble_consensus``
-    refine those gates; when omitted, sessions are synthesized and GP consensus
-    is sampled (fail-soft → neutral).
+    ``cost_pct`` / ``cost_stress_mult``: round-trip cost haircut per trade
+    (Phase 1: re-run with ``cost_stress_mult=2`` for 2× fee stress).
     """
+    eff_cost = max(0.0, float(cost_pct or 0.0) * max(0.0, float(cost_stress_mult or 1.0)))
+    return _backtest_with_history_impl(
+        pair,
+        param,
+        old_val,
+        new_val,
+        strategy=strategy,
+        prices=prices,
+        candle_ts=candle_ts,
+        ensemble_consensus=ensemble_consensus,
+        fetch_prices=fetch_prices,
+        bot=bot,
+        strict=strict,
+        cost_pct=eff_cost,
+    )
+
+
+def _backtest_with_history_impl(
+    pair: str,
+    param: str,
+    old_val: float,
+    new_val: float,
+    *,
+    strategy: dict | None = None,
+    prices: list[float] | None = None,
+    candle_ts: list[float] | None = None,
+    ensemble_consensus: str | list[str] | None = None,
+    fetch_prices: Callable[[str], list[float]] = _default_fetch,
+    bot: str = "forex",
+    strict: bool = False,
+    cost_pct: float = 0.0,
+) -> dict:
     from hermes_core.engines.entry import _entry_rsi_threshold
 
     # KB short-circuit: a previously-rejected proposal is not re-run.
@@ -784,6 +828,7 @@ def backtest_with_history(
         candle_ts=candle_ts,
         ensemble_consensus=ensemble_consensus,
         max_hold=trail_hold,
+        cost_pct=float(cost_pct or 0.0),
     )
 
     phases: dict[str, object] = {}
@@ -824,6 +869,7 @@ def backtest_with_history(
         candle_ts=oos_ts,
         ensemble_consensus=oos_ens,
         max_hold=trail_hold,
+        cost_pct=float(cost_pct or 0.0),
     )
     oos_old = _simulate(
         oos_prices,

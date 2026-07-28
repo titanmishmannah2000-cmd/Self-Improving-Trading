@@ -11,6 +11,9 @@ These four tests ARE the blueprint Phase-1 gate (blueprint Section 7, lines
 Note: the blueprint test block asserts ``pytest.raises(ValidationError)`` while
 the build-target prose says ``raises ValueError``. ValidationError subclasses
 ValueError (see hermes_core/config/schema.py), so both assertions hold.
+
+Profitability Path Phase 0 narrowed live pairs; parked pair strategy seeds are
+still validated via explicit ``bot=``.
 """
 
 from __future__ import annotations
@@ -27,7 +30,8 @@ from hermes_core.config import (
 
 def test_load_valid_forex_config():
     cfg = load_config("forex")
-    assert cfg["pairs"] == ["EUR/USD", "GBP/USD", "GBP/JPY", "AUD/USD"]
+    # Profitability Path Phase 0: EUR + GBP only (GBP/JPY, AUD parked).
+    assert cfg["pairs"] == ["EUR/USD", "GBP/USD"]
 
 
 def test_load_stop_loss_below_min():
@@ -45,25 +49,19 @@ def test_load_gold_config_momentum():
     assert gold["strategy_type"] == "rsi_momentum"  # not "mean_reversion"
 
 
-# --- Discipline extras (beyond the blueprint's 4 tests) ----------------------
-# The blueprint's 4 tests are the gate; these lock the rule-protecting invariants
-# the S1 EXIT GATE calls out (gold never MR; per-pair types; range upper bounds;
-# reflection cadence == 5 per the user override).
-
-
 def test_gold_silver_are_momentum_not_mr():
-    for pair in ("XAU/USD", "XAG/USD"):
-        s = load_strategy_for_pair(pair)
-        assert s["strategy_type"] == "rsi_momentum"
-        assert s["strategy_type"] != "mean_reversion"
+    # XAG strategy seed remains momentum even while parked from gold pairs list.
+    assert load_strategy_for_pair("XAU/USD")["strategy_type"] == "rsi_momentum"
+    assert load_strategy_for_pair("XAG/USD", bot="gold")["strategy_type"] == "rsi_momentum"
 
 
 def test_forex_mr_pairs_load_with_correct_type():
-    for pair in ("EUR/USD", "GBP/USD", "GBP/JPY"):
+    for pair in ("EUR/USD", "GBP/USD"):
         s = load_strategy_for_pair(pair)
         assert s["strategy_type"] == "mean_reversion"
-    aud = load_strategy_for_pair("AUD/USD")
-    assert aud["strategy_type"] == "rsi_momentum"
+    # Parked seeds still load via explicit bot.
+    assert load_strategy_for_pair("GBP/JPY", bot="forex")["strategy_type"] == "mean_reversion"
+    assert load_strategy_for_pair("AUD/USD", bot="forex")["strategy_type"] == "rsi_momentum"
 
 
 def test_crypto_pairs_are_momentum_not_mr():
@@ -76,11 +74,12 @@ def test_crypto_pairs_are_momentum_not_mr():
         assert float(s["position_size_r"]) <= 0.2
 
 
-def test_reflection_every_is_five_per_user_override():
+def test_reflection_every_is_fifteen_profitability_path():
     cfg = load_config("forex")
-    assert cfg["goal"]["reflection_every"] == 5
+    assert cfg["goal"]["reflection_every"] == 15
     gold = load_config("gold")
-    assert gold["goal"]["reflection_every"] == 5
+    assert gold["goal"]["reflection_every"] == 15
+    assert gold["pairs"] == ["XAU/USD"]
 
 
 def test_valid_strategy_passes_validation():

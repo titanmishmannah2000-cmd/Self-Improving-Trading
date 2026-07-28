@@ -1,19 +1,19 @@
 bot:
   name: forex
+# Profitability Path Phase 0: EUR + GBP only (GBP/JPY, AUD parked).
 pairs:
   - EUR/USD
   - GBP/USD
-  - GBP/JPY
-  - AUD/USD
 goal:
   target_return_30d: 5.0
   max_drawdown: 10.0
   min_sharpe: 1.0
   failure_below: -10.0
-  reflection_every: 5          # USER OVERRIDE 2026-07-16: flat 5 (blueprint base cadence; v4 flat-10 retired)
+  # Phase 3: larger batch before reflection (was flat 5).
+  reflection_every: 15
   one_variable_only: true
   gemini_reflection: true
-  gemini_min_trades: 5
+  gemini_min_trades: 15
 # GP invent: daily TF, shorter forward horizon than the old global h=60.
 # Tiny search + cooperative deadline so invent finishes and admits on Railway.
 invent:

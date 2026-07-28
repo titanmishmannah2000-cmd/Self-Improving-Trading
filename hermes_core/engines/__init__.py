@@ -55,6 +55,7 @@ from hermes_core.engines.exit import Exit, evaluate_exit, should_circuit_break
 from hermes_core.engines.exit_intel import apply_exit_intel, exit_intel_enabled
 from hermes_core.engines.expert_weights import (
     EXPERT_TYPES,
+    MIN_N,
     SOFT_SUPPRESS_MULT,
     apply_expert_weight,
     expert_weight,
@@ -224,6 +225,7 @@ __all__ = [
     "PolicyEngine",
     "soft_weights_enabled",
     "EXPERT_TYPES",
+    "MIN_N",
     "SOFT_SUPPRESS_MULT",
     "apply_expert_weight",
     "expert_weight",

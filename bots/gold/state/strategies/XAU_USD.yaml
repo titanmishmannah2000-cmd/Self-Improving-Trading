@@ -1,6 +1,8 @@
 pair: XAU/USD
 version: "00"
 strategy_type: rsi_momentum          # gold MUST be momentum, never mean_reversion (discipline D8 / lesson 4)
+# Profitability Path Phase 1 — primary tunables (≤4): stop, target, RSI threshold, session.
+# Reflection verifier only allows PROFITABILITY_TUNABLES (see reflect_verifier.py).
 entry:
   indicator: rsi
   direction: long

@@ -1499,6 +1499,46 @@ def run_reflection_pipeline(
             "verdict": verdict,
         }
 
+    # Profitability Path Phase 3 — verifier gates (tunables, min trades, OOS, MDD).
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.reflect_verifier import (
+            record_verifier_reject,
+            verify_reflection_candidate,
+        )
+
+        vcheck = verify_reflection_candidate(
+            pair=pair,
+            proposal=prop,
+            verdict=verdict,
+            trades=trades,
+            bot=bot,
+        )
+        if not vcheck.get("ok"):
+            record_verifier_reject(
+                bot,
+                pair,
+                proposal=prop,
+                reason=str(vcheck.get("reason") or "verifier_reject"),
+                details=vcheck.get("details") if isinstance(vcheck.get("details"), dict) else {},
+            )
+            _log_hypothesis(
+                {
+                    **{k: prop.get(k) for k in ("pair", "bot", "variable", "old", "new")},
+                    "status": "verifier_reject",
+                    "reason": vcheck.get("reason"),
+                    "details": vcheck.get("details"),
+                    "ts": __import__("time").time(),
+                }
+            )
+            return {
+                "status": "verifier_reject",
+                "pair": pair,
+                "deployed": False,
+                "proposal": prop,
+                "verdict": verdict,
+                "verifier": vcheck,
+            }
+
     bumped = (verdict.get("phases") or {}).get("phase6_deploy", {}).get("version_bumped")
 
     # Phase 5.3 staged deploy + Phase 5.2 cooldown.

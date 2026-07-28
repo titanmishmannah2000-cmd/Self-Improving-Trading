@@ -141,11 +141,35 @@ def ensure_seeded(bot: str, *, state: dict | None = None) -> dict:
     return st
 
 
-def compute_expectancy(pnls: list[float]) -> float:
-    """Mean % PnL per sample (0.0 when empty)."""
+def compute_expectancy(pnls: list[float], *, cost_pct: float | None = None) -> float:
+    """Mean % PnL per sample after optional round-trip cost haircut (0.0 when empty)."""
     if not pnls:
         return 0.0
-    return sum(float(x) for x in pnls) / len(pnls)
+    c = promote_cost_pct() if cost_pct is None else float(cost_pct)
+    return sum(float(x) - c for x in pnls) / len(pnls)
+
+
+def promote_cost_pct() -> float:
+    """Round-trip cost %% for GP promote expectancy (Phase 4).
+
+    Defaults to 0 when unset (legacy gate math). Set ``GP_PROMOTE_COST_PCT``
+    (or ``SCORECARD_COST_PCT`` as fallback only when GP key is explicitly empty
+    and SCORECARD is set) — prefer an explicit GP key in Railway.
+    """
+    raw = get_env("GP_PROMOTE_COST_PCT", "")
+    if str(raw).strip():
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            return 0.0
+    # Optional shared scorecard haircut when ops set it for the freeze profile.
+    raw2 = get_env("SCORECARD_COST_PCT", "")
+    if str(raw2).strip():
+        try:
+            return max(0.0, float(raw2))
+        except ValueError:
+            return 0.0
+    return 0.0
 
 
 def _in_cooldown(rec: dict, now: float) -> bool:
@@ -224,6 +248,11 @@ def _apply_samples(
             rec["samples"] = merged[-window:]
         rec["n"] = len(rec["samples"])
         rec["expectancy"] = round(compute_expectancy(rec["samples"]), 6)
+        rec["expectancy_raw"] = round(
+            (sum(float(x) for x in rec["samples"]) / len(rec["samples"])) if rec["samples"] else 0.0,
+            6,
+        )
+        rec["cost_pct"] = promote_cost_pct()
 
         new_banned, reason = decide(
             bool(rec.get("banned")),

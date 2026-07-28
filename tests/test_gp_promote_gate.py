@@ -17,6 +17,9 @@ def gate_env(tmp_path, monkeypatch):
     monkeypatch.setenv("GP_PROMOTE_GATE_COOLDOWN_S", "3600")
     monkeypatch.setenv("GP_PROMOTE_GATE_WINDOW", "100")
     monkeypatch.setenv("GP_PROMOTE_GATE_SHADOW_HORIZON_S", "100")
+    # Cost haircut off in unit tests unless a case sets it explicitly.
+    monkeypatch.setenv("GP_PROMOTE_COST_PCT", "")
+    monkeypatch.delenv("SCORECARD_COST_PCT", raising=False)
     return tmp_path
 
 

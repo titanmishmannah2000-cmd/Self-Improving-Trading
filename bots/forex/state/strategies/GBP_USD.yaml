@@ -1,6 +1,7 @@
 pair: GBP/USD
 version: "00"
 strategy_type: mean_reversion
+# Profitability Path Phase 1 — primary tunables (≤4): stop, target, mr_entry_rsi, session.
 entry:
   indicator: rsi
   direction: long

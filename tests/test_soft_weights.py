@@ -5,8 +5,6 @@ from __future__ import annotations
 import pytest
 
 from hermes_core.engines.expert_weights import (
-    EXPLORE_FLOOR,
-    SOFT_SUPPRESS_MULT,
     apply_expert_weight,
     expert_weight,
     pair_expert_weights,
@@ -19,25 +17,27 @@ def test_disabled_is_full_weight():
     assert info["mode"] == "disabled"
 
 
-def test_soft_suppress_shrinks_not_zero():
-    info = expert_weight(enabled=True, suppressed=True, wr=None, evidence_n=10)
-    assert info["suppressed_soft"] is True
-    assert info["weight"] == pytest.approx(SOFT_SUPPRESS_MULT)
-    assert info["weight"] > 0
-
-
 def test_explore_floor_on_thin_evidence():
-    # Extremely low WR would push weight down; thin evidence lifts to explore floor.
+    # Thin evidence → passthrough (Phase 2 Bayesian): no size change until min_n.
     info = expert_weight(enabled=True, suppressed=False, wr=0.0, evidence_n=1)
-    assert info["weight"] >= EXPLORE_FLOOR
-    assert "explore_floor" in info["reasons"] or info["weight"] >= EXPLORE_FLOOR
+    assert info["mode"] == "passthrough"
+    assert info["weight"] == 1.0
+    assert "passthrough" in info["reasons"][0] or info["weight"] == 1.0
+
+
+def test_soft_suppress_shrinks_not_zero():
+    # Need enough evidence so soft suppress applies (not passthrough).
+    info = expert_weight(enabled=True, suppressed=True, wr=0.5, evidence_n=20)
+    assert info["suppressed_soft"] is True
+    assert info["weight"] > 0
+    assert info["weight"] < 1.0
 
 
 def test_apply_scales_size():
-    info = expert_weight(enabled=True, suppressed=True, evidence_n=20)
+    info = expert_weight(enabled=True, suppressed=True, wr=0.5, evidence_n=20)
     out = apply_expert_weight(0.40, info)
-    assert out["size"] == pytest.approx(0.40 * SOFT_SUPPRESS_MULT)
-    assert out["expert_weight"] == pytest.approx(SOFT_SUPPRESS_MULT)
+    assert out["size"] == pytest.approx(0.40 * info["weight"])
+    assert out["expert_weight"] == pytest.approx(info["weight"])
 
 
 def test_pair_expert_weights_marks_suppressed(tmp_path, monkeypatch):
@@ -48,9 +48,9 @@ def test_pair_expert_weights_marks_suppressed(tmp_path, monkeypatch):
     monkeypatch.setattr(dc, "EXILE_PATH", cortex_dir / "indicator_exile.json")
     monkeypatch.setattr(dc, "MEMORY_PATH", cortex_dir / "cortex_memory.json")
     c = dc.Cortex(bot="forex")
-    for _ in range(6):
+    for _ in range(16):
         c.record_outcome("EUR/USD", "mean_reversion", 1.0)
-    for _ in range(6):
+    for _ in range(16):
         c.record_outcome("EUR/USD", "gp_ensemble", -1.0)
 
     weights = pair_expert_weights(
@@ -60,6 +60,7 @@ def test_pair_expert_weights_marks_suppressed(tmp_path, monkeypatch):
         enabled=True,
     )
     assert weights["gp_ensemble"]["suppressed_soft"] is True
+    assert weights["gp_ensemble"]["mode"] == "bayesian"
     assert weights["gp_ensemble"]["weight"] < weights["mean_reversion"]["weight"]
     assert weights["mean_reversion"]["weight"] <= 1.0
 

@@ -27,6 +27,16 @@ class _CortexStub:
     def record_entry(self, pair, entry_type):
         pass
 
+    def evidence_n(self, pair, entry_type):
+        return len([o for o in self.outcomes if o[0] == pair and o[1] == entry_type])
+
+    def entry_type_wr(self, entry_type, pair=None):
+        rows = [o for o in self.outcomes if o[1] == entry_type and (pair is None or o[0] == pair)]
+        if not rows:
+            return None
+        wins = sum(1 for o in rows if o[2] > 0)
+        return wins / len(rows)
+
 
 def _make_pos(entry_type="gp_ensemble"):
     return {
@@ -94,7 +104,12 @@ def _run(reason):
     # The live loop recomputes unrealised_pct each cycle before evaluate_exit.
     pos["unrealised_pct"] = (price - pos["entry_price"]) / pos["entry_price"] * 100.0
     logged = []
-    L._log_trade = lambda bot, rec: logged.append(rec)
+
+    def _capture(bot, rec):
+        logged.append(rec)
+        return True
+
+    L._log_trade = _capture
     L._discovered_indicator_ids = lambda bot, pair: []
     cortex = _CortexStub()
     open_positions = {"EUR/USD": pos}
@@ -164,7 +179,12 @@ def test_partial_close_is_logged_as_real_close():
     pos2["partial_enabled"] = True
     pos2["unrealised_pct"] = (price - 1.0) / 1.0 * 100.0
     logged = []
-    L._log_trade = lambda b, r: logged.append(r)
+
+    def _capture2(b, r):
+        logged.append(r)
+        return True
+
+    L._log_trade = _capture2
     L._discovered_indicator_ids = lambda b, p: []
     cortex = _CortexStub()
     op = {"EUR/USD": pos2}

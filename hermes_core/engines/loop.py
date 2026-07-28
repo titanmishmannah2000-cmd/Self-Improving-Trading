@@ -549,6 +549,25 @@ def _process_exit(
                     for ind_id in _credited:
                         gpi.update_indicator(registry, ind_id, float(pnl), regime)
                     _save_discovered(pair, registry)
+        # Phase 5 — refresh regime-decay votes from cortex WR + recent DD proxy.
+        with contextlib.suppress(Exception):
+            from hermes_core.engines.regime_decay import regime_decay_enabled, update_pair_decay
+
+            if regime_decay_enabled():
+                n = int(cortex.evidence_n(pair, _record_type) or 0)
+                wr = cortex.entry_type_wr(_record_type, pair=pair)
+                wins = int(round(float(wr or 0.0) * n)) if n else 0
+                losses = max(0, n - wins)
+                live_dd = abs(min(0.0, float(pnl)))
+                bt_mdd = float((goal or {}).get("max_drawdown") or 10.0)
+                update_pair_decay(
+                    bot,
+                    pair,
+                    wins=wins,
+                    losses=losses,
+                    live_dd=live_dd,
+                    backtest_mdd=bt_mdd,
+                )
     # [S18] Discord/webhook alert on real trade close (fail-soft)
     if alert_fn is not None:
         with contextlib.suppress(Exception):
@@ -2006,6 +2025,17 @@ def run_cycle(
                 _log_skip(bot, pair, cycle, f"policy_suppress:{_etype}")
                 summary["skips"] += 1
                 continue
+            # Phase 5 — regime decay 2-of-3 suppress (new entries only).
+            with contextlib.suppress(Exception):
+                from hermes_core.engines.regime_decay import (
+                    is_pair_suppressed,
+                    regime_decay_enabled,
+                )
+
+                if regime_decay_enabled() and is_pair_suppressed(bot, pair):
+                    _log_skip(bot, pair, cycle, "regime_decay_suppress")
+                    summary["skips"] += 1
+                    continue
             # RR guard (S6) — reject R:R < 1.0 before committing
             sl = float(strategy["stop_loss_pct"])
             tp = float(strategy["profit_target_pct"])
@@ -2057,6 +2087,14 @@ def run_cycle(
                 evidence_n=_evidence_n,
             )
             size = float(_probe["size"])
+            # Phase 5 micro-live: scale all new sizes when MICRO_LIVE=1.
+            with contextlib.suppress(Exception):
+                if get_env("MICRO_LIVE", "0") == "1":
+                    try:
+                        _ml = float(get_env("MICRO_LIVE_SIZE_MULT", "0.25"))
+                    except ValueError:
+                        _ml = 0.25
+                    size = round(max(0.0, size * max(0.0, min(1.0, _ml))), 6)
             # Chart soft size tilt (downtrend / wait-for-pullback) — never a veto.
             _chart_size_mult = 1.0
             _chart_soft_reasons: list = []

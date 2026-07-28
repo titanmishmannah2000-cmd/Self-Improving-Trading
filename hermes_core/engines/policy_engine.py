@@ -107,6 +107,8 @@ class Policy:
                         "suppressed_soft": info.get("suppressed_soft"),
                         "evidence_n": info.get("evidence_n"),
                         "wr": info.get("wr"),
+                        "retired": info.get("retired"),
+                        "p_below_be": info.get("p_below_be"),
                         "reasons": info.get("reasons"),
                     }
                     for et, info in (types or {}).items()
@@ -192,6 +194,7 @@ class PolicyEngine:
 
         soft = soft_weights_enabled()
         allocation: dict[str, dict] = {}
+        bot_for_save = getattr(cortex, "_bot", None) or current_bot()
         for pair in pairs:
             try:
                 allocation[pair] = pair_expert_weights(
@@ -199,6 +202,8 @@ class PolicyEngine:
                     cortex,
                     suppressions.get(pair, set()),
                     enabled=soft,
+                    bot=bot_for_save,
+                    log=soft,
                 )
             except Exception:  # noqa: BLE001 — never break policy on alloc
                 allocation[pair] = {}
@@ -213,7 +218,6 @@ class PolicyEngine:
             priority_discovery_pairs=handoff_pairs,
         )
         # Persist under the cortex bot — never current_bot() alone (CLI/env mismatch).
-        bot_for_save = getattr(cortex, "_bot", None) or current_bot()
         _save_policy(policy.to_dict(), bot_for_save)
         return policy
 
