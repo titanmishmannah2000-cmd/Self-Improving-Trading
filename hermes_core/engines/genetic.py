@@ -38,6 +38,7 @@ import math
 import random
 import re as _re
 import statistics
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -910,24 +911,35 @@ def _evolve_one_generation(
     pop_size: int,
     *,
     use_lexicase: bool = True,
+    deadline: float | None = None,
 ) -> list:
     """One generation: elitist keep + ε-lexicase breeding + constant polish."""
     scored = []
     for expr in pop:
+        if deadline is not None and time.time() >= float(deadline):
+            break
         try:
             fit = _fitness_with_penalty(expr, prices, horizon)
         except Exception:
             fit = 0.0
         scored.append((fit, expr))
+    if not scored:
+        return list(pop)[: max(1, pop_size)]
     scored.sort(key=lambda x: x[0], reverse=True)
     keep = max(3, pop_size // 10)
     survivors = [s[1] for s in scored[:keep]]
     new_pop = list(survivors)
 
     case_mat = None
-    if use_lexicase and LEXICASE_CASES > 0:
+    if (
+        use_lexicase
+        and LEXICASE_CASES > 0
+        and (deadline is None or time.time() < float(deadline) - 1.0)
+    ):
         case_mat = _case_fitness_matrix(pop, prices, horizon, LEXICASE_CASES)
     while len(new_pop) < pop_size:
+        if deadline is not None and time.time() >= float(deadline):
+            break
         if case_mat is not None:
             parent = _epsilon_lexicase_select(pop, case_mat, rng)
             donor = _epsilon_lexicase_select(pop, case_mat, rng)
@@ -942,6 +954,9 @@ def _evolve_one_generation(
         if _complexity(child) > MAX_EXPR_COMPLEXITY:
             child = _random_expr(rng, 2)
         new_pop.append(child)
+    # Pad if we cut short on deadline so callers still get a full-ish pop.
+    while len(new_pop) < max(keep, min(pop_size, len(survivors) + 1)):
+        new_pop.append(copy.deepcopy(rng.choice(survivors)))
     return new_pop
 
 
@@ -952,19 +967,28 @@ def _evolve_population(
     horizon: int,
     rng: random.Random,
     n_islands: int | None = None,
+    *,
+    deadline: float | None = None,
 ) -> list[object]:
     """Island GA on `prices`. Total pop ≈ pop_size split across islands.
 
     Elitist survival per island, periodic migration of top elites. Returns the
     combined final population (canonicalized). Lexicase runs every other
     generation to stay inside live discovery timeouts.
+
+    ``deadline`` is a wall-clock epoch; when set, evolution stops early so
+    admission can still run before the invent hard-timeout abandons the worker.
     """
     n_islands = max(1, int(n_islands if n_islands is not None else N_ISLANDS_DEFAULT))
     per = max(8, pop_size // n_islands)
     islands = [[_random_expr(rng, 2) for _ in range(per)] for _ in range(n_islands)]
     for gen in range(generations):
+        if deadline is not None and time.time() >= float(deadline):
+            break
         use_lex = gen % 2 == 0
         for i in range(n_islands):
+            if deadline is not None and time.time() >= float(deadline):
+                break
             islands[i] = _evolve_one_generation(
                 islands[i],
                 prices,
@@ -972,6 +996,7 @@ def _evolve_population(
                 rng,
                 per,
                 use_lexicase=use_lex,
+                deadline=deadline,
             )
         if n_islands > 1 and MIGRATE_EVERY > 0 and (gen + 1) % MIGRATE_EVERY == 0:
             for i in range(n_islands):
@@ -1056,6 +1081,7 @@ def discover(
     n_islands: int | None = None,
     interval: str = "1d",
     write_token: int | None = None,
+    deadline: float | None = None,
 ) -> list[dict]:
     """Evolve and admit indicators for `pair` (Phase B superior GP).
 
@@ -1069,6 +1095,9 @@ def discover(
 
     ``write_token`` fences disk writes so an abandoned invent after timeout
     cannot clobber a newer invent pass.
+
+    ``deadline`` is a wall-clock epoch; evolution stops early so gating/admit
+    can finish before the invent hard-timeout abandons the worker.
     """
     rng = random.Random(seed)
     prices = list(prices)
@@ -1132,7 +1161,21 @@ def discover(
         return []
 
     # 1) Evolve on TRAIN (islands + lexicase + constant polish).
-    pop = _evolve_population(train, pop_size, generations, horizon, rng, n_islands=n_islands)
+    # Leave wall-clock for OOS gating + S10 so we admit instead of hard-timeout.
+    evo_deadline = None
+    if deadline is not None:
+        evo_deadline = float(deadline) - 45.0
+        if evo_deadline <= time.time():
+            evo_deadline = time.time() + 15.0
+    pop = _evolve_population(
+        train,
+        pop_size,
+        generations,
+        horizon,
+        rng,
+        n_islands=n_islands,
+        deadline=evo_deadline,
+    )
 
     # 2) Gate unique candidates on held-out TEST; fill MAP-Elites archive.
     candidates: list[dict] = []
@@ -1153,6 +1196,9 @@ def discover(
         "duplicate_key": 0,
     }
     for idx, raw in enumerate(pop):
+        # Leave time for sequential S10 admits before invent hard-timeout.
+        if deadline is not None and time.time() >= float(deadline) - 25.0:
+            break
         n_eval += 1
         expr = _canonicalize(raw)
         # Polish constants on TRAIN (cheap local search), then evaluate on TEST.
@@ -1172,8 +1218,11 @@ def discover(
             if oos < OOS_FLOOR:
                 rejects["oos_floor"] += 1
                 continue
+            n_perm = 200
+            if deadline is not None and time.time() >= float(deadline) - 70.0:
+                n_perm = 60
             p_val, _real_c, null_mean = _permutation_pvalue(
-                sig_test, test, horizon, n_perm=200, seed=seed
+                sig_test, test, horizon, n_perm=n_perm, seed=seed
             )
             if p_val >= PERM_PVALUE_FLOOR:
                 rejects["perm"] += 1
@@ -1379,7 +1428,7 @@ def discover(
                 by_key.values(),
                 key=lambda x: float(x.get("oos_corr") or 0),
                 reverse=True,
-            )[: max(top_k, 10)]
+            )[: max(int(top_k), 15)]
             _save_discovered(pair, merged, write_token=write_token)
             admitted = merged
         except Exception:  # noqa: BLE001

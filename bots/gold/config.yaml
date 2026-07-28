@@ -12,16 +12,15 @@ goal:
   one_variable_only: true
   gemini_reflection: true
   gemini_min_trades: 5
-# GP invent: daily TF, medium forward horizon. Sized to finish inside
-# timeout_s on Railway (300s budgets were chronically timing out).
+# GP invent: daily TF, medium forward horizon. Tiny search so invent finishes.
 invent:
   interval: 1d
   period: 2y
   horizon: 20
-  generations: 18
-  pop_size: 24
+  generations: 12
+  pop_size: 20
   n_islands: 1
-  timeout_s: 420
+  timeout_s: 240
 global:
   dashboard_url: ${DASHBOARD_API_URL}
   discord_webhook: ${DISCORD_ALERTS_WEBHOOK}

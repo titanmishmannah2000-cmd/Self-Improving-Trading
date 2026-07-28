@@ -126,6 +126,27 @@ def test_discovery_pulse_persisted():
         assert inds[0].get("niche_key") or inds[0].get("niche")
 
 
+def test_evolve_respects_deadline():
+    """Evolution must stop early so invent can admit before hard-timeout."""
+    import time
+
+    prices = _structured(400)
+    rng = random.Random(1)
+    t0 = time.time()
+    pop = gp._evolve_population(
+        prices,
+        pop_size=24,
+        generations=200,
+        horizon=1,
+        rng=rng,
+        n_islands=1,
+        deadline=t0 + 0.15,
+    )
+    elapsed = time.time() - t0
+    assert pop  # still returns a population
+    assert elapsed < 2.0
+
+
 def test_niche_map_from_indicators():
     inds = [
         {

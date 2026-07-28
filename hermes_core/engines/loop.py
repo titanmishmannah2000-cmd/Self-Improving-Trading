@@ -114,7 +114,8 @@ DISCOVERY_TIMEOUT_COOLDOWN_S = int(get_env("DISCOVERY_TIMEOUT_COOLDOWN_S", "3600
 DISCOVERY_ADMIT_ZERO_ALERT_AFTER = int(get_env("DISCOVERY_ADMIT_ZERO_ALERT_AFTER", "5"))
 # After hard-timeout abandon, wait this long for the zombie invent thread to
 # finish before starting the next pair (prevents stacking GP workers → more timeouts).
-DISCOVERY_ABANDON_DRAIN_S = int(get_env("DISCOVERY_ABANDON_DRAIN_S", "900"))
+# Keep short: write_token already fences late disk writes.
+DISCOVERY_ABANDON_DRAIN_S = int(get_env("DISCOVERY_ABANDON_DRAIN_S", "90"))
 _DISCOVERY_LAST: dict[tuple[str, str], float] = {}  # (bot, pair) -> last pass epoch
 _DISCOVERY_LAST_INVENT: dict[tuple[str, str], float] = {}  # (bot, pair) -> last full invent
 # Per-bot wall-clock of last discovery pass (any outcome) — surfaces on heartbeat
@@ -1194,6 +1195,8 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
             interval=str(prof["interval"]),
             seed=int(invent_seed),
             write_token=write_token,
+            # Finish admit before invent hard-timeout abandons the worker.
+            deadline=time.time() + max(45, int(timeout_s) - 15),
         )
         _DISCOVERY_LAST_INVENT[key] = time.time()
         _note_invent_finished(len(inds), write_token=write_token)
@@ -1220,7 +1223,7 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
                     by_key.values(),
                     key=lambda x: float(x.get("oos_corr") or 0),
                     reverse=True,
-                )[:10]
+                )[:15]
                 _save_discovered(pair, merged, write_token=write_token)
                 inds = merged
             except Exception:  # noqa: BLE001 — keep discover()'s write on merge failure
