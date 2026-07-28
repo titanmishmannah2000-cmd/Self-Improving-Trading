@@ -37,7 +37,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
-FOREX_PAIRS = ["EUR/USD", "GBP/USD", "AUD/USD", "GBP/JPY"]
+# Focus universe (Profitability Path Phase 0) — parked pairs stay in history only.
+FOREX_PAIRS = ["EUR/USD", "GBP/USD"]
 
 # ── Quarantine: trades contaminated by known bugs (kept in raw data, excluded
 # from WR/PnL aggregates, score guard, reflection). XAG/USD 2026-07-10/11 were
@@ -944,6 +945,14 @@ def row_to_trade(r) -> dict:
     raw["exit_reason"] = r["exit_reason"]
     raw["hold_cycles"] = r["hold_cycles"]
     return raw
+
+
+@app.get("/api/profitability-health")
+def profitability_health():
+    """Watcher strip: OK / WARN / FAIL for freeze, feeds, and Phase 1 scorecard."""
+    from profitability_health import build_profitability_health
+
+    return build_profitability_health(get_conn=get_conn, bots=("forex", "gold", "crypto"))
 
 
 @app.get("/api/overview")

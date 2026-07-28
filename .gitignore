@@ -28,6 +28,7 @@ htmlcov/
 # IDE / OS
 .idea/
 .vscode/
+.cursor/
 *.swp
 .DS_Store
 Thumbs.db
@@ -47,3 +48,27 @@ node_modules/
 
 # yfinance persistent cache (S19) — local Yahoo cookie/tz cache, never committed
 .cache/
+
+# Local API dumps / agent snips (never commit)
+/pulse_*.json
+/skip_*.json
+/rh_*.json
+/streak_*.json
+/ov.json
+/lt.json
+/dy.json
+/daily.json
+/lifetime.json
+/overview.json
+/fx_trades.json
+/refl_*.json
+/cv_*.json
+/_*.txt
+/_*.json
+/structure.txt
+
+# Cortex rotation backups + local halt latches
+**/*.bak-*
+**/state/halt
+**/state/archive/
+dashboard_backup_*/

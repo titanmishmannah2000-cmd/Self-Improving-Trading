@@ -80,18 +80,24 @@ function getMarketCountdown(marketClosed) {
 
 
 const PAIR_META = {
-  // Forex
+  // Forex — focus universe (AUD/GBPJPY parked)
   "EUR/USD":  { bot: "forex", color: "#D4745C", timezone: "London/NY", plain: "Euro vs US Dollar" },
   "GBP/USD":  { bot: "forex", color: "#c9a36a", timezone: "London/NY", plain: "British Pound vs US Dollar" },
-  "AUD/USD":  { bot: "forex", color: "#5B7C99", timezone: "Sydney/Tokyo", plain: "Australian Dollar vs US Dollar" },
-  "GBP/JPY":  { bot: "forex", color: "#9B6B9E", timezone: "London/Tokyo", plain: "British Pound vs Japanese Yen" },
-  // Commodities
+  // Commodities — gold focus (silver parked)
   "XAU/USD":  { bot: "gold", color: "#D4AF37", timezone: "24h", plain: "Gold" },
-  "XAG/USD":  { bot: "gold", color: "#C0C0C0", timezone: "24h", plain: "Silver" },
   // Crypto
   "BTC/USD":  { bot: "crypto", color: "#F7931A", timezone: "24h", plain: "Bitcoin" },
   "ETH/USD":  { bot: "crypto", color: "#627EEA", timezone: "24h", plain: "Ethereum" },
 };
+
+/** Parked pairs kept only for plain-language lookups on old trades. */
+const PARKED_PAIR_META = {
+  "AUD/USD":  { bot: "forex", color: "#5B7C99", timezone: "Sydney/Tokyo", plain: "Australian Dollar vs US Dollar" },
+  "GBP/JPY":  { bot: "forex", color: "#9B6B9E", timezone: "London/Tokyo", plain: "British Pound vs Japanese Yen" },
+  "XAG/USD":  { bot: "gold", color: "#C0C0C0", timezone: "24h", plain: "Silver" },
+};
+
+const ALL_PAIR_META = { ...PAIR_META, ...PARKED_PAIR_META };
 
 const BOT_PLAIN = { forex: "Forex bot", gold: "Gold bot", crypto: "Crypto bot" };
 
@@ -479,7 +485,7 @@ function botHasPipelineGap(botName, overview) {
 
 function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPaused, livePrice }) {
   const { isWatcher } = useUiMode();
-  const meta = PAIR_META[pair] || {};
+  const meta = ALL_PAIR_META[pair] || {};
   // Live opens come ONLY from recent_open_trades (data.openTrades). Never treat
   // a closed-history row missing exit_reason as an open — that caused cards to
   // show "in trade" / GP Brain while PortfolioPulse counted fewer opens.
@@ -803,7 +809,7 @@ function SparkChart({ pair, meta }) {
 
         <details open={!isWatcher}>
           <summary>What am I looking at?</summary>
-          <p>This chart shows the closing price of {PAIR_META[pair]?.plain || pair} every 5 minutes — like a heartbeat monitor for the market.</p>
+          <p>This chart shows the closing price of {ALL_PAIR_META[pair]?.plain || pair} every 5 minutes — like a heartbeat monitor for the market.</p>
           <p>Rising line → buyers in control. Falling line → sellers pushing down. Flat → indecision.</p>
         </details>
 
@@ -854,7 +860,7 @@ function DetailPanel({ pair, botData, strategyParams, lastSkip }) {
   useEffect(() => {
     if (!pair) return;
     setShowNumbers(!isWatcher);
-    const bot = PAIR_META[pair]?.bot || "forex";
+    const bot = ALL_PAIR_META[pair]?.bot || "forex";
     fetch(`${API_BASE}/api/per-version/${bot}?pair=${encodeURIComponent(pair)}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => setVersions(d?.versions || null))
@@ -872,7 +878,7 @@ function DetailPanel({ pair, botData, strategyParams, lastSkip }) {
     );
   }
 
-  const meta = PAIR_META[pair];
+  const meta = ALL_PAIR_META[pair];
   const trades = (botData?.recent_trades || []).filter((t) => (t.pair || t.asset) === pair);
   const openTrades = (botData?.recent_open_trades || []).filter((t) => (t.asset || t.pair) === pair);
   // Live open = recent_open_trades only. Closed history = exit_reason present.
@@ -1354,7 +1360,7 @@ function DetailPanel({ pair, botData, strategyParams, lastSkip }) {
       {maximized && (
         <DetailFullscreen
           pair={pair}
-          botName={PAIR_META[pair]?.bot || "forex"}
+          botName={ALL_PAIR_META[pair]?.bot || "forex"}
           onClose={() => setMaximized(false)}
         />
       )}
@@ -1650,7 +1656,7 @@ function ChartAnalysis({ apiBase, initialBot = "forex" }) {
           )}
           <div className="ca-grid">
             {(data.pairs || []).map((row) => {
-              const meta = PAIR_META[row.pair] || {};
+              const meta = ALL_PAIR_META[row.pair] || {};
               const open = expanded === row.pair;
               return (
                 <div className="ca-card" key={row.pair}>
@@ -1858,7 +1864,7 @@ function ActivityFeed({ overview }) {
     const botLabel = isWatcher ? (BOT_PLAIN[botName] || botName) : botName;
     for (const t of bot.recent_trades || []) {
       const pair = t.pair || t.asset;
-      const pairLabel = isWatcher ? (PAIR_META[pair]?.plain || pair) : pair;
+      const pairLabel = isWatcher ? (ALL_PAIR_META[pair]?.plain || pair) : pair;
       const etype = t.entry_type || t.strategy_version || "";
       if (t.exit_reason) {
         events.push({
@@ -1875,7 +1881,7 @@ function ActivityFeed({ overview }) {
     for (const t of bot.recent_open_trades || []) {
       const pair = t.pair || t.asset;
       if (!pair) continue;
-      const pairLabel = isWatcher ? (PAIR_META[pair]?.plain || pair) : pair;
+      const pairLabel = isWatcher ? (ALL_PAIR_META[pair]?.plain || pair) : pair;
       const etype = t.entry_type || "entry";
       const mode = t.size_mode === "probe" ? "probe" : (t.size_mode === "full" ? "full" : "");
       events.push({
@@ -1891,7 +1897,7 @@ function ActivityFeed({ overview }) {
     for (const s of (bot.recent_skips || []).slice(-30)) {
       const reason = s.reason_skipped || s.reason;
       const pair = s.pair || "?";
-      const pairLabel = isWatcher ? (PAIR_META[pair]?.plain || pair) : pair;
+      const pairLabel = isWatcher ? (ALL_PAIR_META[pair]?.plain || pair) : pair;
       events.push({
         ts: s.ts,
         type: "skip",
@@ -1915,8 +1921,8 @@ function ActivityFeed({ overview }) {
         bot: botName,
         text: isWatcher
           ? (isSkipShadow
-            ? `${botLabel} noted a quiet-market lesson for ${PAIR_META[pair]?.plain || pair}`
-            : `${botLabel} adjusted settings for ${PAIR_META[pair]?.plain || pair}`)
+            ? `${botLabel} noted a quiet-market lesson for ${ALL_PAIR_META[pair]?.plain || pair}`
+            : `${botLabel} adjusted settings for ${ALL_PAIR_META[pair]?.plain || pair}`)
           : (isSkipShadow
             ? `Skip/shadow (${botName}/${pair}): ${h.reason || status}`
             : `Reflection (${botName}/${pair}): ${h.variable || "?"} ${safeVal(oldV)} → ${safeVal(newV)}`),
@@ -1960,6 +1966,116 @@ function ActivityFeed({ overview }) {
 }
 
 // ───────────────────────── Portfolio pulse ─────────────────────────
+
+function ProfitabilityHealthPanel({ apiBase }) {
+  const { isWatcher } = useUiMode();
+  const { data, error, loading } = useJson(`${apiBase}/api/profitability-health`, { pollMs: 30000 });
+  const [copied, setCopied] = useState(false);
+
+  if (loading && !data) {
+    return (
+      <div className="ph-panel ph-loading" role="status" data-tour="profitability-health">
+        <div className="ph-label">{isWatcher ? "System check" : "Profitability health"}</div>
+        <div className="ph-headline">Checking freeze, prices, and scorecard…</div>
+      </div>
+    );
+  }
+  if (error && !data) {
+    return (
+      <div className="ph-panel ph-fail" role="alert" data-tour="profitability-health">
+        <div className="ph-label">{isWatcher ? "System check" : "Profitability health"}</div>
+        <div className="ph-headline">Could not load health — tell Auto the dashboard health API failed ({error}).</div>
+      </div>
+    );
+  }
+  if (!data) return null;
+
+  const level = data.level || "warn";
+  const bots = data.bots || {};
+  const reportLines = data.what_to_report || [];
+  const copyText = reportLines.length
+    ? `Dashboard profitability health: ${level.toUpperCase()}\n${reportLines.map((l) => `• ${l}`).join("\n")}`
+    : `Dashboard profitability health: OK`;
+
+  const copyReport = async () => {
+    try {
+      await navigator.clipboard.writeText(copyText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const levelWord = level === "ok" ? "OK" : level === "warn" ? "ATTENTION" : "PROBLEM";
+  const scoreLabel = (sc) => {
+    if (!sc) return "—";
+    if (sc.verdict === "waiting") return `waiting (${sc.n || 0}/${data.phase1_min_n || 20} trades)`;
+    if (sc.verdict === "continue") return `edge OK · exp ${sc.expectancy}`;
+    if (sc.verdict === "kill") return `weak edge · exp ${sc.expectancy}`;
+    return sc.verdict;
+  };
+
+  return (
+    <div
+      className={`ph-panel ph-${level}`}
+      role={level === "ok" ? "status" : "alert"}
+      aria-live="polite"
+      data-tour="profitability-health"
+    >
+      <div className="ph-top">
+        <div>
+          <div className="ph-label">{isWatcher ? "System check" : "Profitability health"}</div>
+          <div className="ph-headline">
+            <span className={`ph-badge ph-badge-${level}`}>{levelWord}</span>
+            {data.headline}
+          </div>
+          {isWatcher && level === "ok" && (
+            <p className="ph-hint">Green means you can close the dashboard — nothing to report.</p>
+          )}
+          {isWatcher && level !== "ok" && (
+            <p className="ph-hint">Copy the report below and paste it to Auto.</p>
+          )}
+        </div>
+        {level !== "ok" && (
+          <button type="button" className="ph-copy" onClick={copyReport}>
+            {copied ? "Copied" : "Copy report for Auto"}
+          </button>
+        )}
+      </div>
+
+      <div className="ph-bots">
+        {["forex", "gold", "crypto"].map((bot) => {
+          const b = bots[bot] || {};
+          const bl = b.level || "fail";
+          const freezeOk = b.freeze?.ok;
+          const age = b.heartbeat_age_s;
+          const ageTxt = age == null ? "no heartbeat" : age < 60 ? "fresh" : `${Math.round(age / 60)}m ago`;
+          return (
+            <div key={bot} className={`ph-bot ph-bot-${bl}`}>
+              <div className="ph-bot-head">
+                <span className="ph-bot-name">{BOT_PLAIN[bot] || bot}</span>
+                <span className={`ph-pill ph-pill-${bl}`}>{bl === "ok" ? "OK" : bl === "warn" ? "Warn" : "Fail"}</span>
+              </div>
+              <ul className="ph-bot-facts">
+                <li>Freeze: {freezeOk ? "BOOK_RISK only" : b.freeze?.missing_hif ? "not reported yet" : "broken"}</li>
+                <li>Heartbeat: {ageTxt}</li>
+                <li>Scorecard: {scoreLabel(b.scorecard)}</li>
+              </ul>
+              {(b.issues || []).length > 0 && (
+                <ul className="ph-bot-issues">
+                  {b.issues.map((iss, i) => (
+                    <li key={i} className={`ph-iss-${iss.level}`}>{iss.message}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function StatusHero({ overview, marketClosed, botStatus }) {
   const { isWatcher } = useUiMode();
@@ -3246,7 +3362,7 @@ export default function App() {
     const skips = bot.recent_skips || [];
     const openTrades = bot.recent_open_trades || [];
     for (const pair of Object.keys(PAIR_META)) {
-      if (PAIR_META[pair].bot !== botName) continue;
+      if (ALL_PAIR_META[pair]?.bot !== botName) continue;
       // Closed history only — never merge no-exit ghosts into "open".
       const pTrades = trades.filter((t) => (t.pair || t.asset) === pair && t.exit_reason);
       const pOpen = openTrades.filter((t) => (t.asset || t.pair) === pair);
@@ -3260,7 +3376,7 @@ export default function App() {
     }
   }
 
-  const selectedBotName = selectedPair ? PAIR_META[selectedPair]?.bot : null;
+  const selectedBotName = selectedPair ? ALL_PAIR_META[selectedPair]?.bot : null;
   const selectedBotData = selectedBotName ? overview?.bots?.[selectedBotName] : null;
 
   if (mode === "loading") return <div className="auth-screen"><div className="auth-spinner" /></div>;
@@ -3344,14 +3460,17 @@ export default function App() {
           {!overview ? (
             <SkeletonPortfolio />
           ) : (
-            <StatusHero overview={overview} marketClosed={marketClosed} botStatus={botStatus} />
+            <>
+              <ProfitabilityHealthPanel apiBase={API_BASE} />
+              <StatusHero overview={overview} marketClosed={marketClosed} botStatus={botStatus} />
+            </>
           )}
 
           <section className={`bot-section ${tourStep === 1 ? "tour-highlight-section" : ""}`} data-tour="cards">
             <BotToggle botName="forex" label={isWatcher ? "Currencies" : "Foreign Exchange"} staleDays={overview?.bots?.forex?.live_indicators?.discovery_stale_days} />
             <div className="cards-grid" role="list" aria-label="Forex pairs">
               {!overview ? (
-                Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
+                Array.from({ length: 2 }).map((_, i) => <SkeletonCard key={i} />)
               ) : (
                 Object.entries(PAIR_META).filter(([,m]) => m.bot === "forex").map(([pair]) => (
                 <PairCard
@@ -3373,7 +3492,7 @@ export default function App() {
             <BotToggle botName="gold" label={isWatcher ? "Metals" : "Gold"} staleDays={overview?.bots?.gold?.live_indicators?.discovery_stale_days} />
             <div className="cards-grid" role="list" aria-label="Gold pairs">
               {!overview ? (
-                Array.from({ length: 2 }).map((_, i) => <SkeletonCard key={i} />)
+                Array.from({ length: 1 }).map((_, i) => <SkeletonCard key={i} />)
               ) : (
                 Object.entries(PAIR_META).filter(([,m]) => m.bot === "gold").map(([pair]) => (
                 <PairCard

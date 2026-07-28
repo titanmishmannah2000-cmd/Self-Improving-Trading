@@ -50,6 +50,7 @@ def test_quick_test():
         "/api/bot/forex/pulse",
         "/api/alerts",
         "/api/auth/status",
+        "/api/profitability-health",
     ],
 )
 def test_core_get_endpoints(ep):
