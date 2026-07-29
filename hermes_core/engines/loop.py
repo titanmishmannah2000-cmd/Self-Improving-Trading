@@ -1827,6 +1827,8 @@ def run_cycle(
                 reentry=reentry,
                 current_cycle=cycle,
                 session_token=session_token,
+                regime=regimes.get(pair) or ind.get("regime"),
+                bot=bot,
             )
             gp_sig = None
             # GP promote gate: expectancy-driven per-pair ban/unban (seeds from
@@ -1943,12 +1945,37 @@ def run_cycle(
             else:
                 sig = trad_sig if trad_sig is not None else gp_sig
 
-            # L14 capital veto applies to GP promote too (traditional already
-            # filtered in evaluate_entry). Bare downtrend is soft-only.
-            if sig is not None and hard_block(context):
-                _log_skip(bot, pair, cycle, "no_signal:chart:hard_block")
-                summary["skips"] += 1
-                continue
+            # L14 capital veto: sleeve-aware when REGIME_SPLIT is on (MR vs trend).
+            # GP promote still uses legacy avoid veto (unproven sleeve).
+            if sig is not None:
+                _etype_pre = (
+                    sig.meta.get("entry_type") or getattr(sig, "type", None) or "mean_reversion"
+                )
+                _block = False
+                try:
+                    from hermes_core.engines.regime_split import (
+                        chart_blocks_sleeve,
+                        classify_market,
+                        regime_split_enabled,
+                    )
+
+                    if regime_split_enabled(bot=bot, strategy=strategy) and _etype_pre != "gp_ensemble":
+                        _mkt = classify_market(
+                            adx=(ind or {}).get("adx"),
+                            regime=regimes.get(pair) or (ind or {}).get("regime"),
+                            context=context,
+                        )
+                        _block = chart_blocks_sleeve(
+                            context, sleeve=str(_etype_pre), market=_mkt
+                        )
+                    else:
+                        _block = hard_block(context)
+                except Exception:  # noqa: BLE001
+                    _block = hard_block(context)
+                if _block:
+                    _log_skip(bot, pair, cycle, "no_signal:chart:hard_block")
+                    summary["skips"] += 1
+                    continue
             # GP signals never pass through evaluate_entry — stamp soft chart tilt.
             if sig is not None and "chart_quality_mult" not in (sig.meta or {}):
                 apply_chart_soft_to_signal(sig, context)
@@ -1975,7 +2002,19 @@ def run_cycle(
                 if _skip == "no_signal":
                     _skip = "no_signal"
                 elif not _skip.startswith(
-                    ("session", "rsi", "vol", "quality", "chart", "cooldown", "ensemble", "other")
+                    (
+                        "session",
+                        "rsi",
+                        "vol",
+                        "quality",
+                        "chart",
+                        "cooldown",
+                        "ensemble",
+                        "other",
+                        "regime",
+                        "trend",
+                        "cost",
+                    )
                 ):
                     _skip = f"no_signal:{_skip}"
                 else:

@@ -13,7 +13,8 @@ Guards enforced here (tagged so tools/verify_guard_tags.py can find them):
   L18  multi-pair confluence — RSI-momentum needs >= min_oversold_pairs
        (YAML entry.min_oversold_pairs; default 1 after Phase-1 gate relaxation)
   L23  stop-loss cooldown — a stop-loss exit blocks re-entry for 30 cycles
-  L14  chart hard-block — recommendation containing "avoid" -> skip (capital veto)
+  L14  chart hard-block — recommendation containing "avoid" -> skip (capital veto);
+       with REGIME_SPLIT, avoid is sleeve-aware (MR vs trend_follow)
   L16  chart soft-filter — context containing "sell" + low quality (<5) -> skip;
        gray-zone downtrend / wait-for-pullback haircut quality (not skip)
 """
@@ -23,6 +24,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from hermes_core.engines.chart_vision import apply_chart_soft_to_signal, hard_block, soft_block
+from hermes_core.engines.regime_split import (
+    chart_blocks_sleeve,
+    classify_market,
+    cost_aware_ok,
+    pick_sleeve,
+    regime_split_enabled,
+)
 from hermes_core.indicators import compute_all
 
 # Session tokens resolved upstream by _get_session(): LDN/NY/ASIA/OTHER/LDN_NY.
@@ -42,7 +50,7 @@ REENTRY_COOLDOWN_CYCLES = 30  # L15 / L23
 
 @dataclass
 class Signal:
-    type: str  # "mean_reversion" | "rsi_momentum"
+    type: str  # "mean_reversion" | "rsi_momentum" | "trend_follow"
     quality: float  # 0..1 composite quality score
     size: float  # position size fraction (from strategy)
     pair: str = ""
@@ -149,6 +157,9 @@ def evaluate_entry(
     reentry: dict | None = None,
     current_cycle: int = 0,
     session_token: str = "LDN",
+    regime: str | None = None,
+    bot: str | None = None,
+    cost_pct: float | None = None,
 ) -> Signal | None:
     """Evaluate a single entry. Returns a Signal or None.
 
@@ -167,6 +178,9 @@ def evaluate_entry(
         reentry=reentry,
         current_cycle=current_cycle,
         session_token=session_token,
+        regime=regime,
+        bot=bot,
+        cost_pct=cost_pct,
     )
     return sig
 
@@ -183,6 +197,9 @@ def evaluate_entry_detailed(
     reentry: dict | None = None,
     current_cycle: int = 0,
     session_token: str = "LDN",
+    regime: str | None = None,
+    bot: str | None = None,
+    cost_pct: float | None = None,
 ) -> tuple[Signal | None, str]:
     """Like ``evaluate_entry`` but returns ``(signal, skip_reason)``.
 
@@ -192,7 +209,14 @@ def evaluate_entry_detailed(
     if not prices or not strategy:
         return None, "other:missing_prices_or_strategy"
 
-    if hard_block(context):
+    split_on = False
+    try:
+        split_on = regime_split_enabled(bot=bot, strategy=strategy)
+    except Exception:  # noqa: BLE001 — fail closed to legacy
+        split_on = False
+
+    # Legacy L14: blanket avoid before anything else when regime-split is off.
+    if not split_on and hard_block(context):
         return None, "chart:hard_block"
     if soft_block(context):
         return None, "chart:soft_block"
@@ -208,8 +232,36 @@ def evaluate_entry_detailed(
     last = prices[-1]
 
     stype = strategy.get("strategy_type")
+    market = "unknown"
+    sleeve_meta: dict = {}
+    if split_on:
+        market = classify_market(
+            adx=adx,
+            regime=regime or ind.get("regime"),
+            context=context,
+        )
+        sleeve = pick_sleeve(market)
+        sleeve_meta = {
+            "regime_split": True,
+            "market_class": market,
+            "picked_sleeve": sleeve,
+        }
+        if sleeve is None:
+            return None, "regime:trend_down"
+        if chart_blocks_sleeve(context, sleeve=sleeve, market=market):
+            return None, "chart:hard_block"
+        stype = sleeve
+
     threshold = _entry_rsi_threshold(strategy)
     size = strategy.get("position_size_r", 0.1)
+
+    def _finish(sig: Signal) -> tuple[Signal | None, str]:
+        if split_on and not cost_aware_ok(ind.get("atr"), last, cost_pct=cost_pct):
+            return None, "cost:atr_too_small"
+        if sleeve_meta:
+            sig.meta.update(sleeve_meta)
+        apply_chart_soft_to_signal(sig, context)
+        return sig, ""
 
     if stype == "mean_reversion":
         if ensemble_consensus in _BEARISH_CONSENSUS:
@@ -237,8 +289,40 @@ def evaluate_entry_detailed(
                 "rsi_threshold": threshold,
             },
         )
-        apply_chart_soft_to_signal(sig, context)
-        return sig, ""
+        return _finish(sig)
+
+    if stype == "trend_follow":
+        # Buy strength: trending ADX, RSI not weak, price at/above mid-band.
+        adx_floor = float(strategy.get("adx_threshold", 20) or 20)
+        adx_floor = max(adx_floor, 20.0)
+        if adx < adx_floor:
+            return None, "trend:adx_weak"
+        if rsi < 50.0:
+            return None, "trend:rsi_weak"
+        mid = bb.get("middle")
+        try:
+            mid_f = float(mid) if mid is not None else last
+        except (TypeError, ValueError):
+            mid_f = last
+        if last < mid_f:
+            return None, "trend:below_mid"
+        if not _vol_gate(strategy, ind["atr"], last, vol_above):
+            return None, "vol"
+        quality = 0.45 + min(adx / 100.0, 0.35) + min((rsi - 50.0) / 100.0, 0.2)
+        sig = Signal(
+            "trend_follow",
+            round(min(quality, 1.0), 4),
+            size,
+            pair,
+            {
+                "rsi": rsi,
+                "adx": adx,
+                "bb_mid": mid_f,
+                "entry_type": "trend_follow",
+                "rsi_threshold": threshold,
+            },
+        )
+        return _finish(sig)
 
     if stype == "rsi_momentum":
         min_pairs = _min_oversold_pairs(strategy)
@@ -263,8 +347,7 @@ def evaluate_entry_detailed(
                 "rsi_threshold": threshold,
             },
         )
-        apply_chart_soft_to_signal(sig, context)
-        return sig, ""
+        return _finish(sig)
 
     return None, "other:unknown_strategy_type"
 

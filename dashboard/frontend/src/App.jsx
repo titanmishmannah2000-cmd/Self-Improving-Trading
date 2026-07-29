@@ -353,6 +353,13 @@ function humanizeSkip(reason) {
     stale_data: "price data looks stale",
     market_closed: "market is closed",
   };
+  if (r.startsWith("no_signal:")) {
+    const rest = r.slice("no_signal:".length);
+    if (rest === "regime:trend_down") return "market trending down — waiting (no long dip-buys)";
+    if (rest === "cost:atr_too_small") return "move too small to cover costs — skipping";
+    if (rest.startsWith("trend:")) return "trend playbook not ready yet";
+    if (rest === "chart:hard_block") return "chart says avoid this playbook for now";
+  }
   return map[r] || r.replace(/_/g, " ");
 }
 

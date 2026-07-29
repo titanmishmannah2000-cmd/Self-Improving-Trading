@@ -18,7 +18,7 @@ import threading
 import time
 
 # Types the meta-allocator knows about (momentum included for dashboard).
-EXPERT_TYPES = ("mean_reversion", "rsi_momentum", "gp_ensemble")
+EXPERT_TYPES = ("mean_reversion", "rsi_momentum", "gp_ensemble", "trend_follow")
 
 SOFT_SUPPRESS_MULT = 0.25  # L35 "bench" → 25% size, still allow entry
 MIN_N = 15  # closed outcomes before any non-passthrough weight
