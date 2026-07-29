@@ -55,6 +55,46 @@ MAX_SANE: dict[str, float] = {
 DEFAULT_COST_PCT = 0.05
 DEFAULT_MAX_HB_AGE_S = 900.0
 PHASE1_MIN_N = 20
+# Profitability Path Phase 0 push ~ Jul 28 2026 UTC — score "since freeze" from here.
+PHASE0_FREEZE_TS = 1753660800.0  # 2026-07-28T00:00:00Z
+
+
+def _parse_trade_ts(row: Any) -> float:
+    for key in ("exit_ts", "entry_ts"):
+        raw = row[key] if hasattr(row, "keys") and key in row.keys() else None
+        if raw is None and isinstance(row, dict):
+            raw = row.get(key)
+        if not raw:
+            continue
+        try:
+            from datetime import datetime
+
+            s = str(raw).replace("Z", "+00:00")
+            return datetime.fromisoformat(s).timestamp()
+        except (TypeError, ValueError):
+            continue
+    return 0.0
+
+
+def _entry_type_of(row: Any) -> str:
+    st = ""
+    try:
+        st = str(row["strategy_type"] or "")
+    except Exception:
+        st = ""
+    raw = None
+    try:
+        raw = row["raw_json"]
+    except Exception:
+        raw = None
+    if raw:
+        try:
+            blob = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(blob, dict):
+                return str(blob.get("entry_type") or blob.get("strategy_type") or st or "")
+        except (TypeError, json.JSONDecodeError):
+            pass
+    return st
 
 
 def _price_sane(pair: str, price: Any) -> bool:
@@ -126,6 +166,7 @@ def _score_trades(rows: list[dict], *, cost: float) -> dict[str, Any]:
             "max_dd": 0.0,
             "verdict": "waiting",
             "sample_ok": False,
+            "window": "empty",
         }
     wins = sum(1 for p in pnls if p > 0)
     exp = sum(pnls) / n
@@ -269,31 +310,77 @@ def build_profitability_health(
                         }
                     )
 
-            # Closed trades for scorecard (focus pairs only when possible).
-            rows = conn.execute(
+            # Closed trades: focus pairs; prefer since-freeze non-GP for Phase 1 warn.
+            rows = []
+            for sql in (
+                "SELECT pair, pnl_pct, exit_reason, exit_ts, entry_ts, strategy_type, raw_json "
+                "FROM trades WHERE bot=? AND exit_reason IS NOT NULL AND exit_reason != '' "
+                "AND pnl_pct IS NOT NULL ORDER BY COALESCE(exit_ts, entry_ts) DESC LIMIT 500",
+                "SELECT pair, pnl_pct, exit_reason, exit_ts, entry_ts, raw_json "
+                "FROM trades WHERE bot=? AND exit_reason IS NOT NULL AND exit_reason != '' "
+                "AND pnl_pct IS NOT NULL ORDER BY COALESCE(exit_ts, entry_ts) DESC LIMIT 500",
                 "SELECT pair, pnl_pct, exit_reason FROM trades "
                 "WHERE bot=? AND exit_reason IS NOT NULL AND exit_reason != '' "
-                "AND pnl_pct IS NOT NULL ORDER BY COALESCE(exit_ts, entry_ts) DESC LIMIT 500",
-                (bot,),
-            ).fetchall()
-            trade_dicts = []
+                "AND pnl_pct IS NOT NULL ORDER BY rowid DESC LIMIT 500",
+            ):
+                try:
+                    rows = conn.execute(sql, (bot,)).fetchall()
+                    break
+                except Exception:
+                    rows = []
+                    continue
+            lifetime: list[dict] = []
+            since: list[dict] = []
             for r in rows:
                 pair = r["pair"]
                 if focus and pair not in focus:
                     continue
-                trade_dicts.append({"pair": pair, "pnl_pct": r["pnl_pct"]})
-            score = _score_trades(trade_dicts, cost=cost)
-            if score["verdict"] == "kill" and score["sample_ok"]:
+                rec = {"pair": pair, "pnl_pct": r["pnl_pct"]}
+                lifetime.append(rec)
+                ts = _parse_trade_ts(r)
+                et = _entry_type_of(r).lower()
+                if ts >= PHASE0_FREEZE_TS and et != "gp_ensemble":
+                    since.append(rec)
+            score_life = _score_trades(lifetime, cost=cost)
+            score_life["window"] = "lifetime"
+            score_since = _score_trades(since, cost=cost)
+            score_since["window"] = "since_freeze"
+            # Primary scorecard for UI = since-freeze when any samples; else lifetime.
+            score = dict(score_since if score_since["n"] > 0 else score_life)
+            score["lifetime"] = score_life
+            score["since_freeze"] = score_since
+            if score_since["verdict"] == "kill" and score_since["sample_ok"]:
                 issues.append(
                     {
                         "level": "warn",
                         "code": "phase1_kill",
                         "message": (
-                            f"{bot}: after costs expectancy is {score['expectancy']} "
-                            f"over {score['n']} trades — Phase 1 kill signal"
+                            f"{bot}: since freeze, after-cost expectancy is {score_since['expectancy']} "
+                            f"over {score_since['n']} non-GP trades — Phase 1 kill"
                         ),
                         "what_to_tell": (
-                            f"{bot} Phase 1 kill: expectancy {score['expectancy']} after {score['n']} trades"
+                            f"{bot} Phase 1 kill (since freeze): expectancy {score_since['expectancy']} "
+                            f"after {score_since['n']} trades"
+                        ),
+                    }
+                )
+            elif (
+                score_since["verdict"] == "waiting"
+                and score_life["verdict"] == "kill"
+                and score_life["sample_ok"]
+            ):
+                issues.append(
+                    {
+                        "level": "warn",
+                        "code": "phase1_historical",
+                        "message": (
+                            f"{bot}: historical edge weak (exp {score_life['expectancy']} / "
+                            f"{score_life['n']} trades) — watching new post-freeze trades "
+                            f"({score_since['n']}/{PHASE1_MIN_N})"
+                        ),
+                        "what_to_tell": (
+                            f"{bot} historical Phase 1 weak edge; only {score_since['n']} "
+                            f"post-freeze non-GP trades so far"
                         ),
                     }
                 )
@@ -320,6 +407,17 @@ def build_profitability_health(
                     }
                 )
 
+            rs = hb.get("regime_split") if isinstance(hb.get("regime_split"), dict) else {}
+            if bot == "forex" and hb and rs and rs.get("enabled") is False:
+                issues.append(
+                    {
+                        "level": "warn",
+                        "code": "regime_split_off",
+                        "message": "forex: regime split is OFF — set REGIME_SPLIT=1 or unset for default on",
+                        "what_to_tell": "forex regime split is turned off",
+                    }
+                )
+
             level = _bot_level(issues)
             bot_reports[bot] = {
                 "level": level,
@@ -327,6 +425,9 @@ def build_profitability_health(
                 "status": status or None,
                 "heartbeat_age_s": round(age, 1) if age is not None else None,
                 "freeze": freeze,
+                "regime_split": rs
+                if rs
+                else {"enabled": None, "pending": bot == "forex"},
                 "prices": pair_prices,
                 "scorecard": score,
                 "open_trades": len(open_trades) if isinstance(open_trades, list) else 0,

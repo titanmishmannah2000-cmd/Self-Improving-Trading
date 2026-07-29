@@ -563,6 +563,14 @@ async def run_bot(bot_name: str) -> None:
         from hermes_core.config import ensure_bot_strategies_seeded
 
         ensure_bot_strategies_seeded(bot)
+    # Gap fix: focus forex pairs must not stay london_only on the volume.
+    if bot == "forex":
+        with contextlib.suppress(Exception):
+            from hermes_core.config.strategy_hygiene import align_forex_focus_sessions
+
+            _acts = align_forex_focus_sessions(bot="forex")
+            for _a in _acts:
+                print(f"[hermes][strategy-hygiene] {_a}", flush=True)
     cfg = load_config(bot)
     pairs = cfg.get("pairs") or []
     cycle_seconds = int(get_env("HERMES_CYCLE_SECONDS", "60"))

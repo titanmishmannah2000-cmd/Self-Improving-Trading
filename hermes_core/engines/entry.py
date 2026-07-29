@@ -256,7 +256,9 @@ def evaluate_entry_detailed(
     size = strategy.get("position_size_r", 0.1)
 
     def _finish(sig: Signal) -> tuple[Signal | None, str]:
-        if split_on and not cost_aware_ok(ind.get("atr"), last, cost_pct=cost_pct):
+        if split_on and not cost_aware_ok(
+            ind.get("atr"), last, cost_pct=cost_pct, pair=pair
+        ):
             return None, "cost:atr_too_small"
         if sleeve_meta:
             sig.meta.update(sleeve_meta)

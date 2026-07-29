@@ -241,6 +241,7 @@ def write_heartbeat(
     prices: dict | None = None,
     price_history: dict | None = None,
     hif_flags: dict | None = None,
+    regime_split: dict | None = None,
 ) -> dict:
     """Emit heartbeat.json with the documented keys (blueprint loop.py:1774/4433).
 
@@ -269,6 +270,8 @@ def write_heartbeat(
     }
     if hif_flags is not None:
         data["hif_flags"] = hif_flags
+    if regime_split is not None:
+        data["regime_split"] = regime_split
     with contextlib.suppress(Exception):
         from hermes_core.env import llm_keys_present
 
@@ -2476,6 +2479,13 @@ def run_cycle(
 
         _hif = hif_snapshot()
         summary["hif_flags"] = _hif
+    _rs = None
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.regime_split import regime_split_enabled
+
+        _on = bool(regime_split_enabled(bot=bot))
+        _rs = {"enabled": _on, "bot": bot, "scope": "forex_default" if _on and bot == "forex" else "env"}
+        summary["regime_split"] = _rs
     write_heartbeat(
         bot,
         cycle,
@@ -2489,6 +2499,7 @@ def run_cycle(
         prices=summary.get("prices") or {},
         price_history=price_history,
         hif_flags=_hif,
+        regime_split=_rs,
     )
     summary["consecutive_failures"] = consecutive_failures
     summary["oversold_pairs"] = oversold_pairs

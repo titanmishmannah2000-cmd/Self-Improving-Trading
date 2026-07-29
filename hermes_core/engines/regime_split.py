@@ -147,9 +147,15 @@ def cost_aware_ok(
     last: float | None,
     *,
     cost_pct: float | None = None,
-    min_mult: float = COST_ATR_MULT,
+    min_mult: float | None = None,
+    pair: str | None = None,
 ) -> bool:
-    """True when ATR% is large enough to clear a round-trip cost haircut."""
+    """True when ATR% is large enough to clear a round-trip cost haircut.
+
+    FX majors move in small ATR% — requiring 2× cost silenced almost all
+    entries. Forex pairs use ``min_mult=1.0`` (and a soft floor of 0.02%);
+    other bots keep the stricter 2× default.
+    """
     try:
         px = float(last or 0.0)
         a = float(atr or 0.0)
@@ -169,4 +175,10 @@ def cost_aware_ok(
     if cost <= 0:
         return True
     atr_pct = (a / px) * 100.0
-    return atr_pct >= cost * float(min_mult)
+    fx = (pair or "").upper() in {"EUR/USD", "GBP/USD", "AUD/USD", "GBP/JPY"}
+    if min_mult is None:
+        min_mult = 1.0 if fx else COST_ATR_MULT
+    need = cost * float(min_mult)
+    if fx:
+        need = max(need, 0.02)  # ignore noise ticks, not whole FX ATR band
+    return atr_pct >= need

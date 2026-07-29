@@ -292,9 +292,17 @@ def fetch_ohlcv(symbol: str):  # pragma: no cover - needs network + yfinance
 
 
 def generate_chart_png(df, symbol: str):  # pragma: no cover - needs mplfinance
+    import warnings
+
     import matplotlib
 
     matplotlib.use("Agg")
+    # Prefer a font that exists in slim Railway images (avoids findfont spam).
+    with contextlib.suppress(Exception):
+        from matplotlib import rcParams
+
+        rcParams["font.family"] = "DejaVu Sans"
+        rcParams["font.weight"] = "normal"
     import mplfinance as mpf
 
     try:
@@ -309,17 +317,24 @@ def generate_chart_png(df, symbol: str):  # pragma: no cover - needs mplfinance
             mpf.make_addplot(df["Close"].ewm(span=20).mean(), color="cyan", width=0.8),
             mpf.make_addplot(df["Close"].ewm(span=50).mean(), color="yellow", width=0.8),
         ]
-        mpf.plot(
-            df,
-            type="candle",
-            style=style,
-            title=f"\n{symbol} — 1H Chart",
-            ylabel="Price",
-            volume=True,
-            addplot=add_plots,
-            savefig=dict(fname=str(cache_path), dpi=150, bbox_inches="tight"),
-            returnfig=False,
-        )
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=".*identical low and high ylims.*",
+                category=UserWarning,
+            )
+            warnings.filterwarnings("ignore", message=".*findfont:.*")
+            mpf.plot(
+                df,
+                type="candle",
+                style=style,
+                title=f"\n{symbol} — 1H Chart",
+                ylabel="Price",
+                volume=True,
+                addplot=add_plots,
+                savefig=dict(fname=str(cache_path), dpi=150, bbox_inches="tight"),
+                returnfig=False,
+            )
         return cache_path
     except Exception:  # noqa: BLE001
         return None

@@ -135,5 +135,8 @@ def test_forex_trend_down_skips(monkeypatch):
 
 
 def test_cost_aware_gate():
-    assert cost_aware_ok(1.0, 100.0, cost_pct=0.05) is True  # atr% = 1.0 >= 0.1
-    assert cost_aware_ok(0.01, 100.0, cost_pct=0.05) is False  # atr% = 0.01 < 0.1
+    assert cost_aware_ok(1.0, 100.0, cost_pct=0.05, pair="XAU/USD") is True
+    assert cost_aware_ok(0.01, 100.0, cost_pct=0.05, pair="XAU/USD") is False
+    # FX uses softer 1× cost floor (0.05%) with 0.02% noise floor
+    assert cost_aware_ok(0.06, 100.0, cost_pct=0.05, pair="EUR/USD") is True
+    assert cost_aware_ok(0.01, 100.0, cost_pct=0.05, pair="EUR/USD") is False

@@ -2017,9 +2017,14 @@ function ProfitabilityHealthPanel({ apiBase }) {
   const levelWord = level === "ok" ? "OK" : level === "warn" ? "ATTENTION" : "PROBLEM";
   const scoreLabel = (sc) => {
     if (!sc) return "—";
-    if (sc.verdict === "waiting") return `waiting (${sc.n || 0}/${data.phase1_min_n || 20} trades)`;
-    if (sc.verdict === "continue") return `edge OK · exp ${sc.expectancy}`;
-    if (sc.verdict === "kill") return `weak edge · exp ${sc.expectancy}`;
+    const win = sc.window === "since_freeze" ? "since freeze" : sc.window === "lifetime" ? "lifetime" : "";
+    const prefix = win ? `${win} · ` : "";
+    if (sc.verdict === "waiting") {
+      const need = data.phase1_min_n || 20;
+      return `${prefix}waiting (${sc.n || 0}/${need} trades)`;
+    }
+    if (sc.verdict === "continue") return `${prefix}edge OK · exp ${sc.expectancy}`;
+    if (sc.verdict === "kill") return `${prefix}weak edge · exp ${sc.expectancy}`;
     return sc.verdict;
   };
 
@@ -2066,6 +2071,16 @@ function ProfitabilityHealthPanel({ apiBase }) {
               </div>
               <ul className="ph-bot-facts">
                 <li>Freeze: {freezeOk ? "BOOK_RISK only" : b.freeze?.missing_hif ? "not reported yet" : "broken"}</li>
+                <li>
+                  Regime split:{" "}
+                  {b.regime_split?.enabled === true
+                    ? "on"
+                    : b.regime_split?.enabled === false
+                      ? "off"
+                      : bot === "forex"
+                        ? "pending"
+                        : "n/a"}
+                </li>
                 <li>Heartbeat: {ageTxt}</li>
                 <li>Scorecard: {scoreLabel(b.scorecard)}</li>
               </ul>
