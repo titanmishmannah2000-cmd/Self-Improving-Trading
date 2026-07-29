@@ -67,6 +67,21 @@ def test_classify_range_vs_trend():
     )
 
 
+def test_sideways_avoid_stays_range_even_with_elevated_adx():
+    """Audit gap: sideways+avoid must not become trend_down on ADX>=25."""
+    ctx = "trend: sideways (conf=0.60). SR: support at 1.138. Rec: avoid entirely"
+    assert classify_market(adx=30, regime="range", context=ctx) == "range"
+    assert classify_market(adx=40, regime="trend", context=ctx) == "range"
+    assert pick_sleeve("range") == "mean_reversion"
+    assert chart_blocks_sleeve(ctx, sleeve="mean_reversion", market="range") is False
+
+
+def test_downtrend_avoid_still_trend_down():
+    ctx = "trend: downtrend (conf=0.90). Rec: avoid entirely"
+    assert classify_market(adx=30, regime="trend", context=ctx) == "trend_down"
+    assert pick_sleeve("trend_down") is None
+
+
 def test_chart_avoid_allows_mr_in_range_only():
     ctx = "trend: downtrend (conf=0.85). Rec: avoid entirely"
     assert chart_blocks_sleeve(ctx, sleeve="mean_reversion", market="range") is False

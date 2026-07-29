@@ -54,7 +54,13 @@ def classify_market(
     context: str | None = None,
     adx_trend: float = ADX_TREND,
 ) -> str:
-    """Return ``range`` | ``trend_up`` | ``trend_down`` | ``unknown``."""
+    """Return ``range`` | ``trend_up`` | ``trend_down`` | ``unknown``.
+
+    Vision often labels a choppy tape ``sideways`` + ``avoid entirely``. That must
+    stay a **range** sleeve (MR allowed with soft tilt) — not ``trend_down`` —
+    even when ADX is moderately elevated. True long veto needs an explicit
+    downtrend with trend strength (or bear/trend regime), not avoid alone.
+    """
     c = _ctx(context)
     reg = (regime or "").strip().lower()
     try:
@@ -64,26 +70,35 @@ def classify_market(
 
     chart_down = "downtrend" in c
     chart_up = "uptrend" in c
-    chart_side = "sideways" in c or "range" in c
+    chart_side = "sideways" in c or ("range" in c and "downtrend" not in c)
     avoid = hard_block(c)
 
-    # Strong chart direction wins when ADX confirms a trend.
+    # Sideways / range label wins over bare "avoid" + elevated ADX.
+    if chart_side:
+        return "range"
+
+    # Explicit downtrend → no new longs when ADX confirms, or when regime agrees.
+    if chart_down and adx_f >= adx_trend:
+        return "trend_down"
+    if chart_down and reg in ("bear", "trend"):
+        return "trend_down"
+
     if adx_f >= adx_trend:
-        if chart_down or avoid and not chart_up:
-            return "trend_down"
         if chart_up or "enter long" in c or reg in ("trend", "bull"):
             return "trend_up"
         if reg in ("bear",):
             return "trend_down"
-        if reg in ("trend", "bull"):
-            return "trend_up"
-        # Trending ADX but no chart cue — treat as trend_up only if regime says trend.
+        # Avoid with no sideways/up/down direction: trust indicator regime.
+        if avoid and not chart_up:
+            if reg in ("range", "neutral", ""):
+                return "range"
+            return "trend_down"
         if reg in ("range", "neutral"):
             return "range"
-        return "trend_up" if not chart_down else "trend_down"
+        return "trend_up"
 
-    # Calm ADX → range unless chart is clearly directional with avoid.
-    if chart_side or reg in ("range", "neutral", ""):
+    # Calm ADX → range unless chart is clearly directional without a range regime.
+    if reg in ("range", "neutral", ""):
         return "range"
     if chart_down and avoid:
         return "trend_down"
@@ -91,7 +106,7 @@ def classify_market(
         return "trend_up"
     if chart_down:
         return "trend_down"
-    return "range" if adx_f < adx_trend else "unknown"
+    return "range"
 
 
 def pick_sleeve(market: str) -> str | None:
