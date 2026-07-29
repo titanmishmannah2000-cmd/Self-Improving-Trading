@@ -10,7 +10,8 @@ Profitability Path: stop using one playbook for every tape.
 * Trend sleeve is blocked by avoid+downtrend (wrong direction for longs).
 * Cost-aware: require ATR% large enough vs round-trip cost haircut.
 
-Flag ``REGIME_SPLIT``: ``1`` on, ``0`` off. Unset → on for ``forex`` only.
+Flag ``REGIME_SPLIT``: ``1`` on, ``0`` off. Unset → on for ``forex``, ``gold``,
+and ``crypto`` (same playbook on all three bots).
 Never raises.
 """
 
@@ -19,10 +20,10 @@ from __future__ import annotations
 from hermes_core.engines.chart_vision import hard_block
 from hermes_core.env import get_env
 
-_DEFAULT_BOTS = frozenset({"forex"})
+_DEFAULT_BOTS = frozenset({"forex", "gold", "crypto"})
 ADX_TREND = 25.0
 DEFAULT_COST_PCT = 0.05
-COST_ATR_MULT = 2.0  # need ATR% >= cost * this
+COST_ATR_MULT = 2.0  # need ATR% >= cost * this (non-FX); FX uses softer floor
 
 
 def regime_split_enabled(*, bot: str | None = None, strategy: dict | None = None) -> bool:

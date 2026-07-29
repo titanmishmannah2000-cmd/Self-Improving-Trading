@@ -2077,9 +2077,7 @@ function ProfitabilityHealthPanel({ apiBase }) {
                     ? "on"
                     : b.regime_split?.enabled === false
                       ? "off"
-                      : bot === "forex"
-                        ? "pending"
-                        : "n/a"}
+                      : "pending"}
                 </li>
                 <li>Heartbeat: {ageTxt}</li>
                 <li>Scorecard: {scoreLabel(b.scorecard)}</li>

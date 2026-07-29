@@ -32,9 +32,17 @@ def mr_strategy(**kw):
     return base
 
 
-def test_regime_split_default_forex_only(monkeypatch):
+def test_regime_split_default_all_three_bots(monkeypatch):
     monkeypatch.delenv("REGIME_SPLIT", raising=False)
     assert regime_split_enabled(bot="forex") is True
+    assert regime_split_enabled(bot="gold") is True
+    assert regime_split_enabled(bot="crypto") is True
+    assert regime_split_enabled(bot=None) is False
+
+
+def test_regime_split_env_off(monkeypatch):
+    monkeypatch.setenv("REGIME_SPLIT", "0")
+    assert regime_split_enabled(bot="forex") is False
     assert regime_split_enabled(bot="gold") is False
     assert regime_split_enabled(bot="crypto") is False
 

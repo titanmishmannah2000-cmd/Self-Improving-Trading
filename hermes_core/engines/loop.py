@@ -2484,7 +2484,11 @@ def run_cycle(
         from hermes_core.engines.regime_split import regime_split_enabled
 
         _on = bool(regime_split_enabled(bot=bot))
-        _rs = {"enabled": _on, "bot": bot, "scope": "forex_default" if _on and bot == "forex" else "env"}
+        _rs = {
+            "enabled": _on,
+            "bot": bot,
+            "scope": "all_bots_default" if _on else "off",
+        }
         summary["regime_split"] = _rs
     write_heartbeat(
         bot,

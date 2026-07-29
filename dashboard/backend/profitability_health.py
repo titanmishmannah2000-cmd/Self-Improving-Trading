@@ -408,13 +408,15 @@ def build_profitability_health(
                 )
 
             rs = hb.get("regime_split") if isinstance(hb.get("regime_split"), dict) else {}
-            if bot == "forex" and hb and rs and rs.get("enabled") is False:
+            if hb and rs and rs.get("enabled") is False:
                 issues.append(
                     {
                         "level": "warn",
                         "code": "regime_split_off",
-                        "message": "forex: regime split is OFF — set REGIME_SPLIT=1 or unset for default on",
-                        "what_to_tell": "forex regime split is turned off",
+                        "message": (
+                            f"{bot}: regime split is OFF — set REGIME_SPLIT=1 or unset for default on"
+                        ),
+                        "what_to_tell": f"{bot} regime split is turned off",
                     }
                 )
 
@@ -425,9 +427,7 @@ def build_profitability_health(
                 "status": status or None,
                 "heartbeat_age_s": round(age, 1) if age is not None else None,
                 "freeze": freeze,
-                "regime_split": rs
-                if rs
-                else {"enabled": None, "pending": bot == "forex"},
+                "regime_split": rs if rs else {"enabled": None, "pending": True},
                 "prices": pair_prices,
                 "scorecard": score,
                 "open_trades": len(open_trades) if isinstance(open_trades, list) else 0,
