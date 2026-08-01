@@ -197,7 +197,9 @@ PAIR_TICKERS = {
     "XAU/USD": "GC=F",
     "XAG/USD": "SI=F",
     "BTC/USD": "BTC-USD",
+    "BTC/USDT": "BTC-USD",
     "ETH/USD": "ETH-USD",
+    "ETH/USDT": "ETH-USD",
 }
 
 PAIR_MAP = {
@@ -218,12 +220,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-VALID_BOTS = {"gold", "forex", "crypto"}
+_ALL_DASHBOARD_BOTS = ("forex", "gold", "crypto")
 VALID_BOT_ALIASES = {
     "crypto": {"crypto", "hermes-crypto", "hermes-crypto-bot"},
     "forex": {"forex", "hermes-forex", "hermes-forex-bot"},
     "gold": {"gold", "hermes-gold", "hermes-gold-bot"},
 }
+
+
+def _parse_dashboard_bots() -> set[str]:
+    """Scope which bots this dashboard instance serves.
+
+    ``DASHBOARD_BOTS=crypto`` (BTC/USDT-only Railway project) hides forex/gold
+    ingest + overview. Empty / unset → all three (legacy multi-bot project).
+    """
+    raw = (os.getenv("DASHBOARD_BOTS") or "").strip()
+    if not raw:
+        return set(_ALL_DASHBOARD_BOTS)
+    wanted = {b.strip().lower() for b in raw.split(",") if b.strip()}
+    known = set(_ALL_DASHBOARD_BOTS)
+    bad = wanted - known
+    if bad:
+        print(f"[WARN] DASHBOARD_BOTS unknown entries ignored: {sorted(bad)}", flush=True)
+    bots = wanted & known
+    return bots if bots else set(_ALL_DASHBOARD_BOTS)
+
+
+VALID_BOTS = _parse_dashboard_bots()
 
 # ── LIVE PIPELINE COMPAT ──────────────────────────────────────────────────
 # Teach this backend to read the ACTUAL live bot state files (bots/{bot}/state)
@@ -947,18 +970,32 @@ def row_to_trade(r) -> dict:
     return raw
 
 
+@app.get("/api/ui-config")
+def ui_config():
+    """Frontend layout: which bots/pairs this dashboard instance shows."""
+    from profitability_health import FOCUS_PAIRS
+
+    bots = sorted(VALID_BOTS)
+    return {
+        "bots": bots,
+        "focus_pairs": {b: list(FOCUS_PAIRS.get(b, [])) for b in bots},
+        "title": os.getenv("DASHBOARD_TITLE", "Hermes"),
+        "scope": "btc" if bots == ["crypto"] else "multi",
+    }
+
+
 @app.get("/api/profitability-health")
 def profitability_health():
     """Watcher strip: OK / WARN / FAIL for freeze, feeds, and Phase 1 scorecard."""
     from profitability_health import build_profitability_health
 
-    return build_profitability_health(get_conn=get_conn, bots=("forex", "gold", "crypto"))
+    return build_profitability_health(get_conn=get_conn, bots=tuple(sorted(VALID_BOTS)))
 
 
 @app.get("/api/overview")
 def overview():
     conn = get_conn()
-    result = {"ts": utcnow_iso(), "bots": {}}
+    result = {"ts": utcnow_iso(), "bots": {}, "active_bots": sorted(VALID_BOTS)}
     for bot in VALID_BOTS:
         state_row = conn.execute("SELECT * FROM latest_state WHERE bot=?", (bot,)).fetchone()
         strategy = (
@@ -2763,7 +2800,7 @@ def per_version_performance(bot_name: str, pair: str | None = None):
     elif bot_name == "gold":
         valid_pairs = {"XAU/USD", "XAG/USD"}
     elif bot_name == "crypto":
-        valid_pairs = {"BTC/USD", "ETH/USD"}
+        valid_pairs = {"BTC/USDT", "BTC/USD"}
 
     conn = get_conn()
     query = "SELECT id, raw_json, pnl_pct, exit_reason, pair, entry_price FROM trades WHERE bot=? AND exit_reason IS NOT NULL"

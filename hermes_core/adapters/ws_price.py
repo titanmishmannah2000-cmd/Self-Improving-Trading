@@ -43,8 +43,10 @@ DEFAULT_WS_URL = "wss://ws-feed.exchange.coinbase.com"
 
 
 def _to_symbol(pair: str) -> str:
-    """Map a HERMES pair (EUR/USD, BTC/USD) to a Coinbase product (EUR-USD, BTC-USD)."""
-    return pair.replace("/", "-").upper()
+    """Map a HERMES pair to a Coinbase product (BTC/USDT → BTC-USD)."""
+    from hermes_core.adapters.pair_aliases import coinbase_product
+
+    return coinbase_product(pair)
 
 
 def _parse_message(raw: str, pair_map: dict[str, str]) -> dict | None:

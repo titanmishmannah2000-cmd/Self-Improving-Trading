@@ -209,6 +209,23 @@ def evaluate_entry_detailed(
     if not prices or not strategy:
         return None, "other:missing_prices_or_strategy"
 
+    # BTC/USDT Focus Phase 2: D1 regime hard gate (long-only in trend_up).
+    btc_reg: dict | None = None
+    if pair and (
+        str(pair).upper().startswith("BTC/")
+        or (bot or "").lower() == "crypto"
+    ):
+        try:
+            from hermes_core.engines import btc_regime as br
+
+            btc_reg = br.classify_btc_regime(pair)
+            if br.hard_blocks_entry(str(btc_reg.get("label") or "")):
+                return None, (
+                    f"btc_regime:{btc_reg.get('label')}:{btc_reg.get('reason')}"
+                )
+        except Exception:  # noqa: BLE001 — fail closed for BTC focus
+            return None, "btc_regime:classifier_error"
+
     split_on = False
     try:
         split_on = regime_split_enabled(bot=bot, strategy=strategy)
@@ -262,6 +279,10 @@ def evaluate_entry_detailed(
             return None, "cost:atr_too_small"
         if sleeve_meta:
             sig.meta.update(sleeve_meta)
+        if btc_reg:
+            sig.meta["btc_d1_regime"] = btc_reg.get("label")
+            sig.meta["btc_d1_reason"] = btc_reg.get("reason")
+            sig.meta["btc_d1_adx"] = btc_reg.get("adx")
         apply_chart_soft_to_signal(sig, context)
         return sig, ""
 

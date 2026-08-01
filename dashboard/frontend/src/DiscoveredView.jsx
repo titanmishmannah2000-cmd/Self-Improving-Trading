@@ -427,6 +427,7 @@ export default function DiscoveredView({ apiBase, isActive = true }) {
       "XAU/USD": "gold",
       "XAG/USD": "gold",
       "BTC/USD": "crypto",
+      "BTC/USDT": "crypto",
       "ETH/USD": "crypto",
     };
     for (const [pair, inds] of Object.entries(data?.pairs || {})) {

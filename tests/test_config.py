@@ -65,13 +65,15 @@ def test_forex_mr_pairs_load_with_correct_type():
 
 
 def test_crypto_pairs_are_momentum_not_mr():
-    """Crypto rethink: BTC/ETH use rsi_momentum (trend), not FX mean-reversion."""
-    for pair in ("BTC/USD", "ETH/USD"):
-        s = load_strategy_for_pair(pair, bot="crypto")
-        assert s["strategy_type"] == "rsi_momentum"
-        assert s["strategy_type"] != "mean_reversion"
-        assert float(s["stop_loss_pct"]) >= 2.0
-        assert float(s["position_size_r"]) <= 0.2
+    """BTC/USDT Focus: single crypto pair uses rsi_momentum (trend)."""
+    s = load_strategy_for_pair("BTC/USDT", bot="crypto")
+    assert s["strategy_type"] == "rsi_momentum"
+    assert s["strategy_type"] != "mean_reversion"
+    assert float(s["stop_loss_pct"]) >= 2.0
+    assert float(s["position_size_r"]) <= 0.2
+    # Legacy seed still loadable for migration.
+    legacy = load_strategy_for_pair("BTC/USD", bot="crypto")
+    assert legacy["strategy_type"] == "rsi_momentum"
 
 
 def test_reflection_every_is_fifteen_profitability_path():
@@ -82,7 +84,8 @@ def test_reflection_every_is_fifteen_profitability_path():
     assert gold["pairs"] == ["XAU/USD"]
     crypto = load_config("crypto")
     assert crypto["goal"]["reflection_every"] == 15
-    assert crypto["pairs"] == ["BTC/USD", "ETH/USD"]
+    assert crypto["pairs"] == ["BTC/USDT"]
+    assert crypto["invent"]["interval"] == "4h"
 
 
 def test_valid_strategy_passes_validation():

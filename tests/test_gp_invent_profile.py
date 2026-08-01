@@ -36,8 +36,8 @@ def test_invent_profiles_per_bot():
     assert gd["n_islands"] == 1
 
     cr = invent_profile("crypto")
-    assert cr["interval"] == "1h"
-    assert cr["horizon"] == 12
+    assert cr["interval"] == "4h"
+    assert cr["horizon"] == 8
     assert cr["timeout_s"] >= 180
     assert cr["generations"] <= 16
     assert cr["pop_size"] <= 24
@@ -48,7 +48,7 @@ def test_invent_profile_config_override(tmp_path, monkeypatch):
     cfg = tmp_path / "bots" / "crypto"
     cfg.mkdir(parents=True)
     (cfg / "config.yaml").write_text(
-        "bot:\n  name: crypto\npairs: [BTC/USD]\ninvent:\n  horizon: 8\n  timeout_s: 240\n",
+        "bot:\n  name: crypto\npairs: [BTC/USDT]\ninvent:\n  horizon: 6\n  timeout_s: 240\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -59,15 +59,15 @@ def test_invent_profile_config_override(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "hermes_core.config.load_config",
         lambda bot: {
-            "invent": {"horizon": 8, "timeout_s": 240},
-            "pairs": ["BTC/USD"],
+            "invent": {"horizon": 6, "timeout_s": 240},
+            "pairs": ["BTC/USDT"],
         },
     )
     cr = invent_profile("crypto")
-    assert cr["horizon"] == 8
+    assert cr["horizon"] == 6
     assert cr["timeout_s"] == 240
     # Untouched keys keep crypto defaults.
-    assert cr["interval"] == "1h"
+    assert cr["interval"] == "4h"
 
 
 def test_indicator_matches_regime():

@@ -1,11 +1,11 @@
-# Crypto bot — BTC/USD + ETH/USD. Strategies are rsi_momentum (trend), not
-# FX-style mean_reversion — same discipline as gold (D8).
-# Profitability Path: same Phase 0–1 treatment as forex/gold (freeze + prove).
+# Crypto bot — BTC/USDT only (BTC/USDT Focus Roadmap Phase 0).
+# Strategies are rsi_momentum (trend), not FX-style mean_reversion.
+# Feeds still resolve via Coinbase/Yahoo BTC-USD (pair alias).
+# Invent: 4h TF (Phase 2) — not 1h noise.
 bot:
   name: crypto
 pairs:
-  - BTC/USD
-  - ETH/USD
+  - BTC/USDT
 goal:
   failure_below: -10.0
   gemini_min_trades: 15
@@ -13,16 +13,13 @@ goal:
   max_drawdown: 10.0
   min_sharpe: 1.0
   one_variable_only: true
-  # Phase 3 cadence — same as forex/gold.
   reflection_every: 15
   target_return_30d: 5.0
-# GP invent: hourly TF + short horizon. Tiny search so invent finishes
-# and shows on Discovered. Promote stays gated (GP_PROMOTE off until Phase 4).
 invent:
-  interval: 1h
-  period: 60d
+  interval: 4h
+  period: 120d
   max_candles: 800
-  horizon: 12
+  horizon: 8
   generations: 12
   pop_size: 20
   n_islands: 1

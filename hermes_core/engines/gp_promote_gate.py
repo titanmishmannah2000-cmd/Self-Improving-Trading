@@ -84,10 +84,20 @@ def normalize_pair(pair: str) -> str:
     return (pair or "").strip().upper()
 
 
-def env_seed_bans() -> set[str]:
-    """Pairs listed in ``GP_EXCLUDE_PAIRS`` (deploy cold-start bans)."""
-    raw = get_env("GP_EXCLUDE_PAIRS", "GBP/JPY,BTC/USD")
-    return {normalize_pair(p) for p in raw.split(",") if p.strip()}
+def env_seed_bans(*, bot: str | None = None) -> set[str]:
+    """Pairs listed in ``GP_EXCLUDE_PAIRS`` (deploy cold-start bans).
+
+    Default excludes only FX folklore (GBP/JPY). BTC is **not** seeded-banned
+    for the crypto bot — BTC/USDT Focus uses live cost-aware expectancy instead.
+    If an operator still lists BTC/USD or BTC/USDT in ``GP_EXCLUDE_PAIRS``, those
+    entries are ignored when ``bot == "crypto"``.
+    """
+    raw = get_env("GP_EXCLUDE_PAIRS", "GBP/JPY")
+    bans = {normalize_pair(p) for p in raw.split(",") if p.strip()}
+    b = (bot or "").strip().lower()
+    if b == "crypto":
+        bans = {p for p in bans if not p.startswith("BTC/")}
+    return bans
 
 
 def state_path(bot: str) -> Path:
@@ -131,7 +141,7 @@ def ensure_seeded(bot: str, *, state: dict | None = None) -> dict:
     st = state if state is not None else load_state(bot)
     pairs = st.setdefault("pairs", {})
     dirty = False
-    for pair in env_seed_bans():
+    for pair in env_seed_bans(bot=bot):
         if pair not in pairs:
             pairs[pair] = _empty_pair(banned=True, seeded=True)
             pairs[pair]["last_reason"] = "seeded_from_env"
@@ -141,35 +151,52 @@ def ensure_seeded(bot: str, *, state: dict | None = None) -> dict:
     return st
 
 
-def compute_expectancy(pnls: list[float], *, cost_pct: float | None = None) -> float:
-    """Mean % PnL per sample after optional round-trip cost haircut (0.0 when empty)."""
-    if not pnls:
-        return 0.0
-    c = promote_cost_pct() if cost_pct is None else float(cost_pct)
-    return sum(float(x) - c for x in pnls) / len(pnls)
+def promote_cost_pct(pair: str | None = None) -> float:
+    """Round-trip cost %% for GP promote expectancy.
 
-
-def promote_cost_pct() -> float:
-    """Round-trip cost %% for GP promote expectancy (Phase 4).
-
-    Defaults to 0 when unset (legacy gate math). Set ``GP_PROMOTE_COST_PCT``
-    (or ``SCORECARD_COST_PCT`` as fallback only when GP key is explicitly empty
-    and SCORECARD is set) — prefer an explicit GP key in Railway.
+    Prefer ``GP_PROMOTE_COST_PCT`` when set. Else BTC → CostModel. Else
+    ``SCORECARD_COST_PCT`` / flat fallback. Never silently 0 for BTC.
     """
     raw = get_env("GP_PROMOTE_COST_PCT", "")
     if str(raw).strip():
         try:
             return max(0.0, float(raw))
         except ValueError:
-            return 0.0
-    # Optional shared scorecard haircut when ops set it for the freeze profile.
+            pass
+    try:
+        from hermes_core.engines.cost_model import is_btc_pair, round_trip_pct
+
+        if pair and is_btc_pair(pair):
+            return round_trip_pct(pair)
+        # Crypto bot promote without pair arg: still use BTC model.
+        from hermes_core.state.paths import current_bot
+
+        if (pair is None or not str(pair).strip()) and current_bot() == "crypto":
+            return round_trip_pct("BTC/USDT")
+    except Exception:  # noqa: BLE001
+        pass
     raw2 = get_env("SCORECARD_COST_PCT", "")
     if str(raw2).strip():
         try:
             return max(0.0, float(raw2))
         except ValueError:
             return 0.0
+    try:
+        from hermes_core.engines.cost_model import is_btc_pair, round_trip_pct
+
+        if pair and is_btc_pair(pair):
+            return round_trip_pct(pair)
+    except Exception:  # noqa: BLE001
+        pass
     return 0.0
+
+
+def compute_expectancy(pnls: list[float], *, cost_pct: float | None = None, pair: str | None = None) -> float:
+    """Mean % PnL per sample after optional round-trip cost haircut (0.0 when empty)."""
+    if not pnls:
+        return 0.0
+    c = promote_cost_pct(pair) if cost_pct is None else float(cost_pct)
+    return sum(float(x) - c for x in pnls) / len(pnls)
 
 
 def _in_cooldown(rec: dict, now: float) -> bool:
@@ -247,12 +274,12 @@ def _apply_samples(
             merged = list(rec.get("samples") or []) + cleaned
             rec["samples"] = merged[-window:]
         rec["n"] = len(rec["samples"])
-        rec["expectancy"] = round(compute_expectancy(rec["samples"]), 6)
+        rec["expectancy"] = round(compute_expectancy(rec["samples"], pair=pair), 6)
         rec["expectancy_raw"] = round(
             (sum(float(x) for x in rec["samples"]) / len(rec["samples"])) if rec["samples"] else 0.0,
             6,
         )
-        rec["cost_pct"] = promote_cost_pct()
+        rec["cost_pct"] = promote_cost_pct(pair)
 
         new_banned, reason = decide(
             bool(rec.get("banned")),
@@ -431,7 +458,7 @@ def recommend_exclude_action(
 def snapshot_for_dashboard(bot: str, pairs: list[str] | None = None) -> dict:
     """Per-pair promote-gate snapshot for dashboard ingest (incl. recommendations)."""
     st = ensure_seeded(bot)
-    seeds = env_seed_bans()
+    seeds = env_seed_bans(bot=bot)
     gate_pairs = st.get("pairs") or {}
     keys: list[str] = []
     if pairs:

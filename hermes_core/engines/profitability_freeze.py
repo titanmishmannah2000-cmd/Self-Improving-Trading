@@ -80,5 +80,5 @@ def focus_pairs_for_bot(bot: str) -> list[str]:
     if b == "forex":
         return ["EUR/USD", "GBP/USD"]
     if b == "crypto":
-        return ["BTC/USD", "ETH/USD"]
+        return ["BTC/USDT"]
     return []

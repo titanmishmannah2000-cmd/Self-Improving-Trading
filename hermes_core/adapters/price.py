@@ -48,23 +48,9 @@ _last_candle_ts: dict[str, float] = {}
 
 def _to_symbol(pair: str) -> str:
     """Map a HERMES pair to a yfinance ticker symbol."""
-    if pair == "BTC/USD":
-        return "BTC-USD"  # spot crypto ticker (BTCUSD=X is deprecated/404)
-    if pair == "ETH/USD":
-        return "ETH-USD"
-    if "-" in pair:  # generic crypto reference, e.g. BTC-USD
-        return pair
-    if pair == "XAU/USD":
-        # COMEX gold futures — XAU=F is a broken/micro series (~910 vs ~4080 spot)
-        return "GC=F"
-    if pair == "XAG/USD":
-        # COMEX silver futures — XAG=F is delisted on Yahoo
-        return "SI=F"
-    # Already a yfinance ticker (GC=F, SI=F, BTC-USD, …)
-    if "=" in pair or pair.endswith("-USD"):
-        return pair
-    # forex: EUR/USD -> EURUSD=X
-    return pair.replace("/", "") + "=X"
+    from hermes_core.adapters.pair_aliases import yfinance_symbol
+
+    return yfinance_symbol(pair)
 
 
 def _normalize(df: Any) -> pd.DataFrame | None:

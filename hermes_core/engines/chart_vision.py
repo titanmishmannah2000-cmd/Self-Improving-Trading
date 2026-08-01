@@ -86,7 +86,9 @@ SYMBOL_MAP = {
     "XAU/USD": "GC=F",
     "XAG/USD": "SI=F",
     "BTC/USD": "BTC-USD",
+    "BTC/USDT": "BTC-USD",
     "ETH/USD": "ETH-USD",
+    "ETH/USDT": "ETH-USD",
 }
 
 # in-memory cache: pair -> (context, ts)

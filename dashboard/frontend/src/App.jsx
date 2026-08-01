@@ -85,9 +85,8 @@ const PAIR_META = {
   "GBP/USD":  { bot: "forex", color: "#c9a36a", timezone: "London/NY", plain: "British Pound vs US Dollar" },
   // Commodities — gold focus (silver parked)
   "XAU/USD":  { bot: "gold", color: "#D4AF37", timezone: "24h", plain: "Gold" },
-  // Crypto
-  "BTC/USD":  { bot: "crypto", color: "#F7931A", timezone: "24h", plain: "Bitcoin" },
-  "ETH/USD":  { bot: "crypto", color: "#627EEA", timezone: "24h", plain: "Ethereum" },
+  // Crypto — BTC/USDT only (Phase 0); feeds still Coinbase/Yahoo BTC-USD
+  "BTC/USDT": { bot: "crypto", color: "#F7931A", timezone: "24h", plain: "Bitcoin" },
 };
 
 /** Parked pairs kept only for plain-language lookups on old trades. */
@@ -95,6 +94,8 @@ const PARKED_PAIR_META = {
   "AUD/USD":  { bot: "forex", color: "#5B7C99", timezone: "Sydney/Tokyo", plain: "Australian Dollar vs US Dollar" },
   "GBP/JPY":  { bot: "forex", color: "#9B6B9E", timezone: "London/Tokyo", plain: "British Pound vs Japanese Yen" },
   "XAG/USD":  { bot: "gold", color: "#C0C0C0", timezone: "24h", plain: "Silver" },
+  "BTC/USD":  { bot: "crypto", color: "#F7931A", timezone: "24h", plain: "Bitcoin" },
+  "ETH/USD":  { bot: "crypto", color: "#627EEA", timezone: "24h", plain: "Ethereum" },
 };
 
 const ALL_PAIR_META = { ...PAIR_META, ...PARKED_PAIR_META };
@@ -2139,7 +2140,10 @@ function StatusHero({ overview, marketClosed, botStatus }) {
   }
 
   const avgPnl = openCount ? totalPnl / openCount : 0;
-  const pausedCount = ["forex", "gold", "crypto"].filter((b) => botStatus?.[b] === "paused").length;
+  const activeBots = overview?.active_bots?.length
+    ? overview.active_bots
+    : ["forex", "gold", "crypto"];
+  const pausedCount = activeBots.filter((b) => botStatus?.[b] === "paused").length;
 
   let verdict = "All quiet — bots are watching";
   let mood = "calm";
@@ -3207,10 +3211,15 @@ function FlatlineView({ apiBase }) {
 export default function App() {
   const { mode, setup, login, logout } = useAuth();
   const [overview, setOverview] = useState(null);
+  const [uiConfig, setUiConfig] = useState({ bots: ["forex", "gold", "crypto"], title: "Hermes" });
   const [strategyParams, setStrategyParams] = useState(null);
   const [selectedPair, setSelectedPair] = useState(null);
   const [error, setError] = useState(null);
   const [lastFetch, setLastFetch] = useState(null);
+  const activeBots = uiConfig?.bots?.length
+    ? uiConfig.bots
+    : (overview?.active_bots || ["forex", "gold", "crypto"]);
+  const showBot = (bot) => activeBots.includes(bot);
   const [view, setView] = useState("live");
   const [subTab, setSubTab] = useState("activity");
   const { alerts, dismiss } = useAlerts(API_BASE);
@@ -3270,6 +3279,9 @@ export default function App() {
       if (!res.ok) throw new Error(`API returned ${res.status}`);
       const json = await res.json();
       setOverview(json);
+      if (Array.isArray(json.active_bots) && json.active_bots.length) {
+        setUiConfig((prev) => ({ ...prev, bots: json.active_bots }));
+      }
       setLastFetch(new Date());
       setError(null);
     } catch (e) {
@@ -3277,10 +3289,19 @@ export default function App() {
     }
   }, []);
 
+  const fetchUiConfig = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/ui-config`);
+      if (!res.ok) return;
+      const json = await res.json();
+      if (Array.isArray(json.bots) && json.bots.length) setUiConfig(json);
+    } catch (e) { /* silent */ }
+  }, []);
+
   const fetchStrategyParams = useCallback(async () => {
     try {
       const merged = { pairs: {} };
-      for (const bot of ["forex", "gold", "crypto"]) {
+      for (const bot of activeBots) {
         const res = await fetch(`${API_BASE}/api/strategy-params/${bot}`);
         if (res.ok) {
           const data = await res.json();
@@ -3289,11 +3310,11 @@ export default function App() {
       }
       setStrategyParams(merged);
     } catch (e) { /* silent */ }
-  }, []);
+  }, [activeBots]);
 
   const fetchBotStatus = useCallback(async () => {
     const status = {};
-    for (const bot of ["forex", "gold", "crypto"]) {
+    for (const bot of activeBots) {
       try {
         const res = await fetch(`${API_BASE}/api/bot/${bot}/pulse`);
         if (res.ok) {
@@ -3303,16 +3324,18 @@ export default function App() {
       } catch (e) { /* silent */ }
     }
     setBotStatus(status);
-  }, []);
+  }, [activeBots]);
 
   const fetchPerVersion = useCallback(async () => {
     const data = {};
-    for (const bot of ["forex", "gold", "crypto"]) {
+    for (const bot of activeBots) {
       try { const r = await fetch(`${API_BASE}/api/per-version/${bot}`); if (r.ok) data[bot] = (await r.json()).versions || []; }
       catch (e) { /* silent */ }
     }
     setPerVersion(data);
-  }, []);
+  }, [activeBots]);
+
+  useEffect(() => { fetchUiConfig(); }, [fetchUiConfig]);
 
   useEffect(() => {
     const isLiveTab = view === "live" || view === "activity";
@@ -3486,6 +3509,7 @@ export default function App() {
             </>
           )}
 
+          {showBot("forex") && (
           <section className={`bot-section ${tourStep === 1 ? "tour-highlight-section" : ""}`} data-tour="cards">
             <BotToggle botName="forex" label={isWatcher ? "Currencies" : "Foreign Exchange"} staleDays={overview?.bots?.forex?.live_indicators?.discovery_stale_days} />
             <div className="cards-grid" role="list" aria-label="Forex pairs">
@@ -3507,7 +3531,9 @@ export default function App() {
               )))}
             </div>
           </section>
+          )}
 
+          {showBot("gold") && (
           <section className="bot-section">
             <BotToggle botName="gold" label={isWatcher ? "Metals" : "Gold"} staleDays={overview?.bots?.gold?.live_indicators?.discovery_stale_days} />
             <div className="cards-grid" role="list" aria-label="Gold pairs">
@@ -3529,12 +3555,14 @@ export default function App() {
               )))}
             </div>
           </section>
+          )}
 
-          <section className="bot-section">
-            <BotToggle botName="crypto" label="Crypto" staleDays={overview?.bots?.crypto?.live_indicators?.discovery_stale_days} />
+          {showBot("crypto") && (
+          <section className={`bot-section ${!showBot("forex") && tourStep === 1 ? "tour-highlight-section" : ""}`} data-tour="cards">
+            <BotToggle botName="crypto" label={uiConfig?.scope === "btc" ? "BTC/USDT" : "Crypto"} staleDays={overview?.bots?.crypto?.live_indicators?.discovery_stale_days} />
             <div className="cards-grid" role="list" aria-label="Crypto pairs">
               {!overview ? (
-                Array.from({ length: 2 }).map((_, i) => <SkeletonCard key={i} />)
+                Array.from({ length: 1 }).map((_, i) => <SkeletonCard key={i} />)
               ) : (
                 Object.entries(PAIR_META).filter(([,m]) => m.bot === "crypto").map(([pair]) => (
                 <PairCard
@@ -3559,6 +3587,7 @@ export default function App() {
               </div>
             )}
           </section>
+          )}
 
           {selectedPair && view === "live" && (
             <button className="scroll-top-btn" onClick={scrollToTop} title="Scroll to top">

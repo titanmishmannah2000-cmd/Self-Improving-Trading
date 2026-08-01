@@ -171,6 +171,12 @@ def _discover_bot_for_pair(pair: str) -> str | None:
     bots_dir = repo_root() / "bots"
     if not bots_dir.exists():
         return None
+    # BTC/USDT Focus: legacy BTC/USD (and ETH/USD) resolve to crypto when that
+    # bot declares the USDT-named pair.
+    aliases = {"BTC/USD": "BTC/USDT", "ETH/USD": "ETH/USDT"}
+    candidates = {pair}
+    if pair in aliases:
+        candidates.add(aliases[pair])
     for bot_dir in sorted(bots_dir.iterdir()):
         cfg_path = bot_dir / "config.yaml"
         if not cfg_path.exists():
@@ -179,7 +185,8 @@ def _discover_bot_for_pair(pair: str) -> str | None:
             cfg = _read_yaml(cfg_path)
         except ValidationError:
             continue
-        if any(declared == pair for declared in (cfg.get("pairs") or [])):
+        declared = set(cfg.get("pairs") or [])
+        if candidates & declared:
             return bot_dir.name
     return None
 

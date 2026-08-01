@@ -180,11 +180,23 @@ def cost_aware_ok(
     if px <= 0 or a < 0:
         return False
     if cost_pct is None:
-        raw = (get_env("SCORECARD_COST_PCT", "") or "").strip()
         try:
-            cost = float(raw) if raw else DEFAULT_COST_PCT
-        except ValueError:
-            cost = DEFAULT_COST_PCT
+            from hermes_core.engines.cost_model import is_btc_pair, round_trip_pct
+
+            if pair and is_btc_pair(pair):
+                cost = round_trip_pct(pair, atr_pct=(a / px) * 100.0 if px > 0 else None)
+            else:
+                raw = (get_env("SCORECARD_COST_PCT", "") or "").strip()
+                try:
+                    cost = float(raw) if raw else DEFAULT_COST_PCT
+                except ValueError:
+                    cost = DEFAULT_COST_PCT
+        except Exception:  # noqa: BLE001
+            raw = (get_env("SCORECARD_COST_PCT", "") or "").strip()
+            try:
+                cost = float(raw) if raw else DEFAULT_COST_PCT
+            except ValueError:
+                cost = DEFAULT_COST_PCT
     else:
         cost = float(cost_pct)
     cost = max(0.0, cost)

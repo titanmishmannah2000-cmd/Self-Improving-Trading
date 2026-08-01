@@ -1446,6 +1446,14 @@ def run_reflection_pipeline(
     }
     if fetch_prices is not None:
         kwargs["fetch_prices"] = fetch_prices
+    try:
+        from hermes_core.engines.cost_model import round_trip_pct, stress_mult
+
+        kwargs["cost_pct"] = round_trip_pct(pair)
+        kwargs["cost_stress_mult"] = 1.0  # primary gate at 1×; stress logged separately
+        _stress = round_trip_pct(pair, stressed=True)
+    except Exception:  # noqa: BLE001
+        _stress = None
     verdict = backtest_with_history(
         pair,
         prop["variable"],
@@ -1453,6 +1461,32 @@ def run_reflection_pipeline(
         prop["new"],
         **kwargs,
     )
+    if _stress is not None and isinstance(verdict, dict):
+        try:
+            from hermes_core.engines.cost_model import estimate, stress_mult
+
+            verdict["cost_model"] = estimate(pair).as_dict()
+            stress_v = backtest_with_history(
+                pair,
+                prop["variable"],
+                prop["old"],
+                prop["new"],
+                **{**kwargs, "cost_pct": round_trip_pct(pair), "cost_stress_mult": stress_mult()},
+            )
+            verdict["cost_stress"] = {
+                "approved": stress_v.get("approved"),
+                "reason": stress_v.get("reason"),
+                "stressed_round_trip_pct": _stress,
+            }
+            # BTC/USDT Focus: fail reflect deploy if 2× cost stress does not pass.
+            if verdict.get("approved") and not stress_v.get("approved"):
+                verdict["approved"] = False
+                verdict["reason"] = (
+                    f"cost_stress_failed:{stress_v.get('reason') or '2x_cost'}"
+                )
+        except Exception:  # noqa: BLE001
+            pass
+
     _log_hypothesis(
         {
             **{k: prop.get(k) for k in ("pair", "bot", "variable", "old", "new")},

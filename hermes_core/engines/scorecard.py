@@ -15,10 +15,19 @@ from hermes_core.env import get_env
 from hermes_core.state.paths import bot_state_dir
 
 # Default round-trip cost haircut (% of notional) applied to each closed trade.
+# BTC uses CostModel; this remains the FX/gold / unset fallback.
 DEFAULT_COST_PCT = 0.05  # 0.05% ≈ FX-ish; override via SCORECARD_COST_PCT
 
 
-def cost_pct() -> float:
+def cost_pct(pair: str | None = None, *, atr_pct: float | None = None) -> float:
+    """Round-trip cost %% for scorecard. BTC → venue CostModel; else flat env."""
+    try:
+        from hermes_core.engines.cost_model import is_btc_pair, round_trip_pct
+
+        if pair and is_btc_pair(pair):
+            return round_trip_pct(pair, atr_pct=atr_pct)
+    except Exception:  # noqa: BLE001 — never break scorecard on import/env
+        pass
     raw = get_env("SCORECARD_COST_PCT", "")
     if not raw.strip():
         return DEFAULT_COST_PCT
@@ -85,12 +94,14 @@ def summarize_bucket(
     trades: list[dict],
     *,
     cost: float | None = None,
+    pair: str | None = None,
 ) -> dict[str, Any]:
     """Aggregate one (pair, entry_type) bucket."""
-    c = float(cost_pct() if cost is None else cost)
+    p = pair or (str(trades[0].get("pair") or trades[0].get("symbol") or "") if trades else "")
+    c = float(cost_pct(p) if cost is None else cost)
     raw_pnls = [_pnl_of(t) for t in trades]
-    pnls = [float(p) for p in raw_pnls if p is not None]
-    adj = [p - c for p in pnls]
+    pnls = [float(x) for x in raw_pnls if x is not None]
+    adj = [x - c for x in pnls]
     n = len(adj)
     if n == 0:
         return {
@@ -105,8 +116,8 @@ def summarize_bucket(
             "kill": True,
             "verdict": "no_trades",
         }
-    wins = [p for p in adj if p > 0]
-    losses = [p for p in adj if p <= 0]
+    wins = [x for x in adj if x > 0]
+    losses = [x for x in adj if x <= 0]
     wr = len(wins) / n
     exp = sum(adj) / n
     gross_win = sum(wins)
@@ -153,19 +164,17 @@ def build_scorecard(
     by_pair_type: dict[str, dict[str, Any]] = {}
     for (pair, et), ts in sorted(buckets.items()):
         key = f"{pair}|{et}"
-        s = summarize_bucket(ts, cost=cost)
+        s = summarize_bucket(ts, cost=cost, pair=pair)
         s["pair"] = pair
         s["entry_type"] = et
         s["sample_ok"] = s["n"] >= int(min_n)
         by_pair_type[key] = s
 
-    fleet_pnls_adj: list[float] = []
-    c = float(cost_pct() if cost is None else cost)
-    for t in rows:
-        p = _pnl_of(t)
-        if p is not None:
-            fleet_pnls_adj.append(p - c)
-    fleet = summarize_bucket(rows, cost=cost)
+    sample_pair = None
+    if rows:
+        sample_pair = str(rows[0].get("pair") or rows[0].get("symbol") or "") or None
+    c = float(cost_pct(sample_pair) if cost is None else cost)
+    fleet = summarize_bucket(rows, cost=cost, pair=sample_pair)
     fleet["pair"] = "*"
     fleet["entry_type"] = "*"
     fleet["sample_ok"] = fleet["n"] >= int(min_n)

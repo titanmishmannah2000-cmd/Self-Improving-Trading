@@ -457,7 +457,29 @@ def _process_exit(
         return
     # --- REAL close: log the trade BEFORE deleting the open (durability).
     entry_type = pos.get("entry_type", "mean_reversion")
-    pnl = pos["unrealised_pct"]
+    _side = str(pos.get("side") or "long")
+    _entry_mid = float(pos.get("entry_mid") or pos["entry_price"])
+    _exit_mid = float(price)
+    _exit_fill = _exit_mid
+    _entry_fill = float(pos["entry_price"])
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.cost_model import apply_exit_fill
+
+        _exit_fill = apply_exit_fill(
+            _exit_mid, _side, float(pos.get("exit_haircut_pct") or 0.0)
+        )
+    if _side.lower() in ("short", "sell"):
+        gross = (_entry_mid - _exit_mid) / _entry_mid * 100.0 if _entry_mid else 0.0
+        net = (_entry_fill - _exit_fill) / _entry_fill * 100.0 if _entry_fill else 0.0
+    else:
+        gross = (_exit_mid - _entry_mid) / _entry_mid * 100.0 if _entry_mid else 0.0
+        net = (_exit_fill - _entry_fill) / _entry_fill * 100.0 if _entry_fill else 0.0
+    fees_pct = float(pos.get("fees_pct_rt") or 0.0)
+    # Prefer explicit fee field; if missing, infer from gross−net.
+    if fees_pct <= 0 and abs(gross - net) > 1e-12:
+        fees_pct = abs(gross - net)
+    pnl = net  # authoritative closed PnL is cost-aware
+    pos["unrealised_pct"] = pnl
     _exc = {}
     with contextlib.suppress(Exception):
         from hermes_core.engines.excursion import excursion_from_position
@@ -472,13 +494,23 @@ def _process_exit(
         "exit_reason": ex.reason,
         "entry_type": entry_type,
         "strategy_version": pos.get("strategy_version") or entry_type,
-        "entry_price": pos["entry_price"],
-        "exit_price": price,
+        "entry_price": _entry_fill,
+        "entry_mid": _entry_mid,
+        "exit_price": _exit_fill,
+        "exit_mid": _exit_mid,
         "entry_ts": pos.get("entry_ts"),
         "exit_ts": _now_iso(),
-        "pnl_pct": pnl,
+        "gross_pnl_pct": round(gross, 6),
+        "fees_pct": round(fees_pct, 6),
+        "slippage_pct": round(
+            float((pos.get("cost_model") or {}).get("slippage_pct_one_way") or 0.0) * 2.0,
+            6,
+        ),
+        "net_pnl_pct": round(net, 6),
+        "pnl_pct": round(net, 6),
         "size": pos["size"],
         "hold_cycles": pos.get("held_cycles", 0),
+        "cost_model": pos.get("cost_model"),
         # Phase 5.1: stamp entry regime so reflection can build same-regime batches.
         "entry_regime": pos.get("entry_regime") or pos.get("regime_label") or pos.get("regime"),
         **{
@@ -1677,6 +1709,20 @@ def run_cycle(
             continue
         health_registry["indicators"] = True
         regimes[pair] = ind.get("regime", "range")  # 'trend'|'range' for dashboard
+        # BTC/USDT Focus: overlay D1 regime label for heartbeat / dashboard.
+        if str(pair).upper().startswith("BTC/") or bot == "crypto":
+            with contextlib.suppress(Exception):
+                from hermes_core.engines import btc_regime as br
+
+                _br = br.classify_btc_regime(pair)
+                regimes[pair] = {
+                    "live": regimes[pair],
+                    "d1": _br.get("label"),
+                    "d1_reason": _br.get("reason"),
+                    "d1_adx": _br.get("adx"),
+                }
+                if cycle % 60 == 0:
+                    br.append_regime_log(bot, _br)
 
         # Chart vision ASAP after regime so flatline/BB/param early-continues
         # still populate heartbeat chart_contexts (BTC was missing for this).
@@ -1847,33 +1893,55 @@ def run_cycle(
                 except Exception:  # noqa: BLE001 — fail open to env list only
                     _excl = {
                         p.strip().upper()
-                        for p in get_env("GP_EXCLUDE_PAIRS", "GBP/JPY,BTC/USD").split(",")
+                        for p in get_env("GP_EXCLUDE_PAIRS", "GBP/JPY").split(",")
                         if p.strip()
                     }
+                    if bot == "crypto":
+                        _excl = {p for p in _excl if not p.startswith("BTC/")}
                     _want_gp = pair.upper() not in _excl
             # Legacy: GP only if traditional quiet. Ranking: also score GP when
             # traditional fires so the better edge can win.
             if _want_gp and (trad_sig is None or _rank_on):
-                try:
-                    from hermes_core.engines import gp_intelligence as gpi
+                # BTC/USDT Focus: D1 regime also gates GP entries (shadow + promote).
+                _btc_block = False
+                if str(pair).upper().startswith("BTC/") or bot == "crypto":
+                    with contextlib.suppress(Exception):
+                        from hermes_core.engines import btc_regime as br
 
-                    _sup, _reason = gpi.should_suppress(pair)
-                    if _sup and trad_sig is None and not _rank_on:
-                        _log_skip(bot, pair, cycle, f"gp_intel_suppress:{_reason}")
-                        summary["skips"] += 1
-                        continue
-                    if not _sup:
-                        gp_sig = _gp_vote(
-                            pair,
-                            prices,
-                            strategy,
-                            cortex=cortex,
-                            bot=bot,
-                            promote=True,
-                            use_invent_tf=True,
-                        )
-                except Exception:  # noqa: BLE001 — GP must never break the cycle
-                    gp_sig = None
+                        _brg = br.classify_btc_regime(pair)
+                        if br.hard_blocks_entry(str(_brg.get("label") or "")):
+                            _btc_block = True
+                            if trad_sig is None:
+                                _log_skip(
+                                    bot,
+                                    pair,
+                                    cycle,
+                                    f"btc_regime_gp:{_brg.get('label')}:{_brg.get('reason')}",
+                                )
+                                summary["skips"] += 1
+                if _btc_block and trad_sig is None and not _rank_on:
+                    continue
+                if not _btc_block:
+                    try:
+                        from hermes_core.engines import gp_intelligence as gpi
+
+                        _sup, _reason = gpi.should_suppress(pair)
+                        if _sup and trad_sig is None and not _rank_on:
+                            _log_skip(bot, pair, cycle, f"gp_intel_suppress:{_reason}")
+                            summary["skips"] += 1
+                            continue
+                        if not _sup:
+                            gp_sig = _gp_vote(
+                                pair,
+                                prices,
+                                strategy,
+                                cortex=cortex,
+                                bot=bot,
+                                promote=True,
+                                use_invent_tf=True,
+                            )
+                    except Exception:  # noqa: BLE001 — GP must never break the cycle
+                        gp_sig = None
 
             sig = None
             _rank_meta: dict = {
@@ -2320,10 +2388,28 @@ def run_cycle(
                 _gb_frac = DEFAULT_MFE_GIVEBACK_FRAC
             _gb_on = strategy.get("mfe_giveback_enabled", True) is not False
             stop = _atr_stop_for(strategy, price, atr)
+            _side = str(getattr(sig, "side", None) or strategy.get("entry", {}).get("direction") or "long")
+            _entry_mid = float(price)
+            _cost = None
+            _entry_fill = _entry_mid
+            with contextlib.suppress(Exception):
+                from hermes_core.engines.cost_model import estimate, apply_entry_fill
+
+                _atr_pct = None
+                if atr and _entry_mid > 0:
+                    _atr_pct = float(atr) / _entry_mid * 100.0
+                _cost = estimate(pair, atr_pct=_atr_pct)
+                _entry_fill = apply_entry_fill(_entry_mid, _side, _cost.entry_haircut_pct)
             open_positions[pair] = {
                 "id": f"{bot}:{pair}:{int(time.time())}",
                 "entry_ts": _now_iso(),
-                "entry_price": price,
+                "entry_price": _entry_fill,
+                "entry_mid": _entry_mid,
+                "side": _side,
+                "cost_model": _cost.as_dict() if _cost is not None else None,
+                "entry_haircut_pct": (_cost.entry_haircut_pct if _cost else 0.0),
+                "exit_haircut_pct": (_cost.exit_haircut_pct if _cost else 0.0),
+                "fees_pct_rt": (_cost.round_trip_pct if _cost else 0.0),
                 "size": min(size, MAX_POSITION_SIZE),
                 "stop_loss_pct": sl,
                 "profit_target_pct": tp,

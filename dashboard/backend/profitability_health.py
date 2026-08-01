@@ -14,7 +14,7 @@ from typing import Any
 FOCUS_PAIRS: dict[str, list[str]] = {
     "forex": ["EUR/USD", "GBP/USD"],
     "gold": ["XAU/USD"],
-    "crypto": ["BTC/USD", "ETH/USD"],
+    "crypto": ["BTC/USDT"],
 }
 
 PHASE0_ON = ("BOOK_RISK",)
@@ -39,7 +39,9 @@ MIN_SANE: dict[str, float] = {
     "AUD/USD": 0.3,
     "GBP/JPY": 50.0,
     "BTC/USD": 1000.0,
+    "BTC/USDT": 1000.0,
     "ETH/USD": 50.0,
+    "ETH/USDT": 50.0,
 }
 MAX_SANE: dict[str, float] = {
     "XAU/USD": 20_000.0,
@@ -49,7 +51,9 @@ MAX_SANE: dict[str, float] = {
     "AUD/USD": 3.0,
     "GBP/JPY": 400.0,
     "BTC/USD": 5_000_000.0,
+    "BTC/USDT": 5_000_000.0,
     "ETH/USD": 500_000.0,
+    "ETH/USDT": 500_000.0,
 }
 
 DEFAULT_COST_PCT = 0.05
@@ -311,6 +315,14 @@ def build_profitability_health(
                     )
 
             # Closed trades: focus pairs; prefer since-freeze non-GP for Phase 1 warn.
+            bot_cost = cost
+            if cost_pct is None and bot == "crypto":
+                try:
+                    from hermes_core.engines.cost_model import round_trip_pct
+
+                    bot_cost = round_trip_pct("BTC/USDT")
+                except Exception:  # noqa: BLE001
+                    bot_cost = cost
             rows = []
             for sql in (
                 "SELECT pair, pnl_pct, exit_reason, exit_ts, entry_ts, strategy_type, raw_json "
@@ -341,9 +353,9 @@ def build_profitability_health(
                 et = _entry_type_of(r).lower()
                 if ts >= PHASE0_FREEZE_TS and et != "gp_ensemble":
                     since.append(rec)
-            score_life = _score_trades(lifetime, cost=cost)
+            score_life = _score_trades(lifetime, cost=bot_cost)
             score_life["window"] = "lifetime"
-            score_since = _score_trades(since, cost=cost)
+            score_since = _score_trades(since, cost=bot_cost)
             score_since["window"] = "since_freeze"
             # Primary scorecard for UI = since-freeze when any samples; else lifetime.
             score = dict(score_since if score_since["n"] > 0 else score_life)

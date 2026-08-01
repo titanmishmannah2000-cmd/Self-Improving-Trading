@@ -26,6 +26,7 @@ from collections.abc import Callable
 
 import httpx
 
+from hermes_core.adapters.pair_aliases import CRYPTO_FEED_PAIRS, coinbase_product, is_crypto_pair
 from hermes_core.adapters.price import fetch_sync as _yf_fetch
 from hermes_core.adapters.price import seed_history_sync as _yf_seed_history
 from hermes_core.adapters.tick_history import (
@@ -72,7 +73,7 @@ HISTORY_MIN_BARS = 50
 # TICK_* constants imported from tick_history (shared with crypto WS).
 
 # crypto pairs served by a live websocket stream (Coinbase public WS, free RT)
-_CRYPTO_PAIRS = {"BTC/USD", "ETH/USD"}
+_CRYPTO_PAIRS = set(CRYPTO_FEED_PAIRS)
 _METAL_PAIRS = frozenset({"XAU/USD", "XAG/USD"})
 _FX_PAIRS = frozenset({"EUR/USD", "GBP/USD", "AUD/USD", "GBP/JPY"})
 
@@ -203,10 +204,15 @@ def _frankfurter_fx_history(pair: str, max_candles: int = 300) -> list[dict]:
 
 
 def _yf_intraday_history(pair: str, max_candles: int = 300) -> list[dict]:
-    """Yahoo intraday history (5m → 15m → 1h). Fail-soft → []."""
+    """Yahoo intraday history (5m → 15m → 1h → 4h). Fail-soft → []."""
     from hermes_core.adapters.price import seed_history_interval_sync
 
-    for interval, period in (("5m", "60d"), ("15m", "60d"), ("1h", "60d")):
+    for interval, period in (
+        ("5m", "60d"),
+        ("15m", "60d"),
+        ("1h", "60d"),
+        ("4h", "120d"),
+    ):
         try:
             hist = (
                 seed_history_interval_sync(
@@ -547,9 +553,9 @@ class CoinbaseTickerSource(_BaseSource):
     _min_interval = 1.0
 
     async def fetch(self, pair: str) -> float | None:
-        if pair not in _CRYPTO_PAIRS:
+        if not is_crypto_pair(pair):
             return None
-        symbol = pair.replace("/", "-")
+        symbol = coinbase_product(pair)
 
         async def _go() -> float | None:
             client = self._get_client()
@@ -598,7 +604,7 @@ class PriceAggregator:
         # crypto served by the WS stream (real-time). Live ticks are forwarded
         # via on_tick so callers can push them to the dashboard instantly.
         self._crypto = PriceStream(
-            [p for p in pairs if p in _CRYPTO_PAIRS],
+            [p for p in pairs if is_crypto_pair(p)],
             on_tick=on_tick,
         )
         self._last_good: dict[str, dict] = {}
