@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useContext, createContext, lazy, Suspense } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef, useContext, createContext, lazy, Suspense } from "react";
 import {
   XAxis, YAxis, Tooltip, Label,
   ResponsiveContainer, ReferenceLine, Area, AreaChart,
@@ -2150,8 +2150,8 @@ function StatusHero({ overview, marketClosed, botStatus }) {
   if (marketClosed) {
     verdict = "Paused — market closed";
     mood = "closed";
-  } else if (pausedCount === 3) {
-    verdict = "All bots paused";
+  } else if (pausedCount === activeBots.length && activeBots.length > 0) {
+    verdict = activeBots.length === 1 ? "Bot paused" : "All bots paused";
     mood = "paused";
   } else if (openCount === 0) {
     verdict = pausedCount > 0
@@ -3216,9 +3216,16 @@ export default function App() {
   const [selectedPair, setSelectedPair] = useState(null);
   const [error, setError] = useState(null);
   const [lastFetch, setLastFetch] = useState(null);
-  const activeBots = uiConfig?.bots?.length
+  // Stabilize bot list identity so poll → setUiConfig cannot recreate fetch
+  // callbacks every cycle (that caused Maximum update depth → black screen).
+  const activeBotsKey = (uiConfig?.bots?.length
     ? uiConfig.bots
-    : (overview?.active_bots || ["forex", "gold", "crypto"]);
+    : (overview?.active_bots || ["forex", "gold", "crypto"])
+  ).join(",");
+  const activeBots = useMemo(
+    () => activeBotsKey.split(",").filter(Boolean),
+    [activeBotsKey],
+  );
   const showBot = (bot) => activeBots.includes(bot);
   const [view, setView] = useState("live");
   const [subTab, setSubTab] = useState("activity");
@@ -3280,7 +3287,12 @@ export default function App() {
       const json = await res.json();
       setOverview(json);
       if (Array.isArray(json.active_bots) && json.active_bots.length) {
-        setUiConfig((prev) => ({ ...prev, bots: json.active_bots }));
+        const nextKey = json.active_bots.join(",");
+        setUiConfig((prev) => {
+          const prevKey = (prev.bots || []).join(",");
+          if (prevKey === nextKey) return prev;
+          return { ...prev, bots: json.active_bots };
+        });
       }
       setLastFetch(new Date());
       setError(null);
@@ -3294,7 +3306,14 @@ export default function App() {
       const res = await fetch(`${API_BASE}/api/ui-config`);
       if (!res.ok) return;
       const json = await res.json();
-      if (Array.isArray(json.bots) && json.bots.length) setUiConfig(json);
+      if (!Array.isArray(json.bots) || !json.bots.length) return;
+      setUiConfig((prev) => {
+        const sameBots = (prev.bots || []).join(",") === json.bots.join(",");
+        const sameTitle = (prev.title || "") === (json.title || "");
+        const sameScope = (prev.scope || "") === (json.scope || "");
+        if (sameBots && sameTitle && sameScope) return prev;
+        return json;
+      });
     } catch (e) { /* silent */ }
   }, []);
 
