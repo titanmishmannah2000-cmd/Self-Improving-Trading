@@ -434,6 +434,61 @@ def test_crypto_rest_works():
     assert abs(c["price"] - 60000.0) < 1.0
 
 
+def test_unchanged_crypto_survives_past_stale_s(monkeypatch):
+    """Flat BTC REST reprints must not age out at the 60s L01 window.
+
+    Weekend / quiet tapes re-print the same Coinbase spot; the old crypto
+    unchanged TTL (== stale_s) caused BTC no_candle while ETH WS stayed warm.
+    """
+    import time as _time
+
+    import hermes_core.adapters.aggregate as agg_mod
+
+    monkeypatch.setattr(agg_mod, "UNCHANGED_STALE_CRYPTO_S", 0.2)
+    agg = PriceAggregator(
+        ["BTC/USD"],
+        sources=_fake_sources(coinbase={"BTC/USD": 60000.0}, yf=None, frank=None, alpha=None),
+        stale_s=0.05,
+    )
+    c1 = agg.fetch_fn("BTC/USD")
+    assert c1 is not None and abs(c1["price"] - 60000.0) < 1.0
+    _time.sleep(0.06)  # past stale_s, within crypto unchanged TTL
+    c2 = agg.fetch_fn("BTC/USD")
+    assert c2 is not None, "flat BTC must stay available within crypto TTL"
+    assert abs(c2["price"] - 60000.0) < 1.0
+    assert float(c2["ts"]) == float(c1["ts"])
+
+
+def test_ephemeral_httpx_cleared_after_fetch_cycle(monkeypatch):
+    """Real httpx clients must be closed after each asyncio.run cycle."""
+    import httpx as _httpx
+
+    class _FakeClient:
+        def __init__(self, *a, **k):
+            self.closed = False
+
+        async def get(self, *a, **k):
+            class _R:
+                def raise_for_status(self):
+                    pass
+
+                def json(self):
+                    return {"price": "60000"}
+
+            return _R()
+
+        async def aclose(self):
+            self.closed = True
+
+    monkeypatch.setattr(_httpx, "AsyncClient", _FakeClient)
+    src = CoinbaseTickerSource()
+    agg = PriceAggregator(["BTC/USD"], sources=[src])
+    c = agg.fetch_fn("BTC/USD")
+    assert c is not None
+    assert abs(c["price"] - 60000.0) < 1.0
+    assert src._client is None
+
+
 def test_l01_stale_returns_none():
     # all sources fail -> aggregator falls back to last_good. Inject an OLD
     # last_good so the [L01] stale guard (stale_s=0.0) returns None.

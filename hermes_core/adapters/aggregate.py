@@ -46,6 +46,10 @@ STALE_S_MAX_LOCAL = STALE_S_MAX
 UNCHANGED_STALE_FX_S = 30 * 60.0
 UNCHANGED_STALE_FX_WEEKEND_S = STALE_S_MAX_LOCAL
 UNCHANGED_STALE_METALS_S = 6 * 3600.0
+# Crypto can sit flat for many minutes (esp. weekends) while Coinbase REST
+# re-prints the same spot. A 60s unchanged/L01 age-out caused BTC no_candle
+# flicker whenever the WS cache went cold and REST returned an identical tick.
+UNCHANGED_STALE_CRYPTO_S = 30 * 60.0
 
 
 def _fx_unchanged_limit(*, now_ts: float | None = None) -> float:
@@ -263,9 +267,11 @@ class _BaseSource:
         self._last_call_ts: float = 0.0
 
     def _get_client(self) -> httpx.AsyncClient:
-        # Tests inject a fake client via `source._client`; production builds a
-        # fresh client per asyncio.run cycle so it binds to the current loop.
-        # Always assign so PriceAggregator.aclose can close the client.
+        # Tests inject a fake (non-httpx) client via ``source._client``.
+        # Production: cache an httpx client for THIS asyncio.run cycle only —
+        # ``PriceAggregator._fetch_async`` closes/clears real httpx clients in
+        # ``finally`` so the next cycle does not reuse a client bound to a
+        # closed loop (gold no_candle / BTC REST flicker). [GUARD L61]
         if self._client is not None:
             return self._client
         self._client = httpx.AsyncClient(timeout=SOURCE_TIMEOUT)
@@ -630,13 +636,31 @@ class PriceAggregator:
                 any_up = True
         return results, any_up
 
+    async def _aclose_ephemeral_httpx(self) -> None:
+        """Close production httpx clients after one asyncio.run cycle.
+
+        Leaves test doubles (non-``httpx.AsyncClient``) alone. [GUARD L61]
+        """
+        for src in self._sources:
+            client = getattr(src, "_client", None)
+            if isinstance(client, httpx.AsyncClient):
+                with contextlib.suppress(Exception):
+                    await client.aclose()
+                src._client = None
+
     async def _fetch_async(self, pair: str) -> dict | None:
-        # crypto: prefer the live stream
+        try:
+            return await self._fetch_async_body(pair)
+        finally:
+            # Fresh loop next cycle must not reuse clients bound to this one.
+            await self._aclose_ephemeral_httpx()
+
+    async def _fetch_async_body(self, pair: str) -> dict | None:
+        # crypto: prefer the live stream; REST (Coinbase) covers cold/stale WS.
         if pair in _CRYPTO_PAIRS:
             candle = self._crypto.fetch_fn(pair)
             if candle is not None:
                 return candle
-            # stream not warm yet -> fall through to sources (none cover crypto)
 
         prices, any_up = await self._poll(pair)
         if not prices:
@@ -665,7 +689,7 @@ class PriceAggregator:
         if disagree and pair in self._last_good:
             prev = self._last_good[pair]
             prev_age = time.time() - float(prev.get("ts", 0))
-            if prev_age <= self.stale_s:
+            if prev_age <= self._stale_limit(pair):
                 return prev
         now = time.time()
         # Unchanged consensus must NOT refresh candle_ts/ts. Free FX sources
@@ -685,7 +709,7 @@ class PriceAggregator:
                 if pair in _METAL_PAIRS:
                     limit = UNCHANGED_STALE_METALS_S
                 elif pair in _CRYPTO_PAIRS:
-                    limit = self.stale_s
+                    limit = UNCHANGED_STALE_CRYPTO_S
                 elif pair in _FX_PAIRS:
                     limit = _fx_unchanged_limit()
                 else:
@@ -742,6 +766,8 @@ class PriceAggregator:
         """
         if pair in _METAL_PAIRS:
             return max(self.stale_s, UNCHANGED_STALE_METALS_S)
+        if pair in _CRYPTO_PAIRS:
+            return max(self.stale_s, UNCHANGED_STALE_CRYPTO_S)
         if pair in _FX_PAIRS:
             return max(self.stale_s, _fx_unchanged_limit())
         return self.stale_s
