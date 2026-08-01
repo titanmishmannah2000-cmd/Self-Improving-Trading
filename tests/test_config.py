@@ -65,10 +65,9 @@ def test_forex_mr_pairs_load_with_correct_type():
 
 
 def test_crypto_pairs_are_momentum_not_mr():
-    """Crypto BTC/USD + ETH/USD and BTC/USDT bot use rsi_momentum (trend)."""
+    """Crypto BTC/USD + ETH/USD use rsi_momentum; BTC bot uses Donchian (Phase 3)."""
     s = load_strategy_for_pair("BTC/USDT", bot="btc")
-    assert s["strategy_type"] == "rsi_momentum"
-    assert s["strategy_type"] != "mean_reversion"
+    assert s["strategy_type"] == "donchian_breakout"
     assert float(s["stop_loss_pct"]) >= 2.0
     assert float(s["position_size_r"]) <= 0.2
     legacy = load_strategy_for_pair("BTC/USD", bot="crypto")

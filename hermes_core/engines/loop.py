@@ -1057,6 +1057,23 @@ def _maybe_discover(bot: str, pair: str, prices: list[float] | None = None, *, c
     if key in _DISCOVERY_LAST and (now - _DISCOVERY_LAST[key]) < DISCOVERY_INTERVAL_S:
         return
 
+    # Phase 3 invent freeze (bots/btc invent.enabled=false).
+    try:
+        from hermes_core.config import load_config
+
+        _inv = (load_config(bot).get("invent") or {}) if bot else {}
+        if isinstance(_inv, dict) and "enabled" in _inv:
+            _raw = _inv.get("enabled")
+            _on = (
+                _raw
+                if isinstance(_raw, bool)
+                else str(_raw).strip().lower() in {"1", "true", "yes", "on"}
+            )
+            if not _on:
+                return
+    except Exception:  # noqa: BLE001 — fail open to legacy invent
+        pass
+
     prof = invent_profile(bot, pair=pair)
     # Skip invent only when THIS pair already has S10-approved formulas on the
     # *current* invent regime (interval + horizon). Old daily/h60 crypto junk

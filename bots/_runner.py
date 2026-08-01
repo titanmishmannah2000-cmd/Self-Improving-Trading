@@ -630,18 +630,33 @@ async def run_bot(bot_name: str) -> None:
             signal.signal(sig, _on_signal)
 
     # Background GP discovery — fully decoupled from the heartbeat cycle.
+    # Phase 3: invent.enabled=false freezes GP invent (Strategy B first).
+    _invent_cfg = cfg.get("invent") if isinstance(cfg.get("invent"), dict) else {}
+    _invent_on = True
+    if "enabled" in _invent_cfg:
+        _raw = _invent_cfg.get("enabled")
+        if isinstance(_raw, bool):
+            _invent_on = _raw
+        else:
+            _invent_on = str(_raw).strip().lower() in {"1", "true", "yes", "on"}
     _disc_cortex = None
-    try:
-        from hermes_core.engines.decision_cortex import Cortex
+    if _invent_on:
+        try:
+            from hermes_core.engines.decision_cortex import Cortex
 
-        _disc_cortex = Cortex(bot=bot)
-    except Exception:
-        _disc_cortex = None
-    print(f"[hermes] starting discovery loop for {bot} pairs={pairs}", flush=True)
-    _disc = threading.Thread(
-        target=_discovery_loop, args=(bot, pairs, _stop, _disc_cortex, cfg), daemon=True
-    )
-    _disc.start()
+            _disc_cortex = Cortex(bot=bot)
+        except Exception:
+            _disc_cortex = None
+        print(f"[hermes] starting discovery loop for {bot} pairs={pairs}", flush=True)
+        _disc = threading.Thread(
+            target=_discovery_loop, args=(bot, pairs, _stop, _disc_cortex, cfg), daemon=True
+        )
+        _disc.start()
+    else:
+        print(
+            f"[hermes] invent frozen for {bot} (invent.enabled=false) — Strategy B only",
+            flush=True,
+        )
     try:
         while not _stop.is_set():
             cycle += 1

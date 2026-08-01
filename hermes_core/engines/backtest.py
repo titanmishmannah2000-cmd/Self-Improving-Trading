@@ -301,6 +301,22 @@ def _entry_signal(
         elif strat_type == "rsi_momentum":
             if rsi <= threshold:
                 sig[i] = 1.0
+        elif strat_type == "donchian_breakout":
+            from hermes_core.indicators import compute_donchian
+
+            entry_cfg = strategy.get("entry") if isinstance(strategy.get("entry"), dict) else {}
+            period = int(entry_cfg.get("donchian_period") or strategy.get("donchian_period") or 20)
+            period = max(5, min(period, 100))
+            window = prices[: i + 1]
+            if len(window) < period + 2:
+                continue
+            channel = compute_donchian(window, period=period)
+            upper = channel.get("upper")
+            if upper is None:
+                continue
+            close = float(window[-1])
+            if close > float(upper):
+                sig[i] = 1.0
     return sig
 
 

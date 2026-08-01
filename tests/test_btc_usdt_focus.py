@@ -13,8 +13,9 @@ def test_btc_config_usdt_only():
     assert cfg["bot"]["name"] == "btc"
     assert cfg["pairs"] == ["BTC/USDT"]
     assert cfg["invent"]["interval"] == "4h"
+    assert cfg["invent"].get("enabled") is False
     s = load_strategy_for_pair("BTC/USDT", bot="btc")
-    assert s["strategy_type"] == "rsi_momentum"
+    assert s["strategy_type"] == "donchian_breakout"
     assert focus_pairs_for_bot("btc") == ["BTC/USDT"]
 
 
@@ -70,7 +71,6 @@ def test_entry_blocked_when_d1_chop(monkeypatch):
     )
     assert sig is None
     assert reason.startswith("btc_regime:chop")
-
 
 def test_pair_aliases_yf_and_coinbase():
     from hermes_core.adapters.pair_aliases import coinbase_product, yfinance_symbol

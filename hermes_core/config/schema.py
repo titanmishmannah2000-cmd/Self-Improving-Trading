@@ -28,7 +28,11 @@ class ValidationError(ValueError):
 # ---------------------------------------------------------------------------
 # Allowed enums
 # ---------------------------------------------------------------------------
-ALLOWED_STRATEGY_TYPES: tuple[str, ...] = ("mean_reversion", "rsi_momentum")
+ALLOWED_STRATEGY_TYPES: tuple[str, ...] = (
+    "mean_reversion",
+    "rsi_momentum",
+    "donchian_breakout",
+)
 
 # Blueprint line 934 session-filter vocabulary.
 ALLOWED_SESSION_FILTERS: tuple[str, ...] = (
@@ -54,12 +58,14 @@ STRATEGY_PARAM_RANGES: dict[str, tuple[float, float]] = {
     "mfe_giveback_frac": (0.1, 1.0),
     "entry.threshold": (5, 95),
     "entry.min_oversold_pairs": (1, 10),
+    "entry.donchian_period": (5, 100),
 }
 
 # Nested params are addressed by dotted path; the resolver maps them to a getter.
 _DOTTED_RESOLVERS = {
     "entry.threshold": lambda s: (s.get("entry") or {}).get("threshold"),
     "entry.min_oversold_pairs": lambda s: (s.get("entry") or {}).get("min_oversold_pairs"),
+    "entry.donchian_period": lambda s: (s.get("entry") or {}).get("donchian_period"),
 }
 
 # Minimum stop-loss, also referenced independently by some guards (L40 floor).

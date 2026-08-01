@@ -99,16 +99,38 @@ def strategy_yaml_path(pair: str, bot: str) -> Path:
 def ensure_strategy_seeded(pair: str, bot: str) -> Path:
     """Copy the image seed onto the volume if the live file is missing.
 
-    Never overwrites an existing volume strategy (reflection deploys must stick).
-    Ensures a ``version`` field is present on first seed (baseline ``00``).
+    Never overwrites an existing volume strategy whose ``version`` is >= the
+    image seed (reflection deploys must stick). If the image seed version is
+    strictly newer (e.g. Phase 3 Donchian bump ``00`` → ``01``), refresh the
+    live file from the seed.
     Returns the live path (whether just created or already present).
     """
     live = strategy_yaml_path(pair, bot)
-    if live.exists():
-        return live
     seed = seed_strategy_path(pair, bot)
     if not seed.exists():
+        if live.exists():
+            return live
         raise ValidationError(f"strategy seed not found: {seed}")
+
+    def _ver(raw) -> tuple[int, ...]:
+        s = str(raw or "0").strip()
+        parts = []
+        for p in s.replace("-", ".").split("."):
+            try:
+                parts.append(int(p))
+            except ValueError:
+                parts.append(0)
+        return tuple(parts) or (0,)
+
+    if live.exists():
+        try:
+            live_data = _read_yaml(live)
+            seed_data = _read_yaml(seed)
+            if _ver(seed_data.get("version")) <= _ver(live_data.get("version")):
+                return live
+        except ValidationError:
+            return live
+
     live.parent.mkdir(parents=True, exist_ok=True)
     try:
         data = _read_yaml(seed)

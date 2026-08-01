@@ -98,7 +98,7 @@ BTC chop destroys trend systems. Reddit consensus: identify market type on bigge
 
 ---
 
-## Phase 3 — Signal stack (simple first)
+## Phase 3 — Signal stack (simple first) — **SHIPPED (Strategy B v1)**
 
 ### Why
 Published TA+ML dumps fail OOS. Simple trend + sit beats complex invent early.
@@ -112,11 +112,12 @@ Published TA+ML dumps fail OOS. Simple trend + sit beats complex invent early.
 4. Ban feature dumps: no “50 indicators → ML selector → subset of lucky months”.
 5. Document economic rationale in one paragraph per strategy (why BTC should trend / break out).
 
-### Optional Strategy A (structural — often faster to green)
-1. Implement **funding cash-and-carry**: long spot BTC + short BTC perp, equal notional.
-2. Enter only when rolling funding mean &gt; all-in cost threshold for N periods.
-3. Exit / flip rules on funding flip + basis blowout.
-4. Keep A and B capital/risk books separate in accounting.
+### Implemented (2026-08)
+- `strategy_type: donchian_breakout` on `bots/btc` (`regime_split: false`).
+- Entry uses prior-N Donchian on **4H** closes (`gp_invent_prices`); D1 gate unchanged (Phase 2).
+- `invent.enabled: false` — discovery thread not started; `_maybe_discover` also no-ops.
+- Economic rationale in `BTC_USDT.yaml` header.
+- Funding Strategy A: **not** started (optional).
 
 ### Done when
 - One primary directional rule set is coded, tested with costs, and runnable without invent.

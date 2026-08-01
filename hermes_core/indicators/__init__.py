@@ -117,6 +117,27 @@ def compute_roc(prices: list[float], period: int = 20) -> float:
     return (last - prev) / prev * 100.0
 
 
+def compute_donchian(prices: list[float], period: int = 20) -> dict[str, float | None]:
+    """Donchian channel from closes (prior ``period`` bars, excluding last).
+
+    Upper/lower are the max/min of ``prices[-(period+1):-1]`` so the current
+    close can break out of a channel that does not include itself. Returns
+    null bands when fewer than ``period + 1`` closes are available.
+    """
+    p = max(int(period), 1)
+    if len(prices) < p + 1:
+        return {"upper": None, "lower": None, "mid": None, "period": float(p)}
+    prior = prices[-(p + 1) : -1]
+    upper = max(prior)
+    lower = min(prior)
+    return {
+        "upper": float(upper),
+        "lower": float(lower),
+        "mid": float((upper + lower) / 2.0),
+        "period": float(p),
+    }
+
+
 def _detect_divergence(prices: list[float], rsi: float) -> str:
     """Heuristic RSI/price divergence over the recent window.
 

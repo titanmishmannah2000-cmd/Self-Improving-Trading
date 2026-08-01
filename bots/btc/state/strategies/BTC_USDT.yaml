@@ -1,14 +1,19 @@
 pair: BTC/USDT
-version: "00"
-# Crypto trends hard — use momentum (same discipline as gold D8), not FX mean-reversion.
-# Profitability Path Phase 1 — primary tunables (≤4): stop, target, RSI threshold, session.
-strategy_type: rsi_momentum
+version: "01"
+# Strategy B v1 (BTC Focus Phase 3) — Donchian breakout on 4H.
+# Economic rationale: BTC spends long stretches in directional expansions after
+# volatility compresses; a prior-N high breakout on 4H captures continuation
+# while the D1 SMA/ADX gate (entry.py) keeps the bot flat in chop/downtrends.
+# GP invent is frozen (bots/btc invent.enabled=false) until ≥50 cost-aware trades.
+strategy_type: donchian_breakout
+# Honor YAML type — do not remap to MR / trend_follow sleeves.
+regime_split: false
 entry:
-  indicator: rsi
   direction: long
-  threshold: 45
-  min_oversold_pairs: 1   # Phase-1 L18: was hard-coded 2
-  bb_std_dev: 2.0
+  donchian_period: 20
+  interval: 4h
+  period: 120d
+  max_candles: 800
   session_filter: "24h"
 stop_loss_pct: 2.0
 profit_target_pct: 4.0

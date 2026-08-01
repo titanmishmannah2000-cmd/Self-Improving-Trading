@@ -371,6 +371,69 @@ def evaluate_entry_detailed(
         )
         return _finish(sig)
 
+    if stype == "donchian_breakout":
+        # BTC Focus Phase 3 Strategy B: 4H Donchian breakout (D1 gate above).
+        from hermes_core.indicators import compute_donchian
+
+        entry_cfg = strategy.get("entry") if isinstance(strategy.get("entry"), dict) else {}
+        period = int(
+            entry_cfg.get("donchian_period")
+            or strategy.get("donchian_period")
+            or 20
+        )
+        period = max(5, min(period, 100))
+        signal_interval = str(
+            entry_cfg.get("interval") or strategy.get("signal_interval") or "4h"
+        )
+        series = list(prices)
+        if pair and signal_interval:
+            fetched = gp_invent_prices(
+                pair,
+                interval=signal_interval,
+                period=str(
+                    entry_cfg.get("period")
+                    or strategy.get("signal_period")
+                    or "120d"
+                ),
+                max_candles=int(
+                    entry_cfg.get("max_candles")
+                    or strategy.get("signal_max_candles")
+                    or 800
+                ),
+            )
+            if fetched and len(fetched) >= period + 2:
+                series = fetched
+        if len(series) < period + 2:
+            return None, "donchian:insufficient_bars"
+        channel = compute_donchian(series, period=period)
+        upper = channel.get("upper")
+        if upper is None:
+            return None, "donchian:insufficient_bars"
+        close = float(series[-1])
+        if close <= float(upper):
+            return None, "donchian:no_breakout"
+        atr = compute_all(series)["atr"]
+        if not _vol_gate(strategy, atr, close, vol_above):
+            return None, "vol"
+        breakout_pct = (close - float(upper)) / float(upper) * 100.0 if upper else 0.0
+        quality = 0.55 + min(max(breakout_pct, 0.0) / 5.0, 0.35)
+        sig = Signal(
+            "donchian_breakout",
+            round(min(quality, 1.0), 4),
+            size,
+            pair,
+            {
+                "entry_type": "donchian_breakout",
+                "donchian_period": period,
+                "donchian_upper": float(upper),
+                "donchian_lower": channel.get("lower"),
+                "signal_interval": signal_interval,
+                "breakout_pct": round(breakout_pct, 4),
+                "close": close,
+            },
+        )
+        return _finish(sig)
+
     return None, "other:unknown_strategy_type"
 
 
