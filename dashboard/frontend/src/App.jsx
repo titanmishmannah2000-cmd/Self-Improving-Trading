@@ -2058,7 +2058,7 @@ function ProfitabilityHealthPanel({ apiBase }) {
       </div>
 
       <div className="ph-bots">
-        {["forex", "gold", "crypto"].map((bot) => {
+        {(Object.keys(bots).length ? Object.keys(bots) : ["forex", "gold", "crypto"]).map((bot) => {
           const b = bots[bot] || {};
           const bl = b.level || "fail";
           const freezeOk = b.freeze?.ok;
@@ -3211,16 +3211,20 @@ function FlatlineView({ apiBase }) {
 export default function App() {
   const { mode, setup, login, logout } = useAuth();
   const [overview, setOverview] = useState(null);
-  const [uiConfig, setUiConfig] = useState({ bots: ["forex", "gold", "crypto"], title: "Hermes" });
+  const [uiConfig, setUiConfig] = useState({ bots: [], title: "Hermes", scope: null });
+  const [uiConfigReady, setUiConfigReady] = useState(false);
   const [strategyParams, setStrategyParams] = useState(null);
   const [selectedPair, setSelectedPair] = useState(null);
   const [error, setError] = useState(null);
   const [lastFetch, setLastFetch] = useState(null);
   // Stabilize bot list identity so poll → setUiConfig cannot recreate fetch
   // callbacks every cycle (that caused Maximum update depth → black screen).
-  const activeBotsKey = (uiConfig?.bots?.length
-    ? uiConfig.bots
-    : (overview?.active_bots || ["forex", "gold", "crypto"])
+  // Prefer ui-config; fall back to overview; never invent forex/gold on a
+  // crypto-only project before scope is known.
+  const activeBotsKey = (
+    uiConfig?.bots?.length
+      ? uiConfig.bots
+      : (overview?.active_bots?.length ? overview.active_bots : [])
   ).join(",");
   const activeBots = useMemo(
     () => activeBotsKey.split(",").filter(Boolean),
@@ -3304,9 +3308,15 @@ export default function App() {
   const fetchUiConfig = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/api/ui-config`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        setUiConfigReady(true);
+        return;
+      }
       const json = await res.json();
-      if (!Array.isArray(json.bots) || !json.bots.length) return;
+      if (!Array.isArray(json.bots) || !json.bots.length) {
+        setUiConfigReady(true);
+        return;
+      }
       setUiConfig((prev) => {
         const sameBots = (prev.bots || []).join(",") === json.bots.join(",");
         const sameTitle = (prev.title || "") === (json.title || "");
@@ -3314,7 +3324,10 @@ export default function App() {
         if (sameBots && sameTitle && sameScope) return prev;
         return json;
       });
-    } catch (e) { /* silent */ }
+      setUiConfigReady(true);
+    } catch (e) {
+      setUiConfigReady(true);
+    }
   }, []);
 
   const fetchStrategyParams = useCallback(async () => {
@@ -3357,6 +3370,7 @@ export default function App() {
   useEffect(() => { fetchUiConfig(); }, [fetchUiConfig]);
 
   useEffect(() => {
+    if (!uiConfigReady || activeBots.length === 0) return;
     const isLiveTab = view === "live" || view === "activity";
     if (isLiveTab) fetchOverview();
     if (view === "live") fetchStrategyParams();
@@ -3370,10 +3384,11 @@ export default function App() {
       fetchBotStatus();
     }, POLL_MS);
     return () => clearInterval(id);
-  }, [fetchOverview, fetchStrategyParams, fetchBotStatus, fetchPerVersion, view]);
+  }, [uiConfigReady, activeBots.length, fetchOverview, fetchStrategyParams, fetchBotStatus, fetchPerVersion, view]);
 
   // ── Force refresh when tab regains visibility/focus (browser throttles bg polling) ──
   useEffect(() => {
+    if (!uiConfigReady || activeBots.length === 0) return;
     const refreshActive = () => {
       if (view === "live" || view === "activity") {
         fetchOverview(); fetchStrategyParams(); fetchBotStatus();
@@ -3387,7 +3402,7 @@ export default function App() {
       window.removeEventListener("focus", refreshActive);
       document.removeEventListener("pageshow", refreshActive);
     };
-  }, [fetchOverview, fetchStrategyParams, fetchBotStatus, view]);
+  }, [uiConfigReady, activeBots.length, fetchOverview, fetchStrategyParams, fetchBotStatus, view]);
 
   // ── Keyboard shortcuts ──
   useEffect(() => {
@@ -3444,15 +3459,18 @@ export default function App() {
   if (mode === "loading") return <div className="auth-screen"><div className="auth-spinner" /></div>;
   if (mode === "setup") return <SetupScreen onSetup={setup} />;
   if (mode === "login") return <LoginScreen onLogin={login} />;
+  if (!uiConfigReady) return <div className="auth-screen"><div className="auth-spinner" /></div>;
 
   return (
     <UiModeContext.Provider value={{ isWatcher, uiMode }}>
     <div className={`app ${isWatcher ? "app-watcher" : "app-advanced"}`} role="main">
       <header className="app-header">
         <div>
-          <h1>Hermes</h1>
+          <h1>{uiConfig?.scope === "btc" ? "Hermes BTC" : "Hermes"}</h1>
           <p className="app-sub">
-            {isWatcher ? "your trading bots at a glance" : "self-improving trading system — live monitor"}
+            {uiConfig?.scope === "btc"
+              ? (isWatcher ? "BTC/USDT paper bot at a glance" : "BTC/USDT — live monitor")
+              : (isWatcher ? "your trading bots at a glance" : "self-improving trading system — live monitor")}
           </p>
         </div>
         <div className="app-status">
