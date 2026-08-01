@@ -2866,6 +2866,55 @@ body {
   animation: authSpin 0.8s linear infinite;
 }
 
+.auth-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.auth-loading-text {
+  margin: 0;
+  color: var(--ghost-strong);
+  font-size: 13px;
+  font-family: 'Inter', sans-serif;
+}
+
+.dash-error {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  background: var(--ink);
+  color: var(--text);
+  text-align: center;
+}
+
+.dash-error pre {
+  max-width: 640px;
+  overflow: auto;
+  text-align: left;
+  background: var(--ink-card);
+  border: 1px solid var(--border);
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--down);
+}
+
+.dash-error button {
+  background: var(--amber);
+  color: #0B0E14;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 @keyframes authSpin {
   to { transform: rotate(360deg); }
 }

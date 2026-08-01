@@ -3212,7 +3212,6 @@ export default function App() {
   const { mode, setup, login, logout } = useAuth();
   const [overview, setOverview] = useState(null);
   const [uiConfig, setUiConfig] = useState({ bots: [], title: "Hermes", scope: null });
-  const [uiConfigReady, setUiConfigReady] = useState(false);
   const [strategyParams, setStrategyParams] = useState(null);
   const [selectedPair, setSelectedPair] = useState(null);
   const [error, setError] = useState(null);
@@ -3243,6 +3242,14 @@ export default function App() {
   const [tourStep, setTourStep] = useState(() =>
     localStorage.getItem("hermes_onboarded") === "1" ? -1 : 0
   );
+
+  // BTC-only dashboard: skip the multi-bot onboarding tour.
+  useEffect(() => {
+    if (uiConfig?.scope === "btc" && tourStep >= 0) {
+      localStorage.setItem("hermes_onboarded", "1");
+      setTourStep(-1);
+    }
+  }, [uiConfig?.scope, tourStep]);
 
   const isWatcher = uiMode === "watcher";
   const visibleTabs = isWatcher ? WATCHER_TABS : TAB_KEYS;
@@ -3306,17 +3313,13 @@ export default function App() {
   }, []);
 
   const fetchUiConfig = useCallback(async () => {
+    const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), 8000) : null;
     try {
-      const res = await fetch(`${API_BASE}/api/ui-config`);
-      if (!res.ok) {
-        setUiConfigReady(true);
-        return;
-      }
+      const res = await fetch(`${API_BASE}/api/ui-config`, ctrl ? { signal: ctrl.signal } : undefined);
+      if (!res.ok) return;
       const json = await res.json();
-      if (!Array.isArray(json.bots) || !json.bots.length) {
-        setUiConfigReady(true);
-        return;
-      }
+      if (!Array.isArray(json.bots) || !json.bots.length) return;
       setUiConfig((prev) => {
         const sameBots = (prev.bots || []).join(",") === json.bots.join(",");
         const sameTitle = (prev.title || "") === (json.title || "");
@@ -3324,9 +3327,10 @@ export default function App() {
         if (sameBots && sameTitle && sameScope) return prev;
         return json;
       });
-      setUiConfigReady(true);
     } catch (e) {
-      setUiConfigReady(true);
+      /* timeout / network — keep prior defaults; overview.active_bots fills in */
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }, []);
 
@@ -3370,28 +3374,36 @@ export default function App() {
   useEffect(() => { fetchUiConfig(); }, [fetchUiConfig]);
 
   useEffect(() => {
-    if (!uiConfigReady || activeBots.length === 0) return;
+    // Always pull overview after auth — it carries active_bots and seeds the
+    // scoped bot list. Never blank the whole page waiting on ui-config.
     const isLiveTab = view === "live" || view === "activity";
     if (isLiveTab) fetchOverview();
-    if (view === "live") fetchStrategyParams();
-    if (view === "activity") fetchPerVersion();
-    fetchBotStatus(); // lightweight — always needed for toggle buttons
-
-    const id = setInterval(() => {
-      if (isLiveTab) fetchOverview();
+    if (activeBots.length > 0) {
       if (view === "live") fetchStrategyParams();
       if (view === "activity") fetchPerVersion();
       fetchBotStatus();
+    }
+
+    const id = setInterval(() => {
+      if (isLiveTab) fetchOverview();
+      if (activeBots.length > 0) {
+        if (view === "live") fetchStrategyParams();
+        if (view === "activity") fetchPerVersion();
+        fetchBotStatus();
+      }
     }, POLL_MS);
     return () => clearInterval(id);
-  }, [uiConfigReady, activeBots.length, fetchOverview, fetchStrategyParams, fetchBotStatus, fetchPerVersion, view]);
+  }, [activeBotsKey, fetchOverview, fetchStrategyParams, fetchBotStatus, fetchPerVersion, view]);
 
   // ── Force refresh when tab regains visibility/focus (browser throttles bg polling) ──
   useEffect(() => {
-    if (!uiConfigReady || activeBots.length === 0) return;
     const refreshActive = () => {
       if (view === "live" || view === "activity") {
-        fetchOverview(); fetchStrategyParams(); fetchBotStatus();
+        fetchOverview();
+        if (activeBots.length > 0) {
+          fetchStrategyParams();
+          fetchBotStatus();
+        }
       }
     };
     document.addEventListener("visibilitychange", refreshActive);
@@ -3402,7 +3414,7 @@ export default function App() {
       window.removeEventListener("focus", refreshActive);
       document.removeEventListener("pageshow", refreshActive);
     };
-  }, [uiConfigReady, activeBots.length, fetchOverview, fetchStrategyParams, fetchBotStatus, view]);
+  }, [activeBotsKey, fetchOverview, fetchStrategyParams, fetchBotStatus, view]);
 
   // ── Keyboard shortcuts ──
   useEffect(() => {
@@ -3456,10 +3468,18 @@ export default function App() {
   const selectedBotName = selectedPair ? ALL_PAIR_META[selectedPair]?.bot : null;
   const selectedBotData = selectedBotName ? overview?.bots?.[selectedBotName] : null;
 
-  if (mode === "loading") return <div className="auth-screen"><div className="auth-spinner" /></div>;
+  if (mode === "loading") {
+    return (
+      <div className="auth-screen">
+        <div className="auth-loading">
+          <div className="auth-spinner" />
+          <p className="auth-loading-text">Loading Hermes…</p>
+        </div>
+      </div>
+    );
+  }
   if (mode === "setup") return <SetupScreen onSetup={setup} />;
   if (mode === "login") return <LoginScreen onLogin={login} />;
-  if (!uiConfigReady) return <div className="auth-screen"><div className="auth-spinner" /></div>;
 
   return (
     <UiModeContext.Provider value={{ isWatcher, uiMode }}>
