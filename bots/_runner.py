@@ -12,7 +12,7 @@ All side effects are fail-soft; a dead dashboard or socket never stops the bot.
 
 Env:
   PRICE_BACKEND        aggregate | yfinance | http
-  HERMES_BOT_NAME      forex | gold | crypto (override via argv for local runs)
+  HERMES_BOT_NAME      forex | gold | crypto | btc (override via argv for local runs)
   HERMES_CYCLE_SECONDS cycle cadence (default 60)
   SELF_AUDIT_EVERY_CYCLES  write self_audit.json every N cycles (default 60; 0=off)
   DASHBOARD_API_URL    where the dashboard listens (empty -> no price push)

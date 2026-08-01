@@ -30,7 +30,8 @@ _BASE: dict[str, Any] = {
 
 # Forex: daily, shorter ahead (was hard-coded h=60 for everyone).
 # Gold: daily, medium ahead.
-# Crypto: 4h invent (BTC/USDT Focus Phase 2 — not 1h noise).
+# Crypto: hourly invent (BTC/USD + ETH/USD sibling).
+# BTC: 4h invent (BTC/USDT Focus Phase 2 — not 1h noise).
 #
 # Budgets are sized to finish inside timeout_s on a single Railway hobby
 # replica. Oversized gens×pop×islands caused chronic 300s TimeoutError →
@@ -59,6 +60,17 @@ BOT_INVENT_DEFAULTS: dict[str, dict[str, Any]] = {
         "min_bars": 200,
     },
     "crypto": {
+        "interval": "1h",
+        "period": "60d",
+        "max_candles": 800,
+        "horizon": 12,
+        "generations": 12,
+        "pop_size": 20,
+        "n_islands": 1,
+        "timeout_s": 240,
+        "min_bars": 200,
+    },
+    "btc": {
         "interval": "4h",
         "period": "120d",
         "max_candles": 800,

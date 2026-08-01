@@ -1,0 +1,32 @@
+# BTC bot — BTC/USDT only (BTC/USDT Focus Roadmap).
+# Sibling of forex/gold/crypto; shared hermes_core engines.
+# Feeds resolve via Coinbase/Yahoo BTC-USD (pair alias).
+# Invent: 4h TF — not 1h noise.
+bot:
+  name: btc
+pairs:
+  - BTC/USDT
+goal:
+  failure_below: -10.0
+  gemini_min_trades: 15
+  gemini_reflection: true
+  max_drawdown: 10.0
+  min_sharpe: 1.0
+  one_variable_only: true
+  reflection_every: 15
+  target_return_30d: 5.0
+invent:
+  interval: 4h
+  period: 120d
+  max_candles: 800
+  horizon: 8
+  generations: 12
+  pop_size: 20
+  n_islands: 1
+  timeout_s: 240
+  min_bars: 200
+global:
+  dashboard_url: ${DASHBOARD_API_URL}
+  discord_webhook: ${DISCORD_ALERTS_WEBHOOK}
+  fmp_key: ${FMP_KEY}
+  llm_keys: {}

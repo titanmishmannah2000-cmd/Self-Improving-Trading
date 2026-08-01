@@ -198,7 +198,7 @@ def _seed_default_state() -> None:
     silently overwrite existing production state. Creates directories if absent
     and copies missing strategy YAMLs from the image seeds.
     """
-    for bot in ("forex", "gold", "crypto"):
+    for bot in ("forex", "gold", "crypto", "btc"):
         cfg_path = repo_root() / "bots" / bot / "config.yaml"
         if not cfg_path.exists():
             continue

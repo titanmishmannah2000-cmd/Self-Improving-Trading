@@ -1641,7 +1641,7 @@ def load_discovery_pulses(pairs: list[str] | None = None) -> dict[str, dict]:
     if DISCOVERED_DIR is not None:
         index_paths.append(DISCOVERED_DIR / "_discovery_pulse.json")
     else:
-        for bot in ("forex", "gold", "crypto"):
+        for bot in ("forex", "gold", "crypto", "btc"):
             index_paths.append(repo_root() / bot / "state" / "discovered" / "_discovery_pulse.json")
         index_paths.append(repo_root() / "state" / "discovered" / "_discovery_pulse.json")
     for index_path in index_paths:

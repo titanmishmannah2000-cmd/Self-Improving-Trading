@@ -220,9 +220,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_ALL_DASHBOARD_BOTS = ("forex", "gold", "crypto")
+_ALL_DASHBOARD_BOTS = ("forex", "gold", "crypto", "btc")
 VALID_BOT_ALIASES = {
     "crypto": {"crypto", "hermes-crypto", "hermes-crypto-bot"},
+    "btc": {"btc", "hermes-btc", "hermes-btc-bot"},
     "forex": {"forex", "hermes-forex", "hermes-forex-bot"},
     "gold": {"gold", "hermes-gold", "hermes-gold-bot"},
 }
@@ -231,8 +232,8 @@ VALID_BOT_ALIASES = {
 def _parse_dashboard_bots() -> set[str]:
     """Scope which bots this dashboard instance serves.
 
-    ``DASHBOARD_BOTS=crypto`` (BTC/USDT-only Railway project) hides forex/gold
-    ingest + overview. Empty / unset → all three (legacy multi-bot project).
+    ``DASHBOARD_BOTS=btc`` (BTC/USDT Railway project) hides forex/gold/crypto.
+    Empty / unset → all bots (legacy multi-bot project).
     """
     raw = (os.getenv("DASHBOARD_BOTS") or "").strip()
     if not raw:
@@ -980,7 +981,7 @@ def ui_config():
         "bots": bots,
         "focus_pairs": {b: list(FOCUS_PAIRS.get(b, [])) for b in bots},
         "title": os.getenv("DASHBOARD_TITLE", "Hermes"),
-        "scope": "btc" if bots == ["crypto"] else "multi",
+        "scope": "btc" if bots == ["btc"] else "multi",
     }
 
 
@@ -2800,7 +2801,9 @@ def per_version_performance(bot_name: str, pair: str | None = None):
     elif bot_name == "gold":
         valid_pairs = {"XAU/USD", "XAG/USD"}
     elif bot_name == "crypto":
-        valid_pairs = {"BTC/USDT", "BTC/USD"}
+        valid_pairs = {"BTC/USD", "ETH/USD"}
+    elif bot_name == "btc":
+        valid_pairs = {"BTC/USDT"}
 
     conn = get_conn()
     query = "SELECT id, raw_json, pnl_pct, exit_reason, pair, entry_price FROM trades WHERE bot=? AND exit_reason IS NOT NULL"

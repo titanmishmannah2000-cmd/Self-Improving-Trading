@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provision Railway project hermes-btc-usdt (crypto bot + BTC-scoped dashboard).
+"""Provision Railway project hermes-btc-usdt (bots/btc + BTC-scoped dashboard).
 
 Requires Railway CLI 5.x, logged in. Does not print secret values.
 
@@ -20,10 +20,13 @@ BRANCH = "BTC/USDT"
 PROJECT_NAME = "hermes-btc-usdt"
 LEGACY_PROJECT_ID = "026694c2-7d92-43a0-96fe-6d90f57bae77"
 
+# Bot service may still be named "crypto" on an early project; env must be btc.
+BOT_SERVICE_CANDIDATES = ("btc", "crypto")
+
 # Non-secret defaults applied to both / each service. Secrets are copied from
 # the legacy crypto/dashboard services when available.
-CRYPTO_DEFAULTS = {
-    "HERMES_BOT_NAME": "crypto",
+BTC_DEFAULTS = {
+    "HERMES_BOT_NAME": "btc",
     "HERMES_STATE_ROOT": "/data",
     "HERMES_STATE": "/data",
     "PRICE_BACKEND": "aggregate",
@@ -53,7 +56,7 @@ DASHBOARD_DEFAULTS = {
     "HERMES_BOT_NAME": "dashboard",
     "HERMES_STATE_ROOT": "/data",
     "HERMES_STATE": "/data",
-    "DASHBOARD_BOTS": "crypto",
+    "DASHBOARD_BOTS": "btc",
     "DASHBOARD_TITLE": "Hermes BTC/USDT",
     "DASHBOARD_DB": "/data/dashboard.db",
 }
@@ -209,7 +212,7 @@ def main() -> int:
 
     print(f"project_id={project_id}")
 
-    for svc in ("crypto", "dashboard"):
+    for svc in ("btc", "dashboard"):
         add = run(
             bin_path,
             ["add", "--service", svc, "--json"],
@@ -217,7 +220,20 @@ def main() -> int:
         )
         print(f"add {svc}: rc={add.returncode}")
 
-    for svc in ("crypto", "dashboard"):
+    # Prefer service name `btc`; fall back to early project name `crypto`.
+    bot_service = "btc"
+    for candidate in BOT_SERVICE_CANDIDATES:
+        probe = run(
+            bin_path,
+            ["service", "link", candidate],
+            check=False,
+        )
+        if probe.returncode == 0:
+            bot_service = candidate
+            break
+    print(f"bot_service={bot_service}")
+
+    for svc in (bot_service, "dashboard"):
         run(
             bin_path,
             [
@@ -237,7 +253,7 @@ def main() -> int:
         )
         print(f"source {svc} -> {REPO}@{BRANCH}")
 
-    for svc in ("crypto", "dashboard"):
+    for svc in (bot_service, "dashboard"):
         run(bin_path, ["service", "link", svc], check=False)
         vol = run(
             bin_path,
@@ -246,25 +262,22 @@ def main() -> int:
         )
         print(f"volume {svc}: rc={vol.returncode}")
 
-    # Resolve linked project environment for --project/--environment flags.
-    env_name = "production"
-
-    crypto_vars = dict(CRYPTO_DEFAULTS)
+    bot_vars = dict(BTC_DEFAULTS)
     for key in COPY_FROM_LEGACY_CRYPTO:
         if key in legacy_crypto and legacy_crypto[key]:
-            crypto_vars[key] = legacy_crypto[key]
-    if "INGEST_TOKEN" not in crypto_vars or not crypto_vars["INGEST_TOKEN"]:
-        crypto_vars["INGEST_TOKEN"] = "change-me-btc-usdt-ingest"
+            bot_vars[key] = legacy_crypto[key]
+    if "INGEST_TOKEN" not in bot_vars or not bot_vars["INGEST_TOKEN"]:
+        bot_vars["INGEST_TOKEN"] = "change-me-btc-usdt-ingest"
 
     dash_vars = dict(DASHBOARD_DEFAULTS)
     for key in COPY_FROM_LEGACY_DASHBOARD:
         if key in legacy_dash and legacy_dash[key]:
             dash_vars[key] = legacy_dash[key]
     # Keep ingest token identical across the two new services.
-    dash_vars["INGEST_TOKEN"] = crypto_vars["INGEST_TOKEN"]
+    dash_vars["INGEST_TOKEN"] = bot_vars["INGEST_TOKEN"]
 
-    print("setting crypto vars…")
-    set_vars(bin_path, project=project_id, service="crypto", mapping=crypto_vars)
+    print(f"setting {bot_service} vars…")
+    set_vars(bin_path, project=project_id, service=bot_service, mapping=bot_vars)
     print("setting dashboard vars…")
     set_vars(bin_path, project=project_id, service="dashboard", mapping=dash_vars)
 
@@ -290,18 +303,18 @@ def main() -> int:
         set_vars(
             bin_path,
             project=project_id,
-            service="crypto",
+            service=bot_service,
             mapping={"DASHBOARD_API_URL": dash_url},
         )
     else:
         print(
-            "WARN: no dashboard domain yet — set DASHBOARD_API_URL on crypto after "
+            "WARN: no dashboard domain yet — set DASHBOARD_API_URL on bot after "
             "`railway domain --service dashboard`"
         )
 
     print("\nDone.")
     print(f"  Project: {PROJECT_NAME} ({project_id})")
-    print("  Services: crypto, dashboard")
+    print(f"  Services: {bot_service}, dashboard")
     print("  Open: railway open")
     print(
         f"  Re-link legacy multi-bot project anytime:\n"
@@ -309,7 +322,7 @@ def main() -> int:
     )
     print(
         "  Trigger deploy from Railway UI or:\n"
-        "    railway up --service crypto\n"
+        f"    railway up --service {bot_service}\n"
         "    railway up --service dashboard"
     )
     return 0

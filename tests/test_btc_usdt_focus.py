@@ -1,4 +1,4 @@
-"""BTC/USDT Focus Phase 2 — regime gate + Phase 0 config tests."""
+"""BTC/USDT Focus — bots/btc regime gate + config (crypto restored separately)."""
 
 from __future__ import annotations
 
@@ -8,13 +8,21 @@ from hermes_core.engines.entry import evaluate_entry_detailed
 from hermes_core.engines.profitability_freeze import focus_pairs_for_bot
 
 
-def test_crypto_config_btc_usdt_only():
-    cfg = load_config("crypto")
+def test_btc_config_usdt_only():
+    cfg = load_config("btc")
+    assert cfg["bot"]["name"] == "btc"
     assert cfg["pairs"] == ["BTC/USDT"]
     assert cfg["invent"]["interval"] == "4h"
-    s = load_strategy_for_pair("BTC/USDT", bot="crypto")
+    s = load_strategy_for_pair("BTC/USDT", bot="btc")
     assert s["strategy_type"] == "rsi_momentum"
-    assert focus_pairs_for_bot("crypto") == ["BTC/USDT"]
+    assert focus_pairs_for_bot("btc") == ["BTC/USDT"]
+
+
+def test_crypto_restored_btc_usd_eth():
+    cfg = load_config("crypto")
+    assert cfg["pairs"] == ["BTC/USD", "ETH/USD"]
+    assert cfg["invent"]["interval"] == "1h"
+    assert focus_pairs_for_bot("crypto") == ["BTC/USD"]
 
 
 def test_classify_trend_up_from_rising_closes():
@@ -52,12 +60,12 @@ def test_entry_blocked_when_d1_chop(monkeypatch):
         },
     )
     prices = [100.0 + i * 0.1 for i in range(80)]
-    strategy = load_strategy_for_pair("BTC/USDT", bot="crypto")
+    strategy = load_strategy_for_pair("BTC/USDT", bot="btc")
     sig, reason = evaluate_entry_detailed(
         prices,
         strategy,
         pair="BTC/USDT",
-        bot="crypto",
+        bot="btc",
         session_token="24h",
     )
     assert sig is None

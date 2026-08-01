@@ -26,7 +26,7 @@ from hermes_core.engines.scorecard import build_scorecard, phase1_gate  # noqa: 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Hermes profitability scorecard")
-    ap.add_argument("--bot", required=True, choices=("forex", "gold", "crypto"))
+    ap.add_argument("--bot", required=True, choices=("forex", "gold", "crypto", "btc"))
     ap.add_argument("--min-n", type=int, default=20)
     ap.add_argument("--cost", type=float, default=None, help="Round-trip cost %% haircut")
     ap.add_argument("--gate", action="store_true", help="Emit Phase 1 kill/continue")

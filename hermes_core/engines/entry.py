@@ -209,12 +209,11 @@ def evaluate_entry_detailed(
     if not prices or not strategy:
         return None, "other:missing_prices_or_strategy"
 
-    # BTC/USDT Focus Phase 2: D1 regime hard gate (long-only in trend_up).
+    # BTC Focus Phase 2: D1 regime hard gate (long-only in trend_up).
+    # Pair-gated so bots/btc and restored crypto BTC/USD share the same rule;
+    # ETH on crypto is not forced through the D1 BTC classifier.
     btc_reg: dict | None = None
-    if pair and (
-        str(pair).upper().startswith("BTC/")
-        or (bot or "").lower() == "crypto"
-    ):
+    if pair and str(pair).upper().startswith("BTC/"):
         try:
             from hermes_core.engines import btc_regime as br
 

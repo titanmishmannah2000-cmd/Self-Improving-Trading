@@ -73,12 +73,14 @@ def assert_phase0_freeze(*, snap: dict | None = None) -> dict:
 
 
 def focus_pairs_for_bot(bot: str) -> list[str]:
-    """Canonical Phase 0 focus universe (all three bots)."""
+    """Canonical Phase 0 focus universe."""
     b = (bot or "").lower()
     if b == "gold":
         return ["XAU/USD"]
     if b == "forex":
         return ["EUR/USD", "GBP/USD"]
     if b == "crypto":
+        return ["BTC/USD"]
+    if b == "btc":
         return ["BTC/USDT"]
     return []

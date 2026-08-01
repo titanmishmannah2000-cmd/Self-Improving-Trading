@@ -1486,7 +1486,7 @@ def run_cycle(
         pass
     # Pause detector (#25): all recent skips idle/feed for hours → effectively paused.
     try:
-        _idle_hours = {"crypto": 4.0, "gold": 8.0, "forex": 6.0}.get(bot, 6.0)
+        _idle_hours = {"crypto": 4.0, "btc": 4.0, "gold": 8.0, "forex": 6.0}.get(bot, 6.0)
         _idle = idle_skip_slo(_state_dir(bot) / "skips.jsonl", hours=_idle_hours)
         summary["idle_slo"] = _idle
         if _idle.get("effectively_paused") and not _halted:
@@ -1719,9 +1719,9 @@ def run_cycle(
             continue
         health_registry["indicators"] = True
         regimes[pair] = ind.get("regime", "range")  # 'trend'|'range' for dashboard
-        # BTC/USDT Focus: keep regimes[pair] a STRING (dashboard renders it).
+        # BTC Focus: keep regimes[pair] a STRING (dashboard renders it).
         # D1 details live under heartbeat.btc_d1_regimes separately.
-        if str(pair).upper().startswith("BTC/") or bot == "crypto":
+        if str(pair).upper().startswith("BTC/"):
             with contextlib.suppress(Exception):
                 from hermes_core.engines import btc_regime as br
 
@@ -1909,15 +1909,15 @@ def run_cycle(
                         for p in get_env("GP_EXCLUDE_PAIRS", "GBP/JPY").split(",")
                         if p.strip()
                     }
-                    if bot == "crypto":
+                    if bot in {"crypto", "btc"}:
                         _excl = {p for p in _excl if not p.startswith("BTC/")}
                     _want_gp = pair.upper() not in _excl
             # Legacy: GP only if traditional quiet. Ranking: also score GP when
             # traditional fires so the better edge can win.
             if _want_gp and (trad_sig is None or _rank_on):
-                # BTC/USDT Focus: D1 regime also gates GP entries (shadow + promote).
+                # BTC Focus: D1 regime also gates GP entries (shadow + promote).
                 _btc_block = False
-                if str(pair).upper().startswith("BTC/") or bot == "crypto":
+                if str(pair).upper().startswith("BTC/"):
                     with contextlib.suppress(Exception):
                         from hermes_core.engines import btc_regime as br
 

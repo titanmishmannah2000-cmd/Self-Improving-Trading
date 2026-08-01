@@ -24,7 +24,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-BOTS = ("forex", "gold", "crypto")
+BOTS = ("forex", "gold", "crypto", "btc")
 SEED_CORTEX_FILES = (
     "indicator_exile.json",
     "indicator_tracker.json",

@@ -186,7 +186,7 @@ def maybe_recover_halt(
         return {"recovered": False, "reason": reason, "halted": True}
 
     feed = feed or feed_error_rate(bot_state_dir(bot) / "skips.jsonl")
-    idle_hours = {"crypto": 4.0, "gold": 8.0, "forex": 6.0}.get(bot, 6.0)
+    idle_hours = {"crypto": 4.0, "btc": 4.0, "gold": 8.0, "forex": 6.0}.get(bot, 6.0)
     idle = idle or idle_skip_slo(bot_state_dir(bot) / "skips.jsonl", hours=idle_hours)
     feed_ok = bool(feed.get("ok", True))
     # Sticky feed_slo trap: halt-echo skips + old no_candle keep the long window

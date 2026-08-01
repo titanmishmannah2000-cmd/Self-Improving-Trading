@@ -45,6 +45,7 @@ PROJECTS = {
     "forex": _REPO / "forex",
     "gold": _REPO / "gold",
     "crypto": _REPO / "crypto",
+    "btc": _REPO / "btc",
     "dashboard-api": _REPO / "dashboard" / "backend",
     "dashboard-web": _REPO / "dashboard" / "frontend",
     "audit": _HERE,

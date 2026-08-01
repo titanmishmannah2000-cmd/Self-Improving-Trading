@@ -25,7 +25,7 @@ from hermes_core.engines.profitability_freeze import (  # noqa: E402
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Hermes feed/heartbeat health")
-    ap.add_argument("--bot", required=True, choices=("forex", "gold", "crypto"))
+    ap.add_argument("--bot", required=True, choices=("forex", "gold", "crypto", "btc"))
     ap.add_argument("--max-age", type=float, default=900.0)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--with-freeze", action="store_true")

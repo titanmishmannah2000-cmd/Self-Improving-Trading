@@ -31,7 +31,7 @@ if str(ROOT) not in sys.path:
 from hermes_core.config.loader import repo_root, state_root  # noqa: E402
 from hermes_core.state.paths import bot_state_dir  # noqa: E402
 
-BOTS = ("forex", "gold", "crypto")
+BOTS = ("forex", "gold", "crypto", "btc")
 
 
 def _stamp() -> str:

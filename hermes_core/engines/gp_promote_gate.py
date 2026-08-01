@@ -88,14 +88,14 @@ def env_seed_bans(*, bot: str | None = None) -> set[str]:
     """Pairs listed in ``GP_EXCLUDE_PAIRS`` (deploy cold-start bans).
 
     Default excludes only FX folklore (GBP/JPY). BTC is **not** seeded-banned
-    for the crypto bot — BTC/USDT Focus uses live cost-aware expectancy instead.
-    If an operator still lists BTC/USD or BTC/USDT in ``GP_EXCLUDE_PAIRS``, those
-    entries are ignored when ``bot == "crypto"``.
+    for the dedicated ``btc`` bot (or crypto when it still lists BTC) — BTC
+    Focus uses live cost-aware expectancy instead. Operator-listed ``BTC/…``
+    entries in ``GP_EXCLUDE_PAIRS`` are ignored for those bots.
     """
     raw = get_env("GP_EXCLUDE_PAIRS", "GBP/JPY")
     bans = {normalize_pair(p) for p in raw.split(",") if p.strip()}
     b = (bot or "").strip().lower()
-    if b == "crypto":
+    if b in {"crypto", "btc"}:
         bans = {p for p in bans if not p.startswith("BTC/")}
     return bans
 
@@ -171,7 +171,7 @@ def promote_cost_pct(pair: str | None = None) -> float:
         # Crypto bot promote without pair arg: still use BTC model.
         from hermes_core.state.paths import current_bot
 
-        if (pair is None or not str(pair).strip()) and current_bot() == "crypto":
+        if (pair is None or not str(pair).strip()) and current_bot() in {"crypto", "btc"}:
             return round_trip_pct("BTC/USDT")
     except Exception:  # noqa: BLE001
         pass

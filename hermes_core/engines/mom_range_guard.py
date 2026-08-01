@@ -21,7 +21,7 @@ from hermes_core.engines.risk import PROBE_SIZE_FRACTION
 from hermes_core.env import get_env
 
 MIN_CONFLUENCE = 2
-_MOM_GUARD_DEFAULT_BOTS = frozenset({"gold", "crypto"})
+_MOM_GUARD_DEFAULT_BOTS = frozenset({"gold", "crypto", "btc"})
 
 
 def mom_range_guard_enabled(*, bot: str | None = None) -> bool:

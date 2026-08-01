@@ -23,7 +23,7 @@ from hermes_core.state.atomic_json import load_json
 from hermes_core.state.paths import bot_state_dir, cortex_dir, current_bot, policy_path
 
 HEARTBEAT_MAX_AGE_S = 10 * 60  # soak go/no-go: 10 minutes
-VALID_BOTS = ("forex", "gold", "crypto")
+VALID_BOTS = ("forex", "gold", "crypto", "btc")
 
 
 @dataclass
@@ -272,7 +272,7 @@ def run(bot: str | None = None) -> Report:
         )
     )
 
-    idle_hours = {"crypto": 4.0, "gold": 8.0, "forex": 6.0}.get(b, 6.0)
+    idle_hours = {"crypto": 4.0, "btc": 4.0, "gold": 8.0, "forex": 6.0}.get(b, 6.0)
     idle = idle_skip_slo(state_dir / "skips.jsonl", hours=idle_hours)
     checks.append(
         _check(

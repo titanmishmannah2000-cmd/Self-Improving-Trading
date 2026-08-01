@@ -14,7 +14,8 @@ from typing import Any
 FOCUS_PAIRS: dict[str, list[str]] = {
     "forex": ["EUR/USD", "GBP/USD"],
     "gold": ["XAU/USD"],
-    "crypto": ["BTC/USDT"],
+    "crypto": ["BTC/USD"],
+    "btc": ["BTC/USDT"],
 }
 
 PHASE0_ON = ("BOOK_RISK",)
@@ -316,11 +317,11 @@ def build_profitability_health(
 
             # Closed trades: focus pairs; prefer since-freeze non-GP for Phase 1 warn.
             bot_cost = cost
-            if cost_pct is None and bot == "crypto":
+            if cost_pct is None and bot in {"crypto", "btc"}:
                 try:
                     from hermes_core.engines.cost_model import round_trip_pct
 
-                    bot_cost = round_trip_pct("BTC/USDT")
+                    bot_cost = round_trip_pct("BTC/USDT" if bot == "btc" else "BTC/USD")
                 except Exception:  # noqa: BLE001
                     bot_cost = cost
             rows = []

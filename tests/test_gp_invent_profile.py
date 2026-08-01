@@ -36,19 +36,27 @@ def test_invent_profiles_per_bot():
     assert gd["n_islands"] == 1
 
     cr = invent_profile("crypto")
-    assert cr["interval"] == "4h"
-    assert cr["horizon"] == 8
+    assert cr["interval"] == "1h"
+    assert cr["horizon"] == 12
     assert cr["timeout_s"] >= 180
     assert cr["generations"] <= 16
     assert cr["pop_size"] <= 24
     assert cr["n_islands"] == 1
 
+    btc = invent_profile("btc")
+    assert btc["interval"] == "4h"
+    assert btc["horizon"] == 8
+    assert btc["timeout_s"] >= 180
+    assert btc["generations"] <= 16
+    assert btc["pop_size"] <= 24
+    assert btc["n_islands"] == 1
+
 
 def test_invent_profile_config_override(tmp_path, monkeypatch):
-    cfg = tmp_path / "bots" / "crypto"
+    cfg = tmp_path / "bots" / "btc"
     cfg.mkdir(parents=True)
     (cfg / "config.yaml").write_text(
-        "bot:\n  name: crypto\npairs: [BTC/USDT]\ninvent:\n  horizon: 6\n  timeout_s: 240\n",
+        "bot:\n  name: btc\npairs: [BTC/USDT]\ninvent:\n  horizon: 6\n  timeout_s: 240\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -63,11 +71,11 @@ def test_invent_profile_config_override(tmp_path, monkeypatch):
             "pairs": ["BTC/USDT"],
         },
     )
-    cr = invent_profile("crypto")
-    assert cr["horizon"] == 6
-    assert cr["timeout_s"] == 240
-    # Untouched keys keep crypto defaults.
-    assert cr["interval"] == "4h"
+    btc = invent_profile("btc")
+    assert btc["horizon"] == 6
+    assert btc["timeout_s"] == 240
+    # Untouched keys keep btc defaults.
+    assert btc["interval"] == "4h"
 
 
 def test_indicator_matches_regime():

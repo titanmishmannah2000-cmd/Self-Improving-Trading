@@ -23,6 +23,7 @@ STRATEGY_DIRS = {
     "forex": _REPO / "forex" / "state" / "strategies",
     "gold": _REPO / "gold" / "state" / "strategies",
     "crypto": _REPO / "crypto" / "state" / "strategies",
+    "btc": _REPO / "btc" / "state" / "strategies",
 }
 
 VERSION_HISTORY_DIR = _HERE / "version_snapshots"

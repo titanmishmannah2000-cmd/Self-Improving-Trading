@@ -85,8 +85,11 @@ const PAIR_META = {
   "GBP/USD":  { bot: "forex", color: "#c9a36a", timezone: "London/NY", plain: "British Pound vs US Dollar" },
   // Commodities — gold focus (silver parked)
   "XAU/USD":  { bot: "gold", color: "#D4AF37", timezone: "24h", plain: "Gold" },
-  // Crypto — BTC/USDT only (Phase 0); feeds still Coinbase/Yahoo BTC-USD
-  "BTC/USDT": { bot: "crypto", color: "#F7931A", timezone: "24h", plain: "Bitcoin" },
+  // Crypto sibling — BTC/USD + ETH/USD
+  "BTC/USD":  { bot: "crypto", color: "#F7931A", timezone: "24h", plain: "Bitcoin" },
+  "ETH/USD":  { bot: "crypto", color: "#627EEA", timezone: "24h", plain: "Ethereum" },
+  // Dedicated BTC/USDT focus bot
+  "BTC/USDT": { bot: "btc", color: "#F7931A", timezone: "24h", plain: "Bitcoin" },
 };
 
 /** Parked pairs kept only for plain-language lookups on old trades. */
@@ -94,13 +97,11 @@ const PARKED_PAIR_META = {
   "AUD/USD":  { bot: "forex", color: "#5B7C99", timezone: "Sydney/Tokyo", plain: "Australian Dollar vs US Dollar" },
   "GBP/JPY":  { bot: "forex", color: "#9B6B9E", timezone: "London/Tokyo", plain: "British Pound vs Japanese Yen" },
   "XAG/USD":  { bot: "gold", color: "#C0C0C0", timezone: "24h", plain: "Silver" },
-  "BTC/USD":  { bot: "crypto", color: "#F7931A", timezone: "24h", plain: "Bitcoin" },
-  "ETH/USD":  { bot: "crypto", color: "#627EEA", timezone: "24h", plain: "Ethereum" },
 };
 
 const ALL_PAIR_META = { ...PAIR_META, ...PARKED_PAIR_META };
 
-const BOT_PLAIN = { forex: "Forex bot", gold: "Gold bot", crypto: "Crypto bot" };
+const BOT_PLAIN = { forex: "Forex bot", gold: "Gold bot", crypto: "Crypto bot", btc: "BTC bot" };
 
 function plainRegime(regime) {
   const label = regimeLabel(regime);
@@ -1481,7 +1482,7 @@ function DetailFullscreen({ pair, botName, onClose }) {
 
 // ───────────────────────── Chart Analysis ─────────────────────────
 
-const CHART_ANALYSIS_BOTS = ["forex", "gold", "crypto"];
+const CHART_ANALYSIS_BOTS = ["forex", "gold", "crypto", "btc"];
 
 function ChartAnalysisSpark({ pair, history, color }) {
   const [prices, setPrices] = useState(history?.length >= 2 ? history : null);
@@ -1762,7 +1763,7 @@ function ChartAnalysis({ apiBase, initialBot = "forex" }) {
 
 // ───────────────────────── Skip Analysis ─────────────────────────
 
-const SKIP_ANALYSIS_BOTS = ["forex", "gold", "crypto"];
+const SKIP_ANALYSIS_BOTS = ["forex", "gold", "crypto", "btc"];
 
 function SkipAnalysis({ apiBase, initialBot = "forex" }) {
   const [botName, setBotName] = useState(
@@ -2446,7 +2447,7 @@ function OnboardingTour({ step, onNext, onSkip, selectedPair }) {
 
 // ───────────────────────── Reflections ledger ─────────────────────────
 
-const REFLECTIONS_BOTS = ["forex", "gold", "crypto"];
+const REFLECTIONS_BOTS = ["forex", "gold", "crypto", "btc"];
 
 function _fmtVal(v) {
   if (v === null || v === undefined || v === "") return "—";
@@ -2640,7 +2641,7 @@ function ReflectionsPairCard({ pair, info, defaultOpen = true }) {
   );
 }
 
-const REFLECTIONS_BOT_LABELS = { forex: "Forex", gold: "Gold", crypto: "Crypto" };
+const REFLECTIONS_BOT_LABELS = { forex: "Forex", gold: "Gold", crypto: "Crypto", btc: "BTC" };
 
 function ReflectionsView({ apiBase, initialBot = "forex" }) {
   const [botName, setBotName] = useState(
@@ -2953,7 +2954,7 @@ function ReflectionsView({ apiBase, initialBot = "forex" }) {
 }
 
 function VersionView({ perVersion }) {
-  const botNames = { forex: "Forex Bot", gold: "Gold Bot", crypto: "Crypto Bot" };
+  const botNames = { forex: "Forex Bot", gold: "Gold Bot", crypto: "Crypto Bot", btc: "BTC Bot" };
   const [versionText, setVersionText] = useState(null);
   const [copied, setCopied] = useState(false);
 
@@ -3161,7 +3162,7 @@ function HeartbeatCard({ apiBase, bot }) {
 }
 
 function HeartbeatView({ apiBase }) {
-  const bots = ["forex", "gold", "crypto"];
+  const bots = ["forex", "gold", "crypto", "btc"];
   return (
     <div className="heartbeat-view">
       <div className="dc-label">Heartbeat — last-sent bot state (signal, regime, cycle)</div>
@@ -3208,7 +3209,7 @@ function FlatlineBot({ apiBase, bot }) {
 }
 
 function FlatlineView({ apiBase }) {
-  const bots = ["forex", "gold", "crypto"];
+  const bots = ["forex", "gold", "crypto", "btc"];
   return (
     <div className="flatline-view">
       <div className="dc-label">Flatline — pairs paused for novel / crisis regimes</div>
@@ -3632,11 +3633,11 @@ export default function App() {
           )}
 
           {showBot("crypto") && (
-          <section className={`bot-section ${!showBot("forex") && tourStep === 1 ? "tour-highlight-section" : ""}`} data-tour="cards">
-            <BotToggle botName="crypto" label={uiConfig?.scope === "btc" ? "BTC/USDT" : "Crypto"} staleDays={overview?.bots?.crypto?.live_indicators?.discovery_stale_days} />
+          <section className={`bot-section ${!showBot("forex") && !showBot("btc") && tourStep === 1 ? "tour-highlight-section" : ""}`} data-tour="cards">
+            <BotToggle botName="crypto" label="Crypto" staleDays={overview?.bots?.crypto?.live_indicators?.discovery_stale_days} />
             <div className="cards-grid" role="list" aria-label="Crypto pairs">
               {!overview ? (
-                Array.from({ length: 1 }).map((_, i) => <SkeletonCard key={i} />)
+                Array.from({ length: 2 }).map((_, i) => <SkeletonCard key={i} />)
               ) : (
                 Object.entries(PAIR_META).filter(([,m]) => m.bot === "crypto").map(([pair]) => (
                 <PairCard
@@ -3658,6 +3659,38 @@ export default function App() {
             {overview && isWatcher && botHasPipelineGap("crypto", overview) && (
               <div className="calm-empty">
                 <p>Crypto is still warming up — nothing wrong, just waiting for a full data pipeline.</p>
+              </div>
+            )}
+          </section>
+          )}
+
+          {showBot("btc") && (
+          <section className={`bot-section ${!showBot("forex") && tourStep === 1 ? "tour-highlight-section" : ""}`} data-tour="cards">
+            <BotToggle botName="btc" label="BTC/USDT" staleDays={overview?.bots?.btc?.live_indicators?.discovery_stale_days} />
+            <div className="cards-grid" role="list" aria-label="BTC pairs">
+              {!overview ? (
+                Array.from({ length: 1 }).map((_, i) => <SkeletonCard key={i} />)
+              ) : (
+                Object.entries(PAIR_META).filter(([,m]) => m.bot === "btc").map(([pair]) => (
+                <PairCard
+                  key={pair}
+                  pair={pair}
+                  data={pairData[pair]}
+                  strategy={strategyParams?.pairs?.[pair]?.strategy_type || "rsi_momentum"}
+                  regime={liveRegimes[pair] || pairData[pair]?.openTrades?.[0]?.entry_regime || "—"}
+                  livePrice={livePrices[pair]}
+                  onSelect={handleSelectPair}
+                  isSelected={selectedPair === pair}
+                  botPaused={botStatus.btc === "paused"}
+                />
+              )))}
+            </div>
+            {overview && !isWatcher && botHasPipelineGap("btc", overview) && (
+              <PipelineGap bot="btc" />
+            )}
+            {overview && isWatcher && botHasPipelineGap("btc", overview) && (
+              <div className="calm-empty">
+                <p>BTC is still warming up — nothing wrong, just waiting for a full data pipeline.</p>
               </div>
             )}
           </section>

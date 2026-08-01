@@ -25,7 +25,7 @@ from hermes_core.state.paths import (  # noqa: E402
 def main() -> None:
     print("state_root=", state_root())
     print()
-    for bot in ("forex", "gold", "crypto"):
+    for bot in ("forex", "gold", "crypto", "btc"):
         sd = bot_state_dir(bot)
         print(f"=== {bot} state={sd} ===")
         hb = sd / "heartbeat.json"

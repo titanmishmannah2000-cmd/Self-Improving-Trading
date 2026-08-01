@@ -20,7 +20,7 @@ from __future__ import annotations
 from hermes_core.engines.chart_vision import hard_block
 from hermes_core.env import get_env
 
-_DEFAULT_BOTS = frozenset({"forex", "gold", "crypto"})
+_DEFAULT_BOTS = frozenset({"forex", "gold", "crypto", "btc"})
 ADX_TREND = 25.0
 DEFAULT_COST_PCT = 0.05
 COST_ATR_MULT = 2.0  # need ATR% >= cost * this (non-FX); FX uses softer floor

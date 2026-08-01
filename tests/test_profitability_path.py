@@ -38,7 +38,8 @@ def test_focus_pairs_include_all_three_bots():
 
     assert focus_pairs_for_bot("gold") == ["XAU/USD"]
     assert focus_pairs_for_bot("forex") == ["EUR/USD", "GBP/USD"]
-    assert focus_pairs_for_bot("crypto") == ["BTC/USDT"]
+    assert focus_pairs_for_bot("crypto") == ["BTC/USD"]
+    assert focus_pairs_for_bot("btc") == ["BTC/USDT"]
 
 
 def test_phase0_freeze_fails_when_soft_weights_on(monkeypatch):
