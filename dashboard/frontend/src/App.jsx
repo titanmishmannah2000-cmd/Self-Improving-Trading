@@ -103,10 +103,24 @@ const ALL_PAIR_META = { ...PAIR_META, ...PARKED_PAIR_META };
 const BOT_PLAIN = { forex: "Forex bot", gold: "Gold bot", crypto: "Crypto bot" };
 
 function plainRegime(regime) {
-  if (regime === "BULL") return "Trending up";
-  if (regime === "BEAR") return "Trending down";
-  if (regime === "NEUTRAL") return "Sideways";
-  return regime || "—";
+  const label = regimeLabel(regime);
+  if (label === "BULL" || label === "trend" || label === "trend_up") return "Trending up";
+  if (label === "BEAR" || label === "trend_down") return "Trending down";
+  if (label === "NEUTRAL" || label === "range" || label === "chop") return "Sideways";
+  return label || "—";
+}
+
+/** Coerce heartbeat regime values to a renderable string (objects crash React #31). */
+function regimeLabel(regime) {
+  if (regime == null || regime === "") return "";
+  if (typeof regime === "string" || typeof regime === "number") return String(regime);
+  if (typeof regime === "object") {
+    const d1 = regime.d1 || regime.label;
+    const live = regime.live;
+    if (d1 && live && d1 !== live) return `${live} · D1 ${d1}`;
+    return String(d1 || live || regime.regime || "");
+  }
+  return "";
 }
 
 function plainStrategy(strategyType) {
@@ -254,6 +268,8 @@ const GLOSSARY = {
 function safeVal(v) {
   if (v === null || v === undefined) return "—";
   if (typeof v === "object") {
+    const regimeish = regimeLabel(v);
+    if (regimeish) return regimeish;
     if ("score" in v) return v.score;
     if ("value" in v) return v.value;
     return JSON.stringify(v);
@@ -400,8 +416,9 @@ function sessionStatus() {
 }
 
 function regimeColor(regime) {
-  if (regime === "BULL") return COLORS.up;
-  if (regime === "BEAR") return COLORS.down;
+  const r = regimeLabel(regime);
+  if (r === "BULL" || r === "trend" || r === "trend_up") return COLORS.up;
+  if (r === "BEAR" || r === "trend_down") return COLORS.down;
   return COLORS.neutral;
 }
 
@@ -731,7 +748,7 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
       ) : (
         <div className="pc-indicators">
           <span className="pc-ind-label">Regime</span>
-          <span className="pc-ind-val" style={{ color: regimeColor(regime) }}>{regime || "—"}</span>
+          <span className="pc-ind-val" style={{ color: regimeColor(regime) }}>{regimeLabel(regime) || "—"}</span>
           <span className="pc-ind-label">Price</span>
           <span className="pc-ind-val pc-price">{livePrice !== undefined && livePrice !== null ? fmtPrice(livePrice, pair) : "—"}</span>
         </div>

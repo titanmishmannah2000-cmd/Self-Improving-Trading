@@ -242,6 +242,7 @@ def write_heartbeat(
     price_history: dict | None = None,
     hif_flags: dict | None = None,
     regime_split: dict | None = None,
+    btc_d1_regimes: dict | None = None,
 ) -> dict:
     """Emit heartbeat.json with the documented keys (blueprint loop.py:1774/4433).
 
@@ -268,6 +269,8 @@ def write_heartbeat(
         # (e.g. gold/silver), so the card still shows a live mini-chart.
         "price_history": price_history or {},
     }
+    if btc_d1_regimes:
+        data["btc_d1_regimes"] = btc_d1_regimes
     if hif_flags is not None:
         data["hif_flags"] = hif_flags
     if regime_split is not None:
@@ -1536,9 +1539,16 @@ def run_cycle(
     chart_contexts: dict[str, str] = {}
     # Sticky regimes: start from last cycle so a transient no_candle (common for
     # single-source XAG) doesn't blank the dashboard Regime field.
-    regimes: dict[str, str] = {
-        p: r for p, r in (getattr(run_cycle, "_regimes", {}) or {}).items() if p in pairs
-    }
+    regimes: dict[str, str] = {}
+    for p, r in (getattr(run_cycle, "_regimes", {}) or {}).items():
+        if p not in pairs:
+            continue
+        # Legacy BTC overlay briefly stored a dict here — coerce back to str.
+        if isinstance(r, dict):
+            regimes[p] = str(r.get("live") or r.get("d1") or "range")
+        elif r:
+            regimes[p] = str(r)
+    run_cycle._btc_d1_regimes = {}
     cortex = Cortex(bot)  # per-cycle; exile SET persists to disk
     # [GUARD L35] evaluate policy once per cycle from cortex WRs, then apply
     # suppressions before opening new positions.
@@ -1709,13 +1719,16 @@ def run_cycle(
             continue
         health_registry["indicators"] = True
         regimes[pair] = ind.get("regime", "range")  # 'trend'|'range' for dashboard
-        # BTC/USDT Focus: overlay D1 regime label for heartbeat / dashboard.
+        # BTC/USDT Focus: keep regimes[pair] a STRING (dashboard renders it).
+        # D1 details live under heartbeat.btc_d1_regimes separately.
         if str(pair).upper().startswith("BTC/") or bot == "crypto":
             with contextlib.suppress(Exception):
                 from hermes_core.engines import btc_regime as br
 
                 _br = br.classify_btc_regime(pair)
-                regimes[pair] = {
+                if not hasattr(run_cycle, "_btc_d1_regimes"):
+                    run_cycle._btc_d1_regimes = {}
+                run_cycle._btc_d1_regimes[pair] = {
                     "live": regimes[pair],
                     "d1": _br.get("label"),
                     "d1_reason": _br.get("reason"),
@@ -2452,7 +2465,12 @@ def run_cycle(
                 "regime_label": _regime.get("regime_label"),
                 "regime_mode": _regime.get("regime_mode"),
                 "fast_regime": _regime.get("fast_regime"),
-                "entry_regime": _regime.get("regime") or regimes.get(pair),
+                "entry_regime": _regime.get("regime")
+                or (
+                    regimes.get(pair)
+                    if not isinstance(regimes.get(pair), dict)
+                    else (regimes.get(pair) or {}).get("live")
+                ),
                 # HIF Phase-5 dashboard fields
                 "kelly_mult": _kelly.get("kelly_mult"),
                 "kelly_mode": _kelly.get("kelly_mode"),
@@ -2590,6 +2608,7 @@ def run_cycle(
         price_history=price_history,
         hif_flags=_hif,
         regime_split=_rs,
+        btc_d1_regimes=getattr(run_cycle, "_btc_d1_regimes", None),
     )
     summary["consecutive_failures"] = consecutive_failures
     summary["oversold_pairs"] = oversold_pairs
