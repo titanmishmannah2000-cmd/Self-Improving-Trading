@@ -218,7 +218,10 @@ def evaluate_entry_detailed(
             from hermes_core.engines import btc_regime as br
 
             btc_reg = br.classify_btc_regime(pair)
-            if br.hard_blocks_entry(str(btc_reg.get("label") or "")):
+            if br.hard_blocks_entry(
+                str(btc_reg.get("label") or ""),
+                strategy_type=str(strategy.get("strategy_type") or ""),
+            ):
                 return None, (
                     f"btc_regime:{btc_reg.get('label')}:{btc_reg.get('reason')}"
                 )

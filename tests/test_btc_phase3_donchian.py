@@ -87,7 +87,8 @@ def test_donchian_skips_when_no_breakout():
     assert reason == "donchian:no_breakout"
 
 
-def test_donchian_still_blocked_by_d1_chop(monkeypatch):
+def test_donchian_allowed_in_d1_chop(monkeypatch):
+    """Phase 3 soak: chop no longer hard-blocks Donchian (downtrend still does)."""
     monkeypatch.setattr(
         br,
         "classify_btc_regime",
@@ -95,16 +96,23 @@ def test_donchian_still_blocked_by_d1_chop(monkeypatch):
             "label": br.CHOP,
             "reason": "test_chop",
             "pair": pair,
+            "adx": 10.0,
         },
     )
+    # Local series breakout; pair set so D1 gate runs.
     prices = [100.0] * 21 + [101.0]
     strategy = load_strategy_for_pair("BTC/USDT", bot="btc")
+    monkeypatch.setattr(
+        "hermes_core.engines.entry.gp_invent_prices",
+        lambda *a, **k: prices,
+    )
     sig, reason = evaluate_entry_detailed(
         prices,
         strategy,
         pair="BTC/USDT",
         bot="btc",
-        session_token="24h",
+        session_token="OTHER",
     )
-    assert sig is None
-    assert reason.startswith("btc_regime:chop")
+    assert reason == ""
+    assert sig is not None
+    assert sig.meta["entry_type"] == "donchian_breakout"

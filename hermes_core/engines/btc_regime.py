@@ -88,6 +88,15 @@ def classify_from_closes(
         [float(l) for l in ls[-max(60, len(xs)) :]],
         xs[-max(60, len(xs)) :],
     )
+    # OHLC ADX approx can collapse when bars are sparse; fall back to close-only
+    # Wilder ADX so weak_adx reasons stay meaningful.
+    if adx < 5.0 and len(xs) >= 40:
+        try:
+            from hermes_core.indicators import compute_adx
+
+            adx = max(float(adx), float(compute_adx(xs)))
+        except Exception:  # noqa: BLE001
+            pass
     label = CHOP
     reason = "range_or_weak_adx"
     if s50 is not None and s200 is not None and adx >= ADX_TREND:
@@ -172,9 +181,23 @@ def allows_long(label: str) -> bool:
     return (label or "").strip().lower() == TREND_UP
 
 
-def hard_blocks_entry(label: str) -> bool:
-    """True when spot v1 must skip (chop or downtrend)."""
-    return (label or "").strip().lower() != TREND_UP
+def hard_blocks_entry(label: str, *, strategy_type: str | None = None) -> bool:
+    """True when spot v1 must skip.
+
+    * ``trend_down`` — always hard-flat (no shorts in v1).
+    * ``chop`` — hard-flat for RSI/MR; **Donchian (Phase 3)** may break out of
+      ranges, so chop is allowed for ``donchian_breakout`` only.
+    * ``trend_up`` — never blocks.
+    """
+    lab = (label or "").strip().lower()
+    if lab == TREND_UP:
+        return False
+    if lab == TREND_DOWN:
+        return True
+    if lab == CHOP:
+        st = (strategy_type or "").strip().lower()
+        return st != "donchian_breakout"
+    return True
 
 
 def append_regime_log(bot: str, rec: dict) -> None:

@@ -1773,15 +1773,21 @@ def run_cycle(
             continue
 
         # [GUARD L21] novel-regime flatline: pause NEW entries for N cycles (#26).
-        # Exits for open positions still run below. Fail-soft on short history.
+        # BTC Focus: FX crisis-DB novelty permanently false-positives on BTC
+        # (distance≈0.5 vs FX crises). D1 btc_regime is the BTC gate — log only.
         try:
+            _is_btc_pair = str(pair).upper().startswith("BTC/")
             remaining = int(flatline_pause.get(pair) or 0)
-            if remaining <= 0 and len(prices) >= 60:
+            if remaining <= 0 and len(prices) >= 60 and not _is_btc_pair:
                 _nov = check_novel_regime(pair, prices)
                 if _nov.get("flatlined"):
                     remaining = int(_nov.get("pause_cycles") or 0)
                     flatline_pause[pair] = remaining
                     summary.setdefault("flatlined", {})[pair] = _nov
+            elif _is_btc_pair:
+                # Drop any sticky pause left from pre-fix deploys.
+                flatline_pause.pop(pair, None)
+                remaining = 0
             if remaining > 0:
                 flatline_pause[pair] = remaining - 1
                 if flatline_pause[pair] <= 0:
@@ -1939,7 +1945,12 @@ def run_cycle(
                         from hermes_core.engines import btc_regime as br
 
                         _brg = br.classify_btc_regime(pair)
-                        if br.hard_blocks_entry(str(_brg.get("label") or "")):
+                        if br.hard_blocks_entry(
+                            str(_brg.get("label") or ""),
+                            strategy_type=str(
+                                (strategy or {}).get("strategy_type") or ""
+                            ),
+                        ):
                             _btc_block = True
                             if trad_sig is None:
                                 _log_skip(

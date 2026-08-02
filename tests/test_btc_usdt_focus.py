@@ -48,15 +48,18 @@ def test_hard_blocks_non_uptrend():
     assert br.hard_blocks_entry(br.TREND_DOWN) is True
     assert br.hard_blocks_entry(br.TREND_UP) is False
     assert br.allows_long(br.TREND_UP) is True
+    # Phase 3: Donchian may fire in chop; downtrend still hard-flat.
+    assert br.hard_blocks_entry(br.CHOP, strategy_type="donchian_breakout") is False
+    assert br.hard_blocks_entry(br.TREND_DOWN, strategy_type="donchian_breakout") is True
 
 
-def test_entry_blocked_when_d1_chop(monkeypatch):
+def test_donchian_still_blocked_by_d1_downtrend(monkeypatch):
     monkeypatch.setattr(
         br,
         "classify_btc_regime",
         lambda pair, force=False: {
-            "label": br.CHOP,
-            "reason": "test_chop",
+            "label": br.TREND_DOWN,
+            "reason": "test_down",
             "pair": pair,
         },
     )
@@ -67,10 +70,11 @@ def test_entry_blocked_when_d1_chop(monkeypatch):
         strategy,
         pair="BTC/USDT",
         bot="btc",
-        session_token="24h",
+        session_token="OTHER",
     )
     assert sig is None
-    assert reason.startswith("btc_regime:chop")
+    assert reason.startswith("btc_regime:trend_down")
+
 
 def test_pair_aliases_yf_and_coinbase():
     from hermes_core.adapters.pair_aliases import coinbase_product, yfinance_symbol
