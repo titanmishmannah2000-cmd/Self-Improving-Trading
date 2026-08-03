@@ -278,6 +278,10 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
             "honor_current_stop": pos.get("honor_current_stop"),
             "be_trigger_frac": pos.get("be_trigger_frac"),
             "trailing_atr_mult": pos.get("trailing_atr_mult"),
+            "current_stop": pos.get("current_stop"),
+            "entry_mid": pos.get("entry_mid"),
+            "atr_floor_pct": pos.get("atr_floor_pct"),
+            "fees_pct_rt": pos.get("fees_pct_rt"),
             "exit_intel_n": pos.get("exit_intel_n"),
             "exit_intel_reasons": pos.get("exit_intel_reasons") or [],
             "partial_enabled": pos.get("partial_enabled"),
@@ -286,6 +290,8 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
             "peak_mfe_pct": pos.get("peak_mfe_pct"),
             "trough_mae_pct": pos.get("trough_mae_pct"),
             "mfe_tracking": pos.get("mfe_tracking"),
+            "chart_soft_reasons": pos.get("chart_soft_reasons") or [],
+            "chart_size_mult": pos.get("chart_size_mult"),
         }
         for pair, pos in open_positions.items()
     ]

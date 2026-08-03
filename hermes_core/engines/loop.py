@@ -737,6 +737,21 @@ def _try_manage_open(
         if pair not in regimes:
             regimes[pair] = pos.get("entry_regime") or pos.get("regime_label") or "range"
 
+    # BTC Focus: keep D1 overlay fresh during open trades (entry path is skipped).
+    if str(pair).upper().startswith("BTC/"):
+        with contextlib.suppress(Exception):
+            from hermes_core.engines import btc_regime as br
+
+            _br = br.classify_btc_regime(pair)
+            if not hasattr(run_cycle, "_btc_d1_regimes"):
+                run_cycle._btc_d1_regimes = {}
+            run_cycle._btc_d1_regimes[pair] = {
+                "live": (regimes or {}).get(pair) or pos.get("entry_regime"),
+                "d1": _br.get("label"),
+                "d1_reason": _br.get("reason"),
+                "d1_adx": _br.get("adx"),
+            }
+
     # Weekend recycled quotes must not burn time_exit held_cycles.
     if not (market_closed and quote_unchanged):
         pos["held_cycles"] = pos.get("held_cycles", 0) + 1
