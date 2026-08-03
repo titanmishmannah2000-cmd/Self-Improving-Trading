@@ -772,9 +772,13 @@ def _try_manage_open(
             pos["trailing_atr_mult"] = 1.5
         if not pos.get("honor_current_stop"):
             pos["honor_current_stop"] = True
+        # Do NOT clamp time_exit_cycles to 150 — that killed 4H Donchian holds.
         te = pos.get("time_exit_cycles")
-        if te is not None and int(te) > 150:
-            pos["time_exit_cycles"] = 150
+        if te is not None:
+            try:
+                pos["time_exit_cycles"] = max(60, min(int(te), 2880))
+            except (TypeError, ValueError):
+                pass
     with contextlib.suppress(Exception):
         from hermes_core.engines.excursion import (
             mfe_tracking_enabled,
@@ -808,8 +812,29 @@ def _try_manage_open(
         mark_fails.pop(pair, None)
         return True, mark_f, consecutive_failures
 
-    ex = evaluate_exit(pos, mark_f, prices)
+    # 4H (or configured) exit TF: evaluate SL/TP/trail on last closed bar of
+    # that interval so 1m noise cannot nick a swing stop. Live mark still
+    # drives unrealised % / dashboard.
+    exit_mark = mark_f
+    exit_prices = prices
+    exit_tf = str(pos.get("exit_tf") or pos.get("signal_interval") or "").strip().lower()
+    if exit_tf in {"4h", "1h", "1d", "2h", "6h", "12h"} and pair:
+        with contextlib.suppress(Exception):
+            from hermes_core.engines.entry import gp_invent_prices
+
+            tf_px = gp_invent_prices(
+                pair,
+                interval=exit_tf,
+                period=str(pos.get("signal_period") or "120d"),
+                max_candles=int(pos.get("signal_max_candles") or 800),
+            )
+            if tf_px and len(tf_px) >= 30:
+                exit_mark = float(tf_px[-1])
+                exit_prices = tf_px
+
+    ex = evaluate_exit(pos, exit_mark, exit_prices)
     if ex is not None:
+        # Fill / PnL still use the live mark path inside _process_exit.
         _process_exit(
             bot,
             pair,
@@ -2495,6 +2520,22 @@ def run_cycle(
                 "current_stop": stop,
                 "atr": atr,
                 "atr_floor_pct": float(strategy.get("atr_floor_pct") or 0.0),
+                "exit_tf": str(
+                    strategy.get("exit_tf")
+                    or (strategy.get("entry") or {}).get("interval")
+                    or ""
+                ),
+                "signal_interval": str(
+                    (strategy.get("entry") or {}).get("interval")
+                    or strategy.get("signal_interval")
+                    or ""
+                ),
+                "signal_period": str(
+                    (strategy.get("entry") or {}).get("period") or "120d"
+                ),
+                "signal_max_candles": int(
+                    (strategy.get("entry") or {}).get("max_candles") or 800
+                ),
                 "entry_type": _etype,
                 "strategy_version": str(strategy.get("version", "00")),
                 # B9: firing GP indicator IDs so that on close ONLY these are

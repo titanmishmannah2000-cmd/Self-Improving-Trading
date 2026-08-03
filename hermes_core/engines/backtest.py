@@ -307,6 +307,14 @@ def _entry_signal(
             entry_cfg = strategy.get("entry") if isinstance(strategy.get("entry"), dict) else {}
             period = int(entry_cfg.get("donchian_period") or strategy.get("donchian_period") or 20)
             period = max(5, min(period, 100))
+            try:
+                buffer_pct = float(
+                    entry_cfg.get("breakout_buffer_pct")
+                    or strategy.get("breakout_buffer_pct")
+                    or 0.0
+                )
+            except (TypeError, ValueError):
+                buffer_pct = 0.0
             window = prices[: i + 1]
             if len(window) < period + 2:
                 continue
@@ -315,7 +323,8 @@ def _entry_signal(
             if upper is None:
                 continue
             close = float(window[-1])
-            if close > float(upper):
+            threshold_px = float(upper) * (1.0 + max(0.0, buffer_pct) / 100.0)
+            if close > threshold_px:
                 sig[i] = 1.0
     return sig
 

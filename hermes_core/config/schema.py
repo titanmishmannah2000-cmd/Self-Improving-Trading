@@ -59,6 +59,7 @@ STRATEGY_PARAM_RANGES: dict[str, tuple[float, float]] = {
     "entry.threshold": (5, 95),
     "entry.min_oversold_pairs": (1, 10),
     "entry.donchian_period": (5, 100),
+    "entry.breakout_buffer_pct": (0.0, 5.0),
 }
 
 # Nested params are addressed by dotted path; the resolver maps them to a getter.
@@ -66,6 +67,7 @@ _DOTTED_RESOLVERS = {
     "entry.threshold": lambda s: (s.get("entry") or {}).get("threshold"),
     "entry.min_oversold_pairs": lambda s: (s.get("entry") or {}).get("min_oversold_pairs"),
     "entry.donchian_period": lambda s: (s.get("entry") or {}).get("donchian_period"),
+    "entry.breakout_buffer_pct": lambda s: (s.get("entry") or {}).get("breakout_buffer_pct"),
 }
 
 # Minimum stop-loss, also referenced independently by some guards (L40 floor).

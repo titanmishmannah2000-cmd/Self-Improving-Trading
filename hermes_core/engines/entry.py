@@ -386,6 +386,7 @@ def evaluate_entry_detailed(
     if stype == "donchian_breakout":
         # BTC Focus Phase 3 Strategy B: 4H Donchian breakout (D1 gate above).
         from hermes_core.indicators import compute_donchian
+        from hermes_core.engines.chart_vision import chart_soft_reasons, hard_block
 
         entry_cfg = strategy.get("entry") if isinstance(strategy.get("entry"), dict) else {}
         period = int(
@@ -397,6 +398,19 @@ def evaluate_entry_detailed(
         signal_interval = str(
             entry_cfg.get("interval") or strategy.get("signal_interval") or "4h"
         )
+        # Clean-chart gate: skip soft vision tilts (avoid / downtrend / pullback).
+        require_clean = entry_cfg.get("require_clean_chart", False)
+        if require_clean is True or str(require_clean).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            soft = chart_soft_reasons(context, strategy_type="donchian_breakout")
+            if soft:
+                return None, f"donchian:chart_soft:{','.join(soft)}"
+            if hard_block(context):
+                return None, "donchian:chart_hard_block"
         series = list(prices)
         if pair and signal_interval:
             fetched = gp_invent_prices(
@@ -422,7 +436,17 @@ def evaluate_entry_detailed(
         if upper is None:
             return None, "donchian:insufficient_bars"
         close = float(series[-1])
-        if close <= float(upper):
+        try:
+            buffer_pct = float(
+                entry_cfg.get("breakout_buffer_pct")
+                or strategy.get("breakout_buffer_pct")
+                or 0.0
+            )
+        except (TypeError, ValueError):
+            buffer_pct = 0.0
+        buffer_pct = max(0.0, min(buffer_pct, 5.0))
+        threshold_px = float(upper) * (1.0 + buffer_pct / 100.0)
+        if close <= threshold_px:
             return None, "donchian:no_breakout"
         atr = compute_all(series)["atr"]
         if not _vol_gate(strategy, atr, close, vol_above):
@@ -440,6 +464,7 @@ def evaluate_entry_detailed(
                 "donchian_upper": float(upper),
                 "donchian_lower": channel.get("lower"),
                 "signal_interval": signal_interval,
+                "breakout_buffer_pct": buffer_pct,
                 "breakout_pct": round(breakout_pct, 4),
                 "close": close,
             },
