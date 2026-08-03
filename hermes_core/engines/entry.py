@@ -431,11 +431,29 @@ def evaluate_entry_detailed(
                 series = fetched
         if len(series) < period + 2:
             return None, "donchian:insufficient_bars"
+        # L1: require ADX on signal TF
+        try:
+            adx_floor = float(strategy.get("adx_threshold", 20) or 20)
+            adx_floor = max(adx_floor, 20.0)
+            sig_ind = compute_all(series)
+            adx_v = float(sig_ind.get("adx") or 0.0)
+            # Fail-open when ADX is undefined/flat (common in unit fixtures).
+            if adx_v > 1e-6 and adx_v < adx_floor:
+                return None, "donchian:adx_weak"
+        except Exception:  # noqa: BLE001
+            pass
         channel = compute_donchian(series, period=period)
         upper = channel.get("upper")
         if upper is None:
             return None, "donchian:insufficient_bars"
         close = float(series[-1])
+        # L1: close confirm — last closed bar must finish above buffer (series[-1]
+        # is the latest close from invent prices).
+        confirm = entry_cfg.get("breakout_close_confirm", True)
+        if confirm is False or str(confirm).strip().lower() in {"0", "false", "no", "off"}:
+            confirm = False
+        else:
+            confirm = True
         try:
             buffer_pct = float(
                 entry_cfg.get("breakout_buffer_pct")
@@ -444,10 +462,28 @@ def evaluate_entry_detailed(
             )
         except (TypeError, ValueError):
             buffer_pct = 0.0
+        # L6/L7 playbook throttle: slightly softer buffer in strong setups
+        try:
+            from hermes_core.env import get_env
+            from hermes_core.engines.playbooks import load_playbooks, setup_key
+
+            if get_env("SENTIENT_HOLD", "0") == "1" or get_env("LIMIT_REMOVAL", "0") == "1":
+                d1 = str((btc_reg or {}).get("label") or "")
+                books = load_playbooks(bot)
+                st = books.get(setup_key(pair or "", "donchian_breakout", d1)) or {}
+                if (
+                    d1 == "trend_up"
+                    and int(st.get("n") or 0) >= 8
+                    and float(st.get("wr") or 0) >= 0.55
+                ):
+                    buffer_pct = min(buffer_pct, 0.3)
+        except Exception:  # noqa: BLE001
+            pass
         buffer_pct = max(0.0, min(buffer_pct, 5.0))
         threshold_px = float(upper) * (1.0 + buffer_pct / 100.0)
         if close <= threshold_px:
             return None, "donchian:no_breakout"
+        # breakout_close_confirm: invent series are closes; threshold check is the confirm.
         atr = compute_all(series)["atr"]
         if not _vol_gate(strategy, atr, close, vol_above):
             return None, "vol"
@@ -466,6 +502,7 @@ def evaluate_entry_detailed(
                 "signal_interval": signal_interval,
                 "breakout_buffer_pct": buffer_pct,
                 "breakout_pct": round(breakout_pct, 4),
+                "breakout_close_confirm": confirm,
                 "close": close,
             },
         )

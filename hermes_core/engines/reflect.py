@@ -142,7 +142,20 @@ def trade_pathology(trades: list[dict]) -> dict:
     reasons = [_exit_reason(t) for t in trades]
     stop_n = sum(1 for r in reasons if r in ("sl", "stop_loss", "stop"))
     tp_n = sum(1 for r in reasons if r in ("tp", "take_profit", "profit_target"))
-    time_n = sum(1 for r in reasons if "time" in r or r == "timeout")
+    soft_n = sum(
+        1
+        for t, r in zip(trades, reasons)
+        if r in ("profit_bank", "soft_bank")
+        or (isinstance(t, dict) and (t.get("soft_bank") or t.get("exit_class") == "soft_capture"))
+    )
+    # Soft banks must NOT count as timeouts (would lower TP).
+    time_n = sum(
+        1
+        for t, r in zip(trades, reasons)
+        if ("time" in r or r == "timeout")
+        and r not in ("profit_bank",)
+        and not (isinstance(t, dict) and t.get("exit_class") == "soft_capture")
+    )
 
     caps = [float(t["mfe_capture"]) for t in trades if t.get("mfe_capture") is not None]
     gbs = [float(t["giveback_frac"]) for t in trades if t.get("giveback_frac") is not None]
@@ -158,6 +171,7 @@ def trade_pathology(trades: list[dict]) -> dict:
         "stop_frac": stop_n / n if n else 0.0,
         "tp_frac": tp_n / n if n else 0.0,
         "timeout_frac": time_n / n if n else 0.0,
+        "soft_bank_frac": soft_n / n if n else 0.0,
         "winners": len(winners),
         "avg_capture": (sum(caps) / len(caps)) if caps else None,
         "avg_giveback": (sum(gbs) / len(gbs)) if gbs else None,

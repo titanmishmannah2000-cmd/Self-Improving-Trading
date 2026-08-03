@@ -418,10 +418,26 @@ def _simulate(
         hit_stop = False
         end = min(n - 1, i + hold)
         exited = False
+        bars_since_peak = 0
+        peak_hist: list[float] = []
+        # Approximate regime patience from local window
+        try:
+            from hermes_core.engines.backtest import _classify_regime as _cr
+
+            local_reg = _cr(list(p[max(0, i - 30) : i + 1]))
+        except Exception:  # noqa: BLE001
+            local_reg = "unknown"
+        patience = 1.5 if local_reg == "trend" else (0.7 if local_reg == "range" else 1.0)
+        stall_bars = max(1, int(round(1 * patience)))
+        cost_one = float(cost) if cost else 0.0
         for j in range(i + 1, end + 1):
             mfe = (float(p[j]) - entry) / entry * 100.0
-            if mfe > peak_mfe:
+            if mfe > peak_mfe + 0.05:
                 peak_mfe = mfe
+                bars_since_peak = 0
+            else:
+                bars_since_peak += 1
+            peak_hist.append(peak_mfe)
             if mfe <= -stop_pct:
                 pnl = -float(stop_pct)
                 hit_stop = True
@@ -437,6 +453,13 @@ def _simulate(
                     pnl = float(floor)
                     exited = True
                     break
+            # Layered bank: stalled + net green after early fraction of hold
+            held_bars = j - i
+            net = mfe - cost_one
+            if held_bars >= max(2, hold // 4) and net >= 0.10 and bars_since_peak >= stall_bars:
+                pnl = float(mfe)
+                exited = True
+                break
         if not exited:
             mfe = (float(p[end]) - entry) / entry * 100.0
             pnl = float(np.clip(mfe, -stop_pct, target_pct))

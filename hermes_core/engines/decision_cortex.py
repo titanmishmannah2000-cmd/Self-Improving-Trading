@@ -250,6 +250,8 @@ class Cortex:
         giveback_frac: float | None = None,
         mfe_capture: float | None = None,
         partial: bool = False,
+        exit_class: str | None = None,
+        exit_reason: str | None = None,
     ) -> None:
         try:
             _pnl = float(pnl)
@@ -268,6 +270,11 @@ class Cortex:
         }
         if partial:
             row["partial"] = True
+        if exit_class:
+            row["exit_class"] = str(exit_class)
+        if exit_reason:
+            row["exit_reason"] = str(exit_reason)
+            row["reason"] = str(exit_reason)
         if mfe_pct is not None:
             row["mfe_pct"] = float(mfe_pct)
         if mae_pct is not None:
@@ -401,22 +408,47 @@ class Cortex:
         win_pnls: list[float] = []
         loss_pnls: list[float] = []
         for e in outcomes:
+            # Soft-capture closes: down-weight or skip for full-edge Kelly.
+            try:
+                from hermes_core.engines.outcome_class import edge_weight
+
+                w = float(edge_weight(e))
+            except Exception:  # noqa: BLE001
+                w = 1.0
+            if w <= 0:
+                continue
             if "pnl" not in e:
                 continue
             try:
-                pnl = float(e["pnl"])
+                pnl = float(e["pnl"]) * w
             except (TypeError, ValueError):
                 continue
             if e.get("outcome") in (1, True):
                 win_pnls.append(pnl)
             else:
                 loss_pnls.append(abs(pnl))
+        # Recount W/L excluding zero-weight soft failures
+        full = []
+        for e in outcomes:
+            try:
+                from hermes_core.engines.outcome_class import counts_for_full_edge
+
+                if counts_for_full_edge(e):
+                    full.append(e)
+            except Exception:  # noqa: BLE001
+                full.append(e)
+        if full:
+            wins = sum(1 for e in full if e.get("outcome") in (1, True))
+            losses = len(full) - wins
+            n_out = len(full)
+        else:
+            n_out = len(outcomes)
         avg_win = sum(win_pnls) / len(win_pnls) if win_pnls else None
         avg_loss = sum(loss_pnls) / len(loss_pnls) if loss_pnls else None
         return {
             "wins": wins,
             "losses": losses,
-            "n": len(outcomes),
+            "n": n_out,
             "avg_win": avg_win,
             "avg_loss": avg_loss,
         }

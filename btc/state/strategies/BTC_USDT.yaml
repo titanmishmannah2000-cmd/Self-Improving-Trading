@@ -1,10 +1,6 @@
 pair: BTC/USDT
-version: "02"
-# Strategy B v1.1 — 4H Donchian with swing-aligned holds/stops.
-# Economic rationale: BTC spends long stretches in directional expansions after
-# volatility compresses; a prior-N high breakout on 4H captures continuation
-# while the D1 downtrend gate keeps the bot flat in hard sells.
-# v02: longer time_exit (8h), breakout buffer, clean-chart entry, 4H exit TF.
+version: "04"
+# Layered sentient exits L0–L2 defaults (L3+ via SENTIENT_HOLD / LIMIT_REMOVAL flags).
 strategy_type: donchian_breakout
 regime_split: false
 entry:
@@ -13,26 +9,32 @@ entry:
   interval: 4h
   period: 120d
   max_candles: 800
-  # Close must clear channel by this % (cuts fee-only tick breakouts).
   breakout_buffer_pct: 0.4
-  # Skip when vision is avoid / downtrend / wait-for-pullback (full size only).
+  breakout_close_confirm: true
   require_clean_chart: true
   session_filter: "24h"
-# Swing stops: a bit more room than scalp; still cost-aware vs 0.22% RT fees.
 stop_loss_pct: 2.5
-profit_target_pct: 5.0
-trailing_stop_pct: 0.0
-# ~8h at 60s cycles (4H Donchian needs room; 150 was killing setups).
+profit_target_pct: 1.5
+trailing_stop_pct: 0.3
 time_exit_cycles: 480
-mfe_giveback_min_pct: 0.6
-mfe_giveback_frac: 0.5
+early_reeval_cycles: 120
+time_exit_max_cycles: 720
+min_bank_net_pct: 0.10
+peak_epsilon_pct: 0.05
+mfe_stall_bars: 1
+clock_lock_frac: 0.5
+path_slack: 1.25
+failed_breakout_bars: 1
+partial_enabled: true
+soft_partial_tp_frac: 0.4
+mfe_giveback_min_pct: 0.35
+mfe_giveback_frac: 0.4
 trailing_atr_mult: 1.5
+be_trigger_frac: 0.3
 position_size_r: 0.15
 atr_multiplier: 2.0
-# Floor trail/ATR distance in % of price — 4H swing scale, not 5m noise.
 atr_floor_pct: 1.0
 use_atr_floor: true
-# Evaluate SL/TP/trail against last 4H close (not every 1m tick).
 exit_tf: 4h
 adx_threshold: 20
 vol_threshold_pct: 0.01

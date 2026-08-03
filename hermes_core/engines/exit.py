@@ -1,45 +1,42 @@
-"""Exit engine (Session 5 / Phase 5) — pure exit/stop evaluator.
+"""Exit engine — layered sentient hold/bank (L0–L1 core, L5 arbiter hook).
 
-Single implementation shared by the live loop, backtester, and dashboard export
-(discipline 1.5 + roadmap S5). NO I/O, NO network, NO hidden state: given a
-trade's parameters, the current price, and a price history (for ATR trailing),
-it returns either an ``Exit`` describing the action or ``None``.
-
-Exactly ONE exit reason is ever returned per evaluation — never zero-or-many
-(roadmap S5 DO-NOT). The Phase-5 reasons:
-
-  stop_loss      price <= entry*(1 - sl/100)
-  profit_target  price >= entry*(1 + tp/100)  [hard close, no partial feature]
-  partial_close  price >= entry*(1 + tp/100)  [partial feature ON -> 50% off at
-                  FULL target, stop moved to breakeven for the remainder]  [GUARD L27]
-  mfe_giveback   peak MFE >= min and giveback_frac >= thresh (lock winners)
-  breakeven      unrealised >= tp*be_trigger_frac  -> move stop to entry [GUARD L26]
-  trailing       ATR-based trailing stop tightening (raises the stop only)
-  time_exit      held_cycles >= time_exit_cycles (last resort — after protectors)
-
-Also exposes the [GUARD L24] circuit-breaker predicate.
+Pure + deterministic given trade dict + price (+ optional history).
+Exactly ONE exit reason per evaluation.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from hermes_core.env import get_env
 from hermes_core.indicators import compute_atr
 
 CIRCUIT_MAX_CONSECUTIVE_FAILURES = 5  # [GUARD L24]
 
-# Defaults when strategy / position omit knobs (≈2.5h at 60s cycles).
+
+def _sentient_hold_enabled() -> bool:
+    return get_env("SENTIENT_HOLD", "0") == "1"
+
 DEFAULT_TIME_EXIT_CYCLES = 150
-DEFAULT_MFE_GIVEBACK_MIN_PCT = 0.4  # need real peak before locking
-DEFAULT_MFE_GIVEBACK_FRAC = 0.5  # exit after giving back ≥50% of MFE
+DEFAULT_MFE_GIVEBACK_MIN_PCT = 0.4
+DEFAULT_MFE_GIVEBACK_FRAC = 0.5
+DEFAULT_EARLY_REEVAL_CYCLES = 120
+DEFAULT_TIME_EXIT_MAX_CYCLES = 720
+DEFAULT_MIN_BANK_NET_PCT = 0.10
+DEFAULT_PEAK_EPSILON_PCT = 0.05
+DEFAULT_MFE_STALL_BARS = 1
+DEFAULT_CLOCK_LOCK_FRAC = 0.5
+DEFAULT_PATH_SLACK = 1.25
+DEFAULT_SOFT_PARTIAL_TP_FRAC = 0.4
+HOLD_SCORE_PRIORS = (0.45, 0.35, 0.20)  # progress, fresh, capture
 
 
 @dataclass
 class Exit:
-    reason: str  # one of the reasons above
-    price: float  # price at evaluation
-    new_stop: float | None = None  # stop adjustment (breakeven/trailing)
-    partial_close_fraction: float | None = None  # 0.5 when partial-closing
+    reason: str
+    price: float
+    new_stop: float | None = None
+    partial_close_fraction: float | None = None
 
 
 def _unrealised_pct(trade: dict, current_price: float) -> float:
@@ -55,15 +52,41 @@ def should_circuit_break(
     consecutive_failures: int,
     max_consecutive: int = CIRCUIT_MAX_CONSECUTIVE_FAILURES,
 ) -> bool:
-    """[GUARD L24] Halt fetching/sleep when consecutive failures hit the cap."""
     return consecutive_failures >= max_consecutive
 
 
-def _mfe_giveback_hit(trade: dict, unreal: float) -> bool:
-    """True when peak MFE is meaningful and enough of it has been given back.
+def _f(trade: dict, key: str, default: float) -> float:
+    try:
+        if trade.get(key) is not None:
+            return float(trade[key])
+    except (TypeError, ValueError):
+        pass
+    return float(default)
 
-    Opt-out: ``mfe_giveback_enabled: false`` on the position/strategy stamp.
-    """
+
+def _i(trade: dict, key: str, default: int) -> int:
+    try:
+        if trade.get(key) is not None:
+            return int(trade[key])
+    except (TypeError, ValueError):
+        pass
+    return int(default)
+
+
+def _exit_haircut(trade: dict) -> float:
+    return max(0.0, _f(trade, "exit_haircut_pct", 0.0))
+
+
+def net_unreal(trade: dict, unreal: float) -> float:
+    """Gross unreal minus remaining exit haircut (entry already in fill)."""
+    return float(unreal) - _exit_haircut(trade)
+
+
+def min_net_floor(trade: dict) -> float:
+    return max(_exit_haircut(trade), _f(trade, "min_bank_net_pct", DEFAULT_MIN_BANK_NET_PCT))
+
+
+def _mfe_giveback_hit(trade: dict, unreal: float) -> bool:
     if trade.get("mfe_giveback_enabled", True) is False:
         return False
     try:
@@ -78,54 +101,304 @@ def _mfe_giveback_hit(trade: dict, unreal: float) -> bool:
     return (giveback / peak) >= thresh
 
 
+def hold_score_weights(trade: dict) -> tuple[float, float, float]:
+    w = trade.get("hold_score_weights")
+    if isinstance(w, (list, tuple)) and len(w) == 3:
+        try:
+            a, b, c = float(w[0]), float(w[1]), float(w[2])
+            s = a + b + c
+            if s > 1e-9:
+                return a / s, b / s, c / s
+        except (TypeError, ValueError):
+            pass
+    return HOLD_SCORE_PRIORS
+
+
+def compute_hold_score(trade: dict, unreal: float) -> float:
+    tp = max(_f(trade, "profit_target_pct", 1.5), 1e-6)
+    peak = max(_f(trade, "peak_mfe_pct", 0.0), 0.0)
+    progress = max(0.0, min(1.0, peak / tp))
+    bars = max(0, _i(trade, "exit_bars_since_peak", 0))
+    fresh = 1.0 / (1.0 + float(bars))
+    capture = (float(unreal) / peak) if peak > 1e-9 else 0.0
+    capture = max(0.0, min(1.0, capture))
+    wp, wf, wc = hold_score_weights(trade)
+    # Optional hold_policy posterior mix
+    prior = wp * progress + wf * fresh + wc * capture
+    try:
+        post = trade.get("hold_policy_p_hold")
+        if post is not None:
+            n = _i(trade, "hold_policy_n", 0)
+            if n >= 30:
+                blend = 0.4 * prior + 0.6 * float(post)
+                return max(0.0, min(1.0, blend))
+    except (TypeError, ValueError):
+        pass
+    return max(0.0, min(1.0, prior))
+
+
+def patience_mult(trade: dict) -> float:
+    mult = 1.0
+    label = str(
+        trade.get("live_d1")
+        or trade.get("d1")
+        or trade.get("regime_label")
+        or trade.get("entry_regime")
+        or ""
+    ).lower()
+    if "trend_up" in label or label == "up":
+        mult *= 1.5
+    elif "trend_down" in label or label == "down":
+        mult *= 0.5
+    elif "range" in label or "chop" in label:
+        mult *= 0.7
+    try:
+        chart_p = trade.get("live_chart_patience")
+        if chart_p is not None:
+            mult *= float(chart_p)
+    except (TypeError, ValueError):
+        pass
+    if trade.get("chart_soft_reasons"):
+        mult *= 0.8
+    try:
+        sp = trade.get("structure_patience_mult")
+        if sp is not None:
+            mult *= float(sp)
+    except (TypeError, ValueError):
+        pass
+    try:
+        pb = trade.get("playbook_patience_mult")
+        if pb is not None:
+            mult *= float(pb)
+    except (TypeError, ValueError):
+        pass
+    try:
+        world_deg = trade.get("world_degraded")
+        if world_deg:
+            mult *= 0.75
+        event_risk = trade.get("event_risk")
+        if event_risk is not None and float(event_risk) >= 0.7:
+            mult *= 0.7
+    except (TypeError, ValueError):
+        pass
+    return max(0.4, min(2.0, mult))
+
+
+def effective_stall_bars(trade: dict) -> int:
+    base = max(1, _i(trade, "mfe_stall_bars", DEFAULT_MFE_STALL_BARS))
+    return max(1, int(round(base * patience_mult(trade))))
+
+
+def dual_slope_path(trade: dict, unreal: float, tp: float | None) -> dict:
+    """Fast/slow MFE slopes and path_ok / path_fail flags."""
+    peak = _f(trade, "peak_mfe_pct", 0.0)
+    hist = trade.get("mfe_bar_peaks") or []
+    try:
+        peaks = [float(x) for x in hist][-4:]
+    except (TypeError, ValueError):
+        peaks = []
+    if peak and (not peaks or peaks[-1] != peak):
+        peaks = (peaks + [peak])[-4:]
+    fast = 0.0
+    slow = 0.0
+    if len(peaks) >= 2:
+        fast = peaks[-1] - peaks[-2]
+    if len(peaks) >= 2:
+        span = min(3, len(peaks) - 1)
+        slow = (peaks[-1] - peaks[-1 - span]) / float(span)
+    held = _i(trade, "held_cycles", 0)
+    hard = _i(trade, "time_exit_max_cycles", DEFAULT_TIME_EXIT_MAX_CYCLES)
+    # ~240 cycles per 4h bar at 60s
+    cyc_per_bar = max(1, _i(trade, "cycles_per_exit_bar", 240))
+    bars_left = max(1.0, (hard - held) / float(cyc_per_bar))
+    slack = _f(trade, "path_slack", DEFAULT_PATH_SLACK)
+    need = max(0.0, float(tp or 0.0) - float(unreal))
+    path_ok = slow > 0 and (need <= 1e-9 or (need / slow) <= bars_left * slack)
+    path_fail = (fast <= 0 and slow <= 0) or (slow > 0 and need / max(slow, 1e-9) > bars_left * slack)
+    # p_hit_tp forecast override when present (L6)
+    try:
+        p_hit = trade.get("p_hit_tp")
+        if p_hit is not None:
+            thr = _f(trade, "p_hit_tp_threshold", 0.35)
+            if float(p_hit) < thr:
+                path_fail = True
+                path_ok = False
+            elif float(p_hit) >= thr and slow >= 0:
+                path_ok = True
+    except (TypeError, ValueError):
+        pass
+    return {
+        "fast_slope": fast,
+        "slow_slope": slow,
+        "path_ok": path_ok,
+        "path_fail": path_fail,
+        "bars_left": bars_left,
+    }
+
+
+def _protect_stop(trade: dict, entry: float, unreal: float) -> float:
+    hair = _exit_haircut(trade)
+    peak = max(_f(trade, "peak_mfe_pct", 0.0), 0.0)
+    lock_frac = _f(trade, "clock_lock_frac", DEFAULT_CLOCK_LOCK_FRAC)
+    fee_lock = entry * (1.0 + hair / 100.0)
+    cap_lock = entry * (1.0 + (lock_frac * peak) / 100.0)
+    stop = max(fee_lock, cap_lock)
+    # atr floor distance under mark if we have atr_floor
+    floor = _f(trade, "atr_floor_pct", 0.0)
+    src = str(trade.get("exit_tf_source") or "live")
+    if src == "synthetic":
+        floor *= 1.25
+    # never arm above a level that locks less than min net if peak tiny
+    return stop
+
+
+def _stop_locks_min_net(trade: dict, entry: float) -> bool:
+    cur = trade.get("current_stop")
+    if cur is None:
+        return False
+    try:
+        # stop at/above fee lock implies protected
+        fee_lock = entry * (1.0 + _exit_haircut(trade) / 100.0)
+        return float(cur) + 1e-12 >= fee_lock
+    except (TypeError, ValueError):
+        return False
+
+
+def _layered_hold_bank(
+    trade: dict, current_price: float, entry: float, unreal: float, tp: float | None
+) -> Exit | None:
+    """L0–L1 clock / score / path bank-protect brain (after classic protectors)."""
+    held = _i(trade, "held_cycles", 0)
+    early = _i(trade, "early_reeval_cycles", DEFAULT_EARLY_REEVAL_CYCLES)
+    te = trade.get("time_exit_cycles")
+    te_i = _i(trade, "time_exit_cycles", DEFAULT_TIME_EXIT_CYCLES) if te is not None else None
+    hard = _i(trade, "time_exit_max_cycles", DEFAULT_TIME_EXIT_MAX_CYCLES)
+
+    # Failed breakout: first N exit bars never net-green
+    fb_bars = _i(trade, "failed_breakout_bars", 0)
+    exit_bars_held = _i(trade, "exit_bars_held", 0)
+    net = net_unreal(trade, unreal)
+    floor = min_net_floor(trade)
+    if fb_bars > 0 and exit_bars_held <= fb_bars and net < floor and unreal <= 0:
+        if exit_bars_held >= fb_bars:
+            return Exit("failed_breakout", current_price)
+
+    armed = held >= early
+    past_soft = te_i is not None and held >= te_i
+    past_hard = held >= hard
+
+    if not armed and not past_soft and not past_hard:
+        return None
+
+    if past_soft and net < floor:
+        return Exit("time_exit", current_price)
+
+    if net < floor:
+        # early arm but not soft: don't cut slight losers early
+        if past_hard:
+            return Exit("time_exit", current_price)
+        return None
+
+    # net-green path
+    score = compute_hold_score(trade, unreal)
+    path = dual_slope_path(trade, unreal, tp)
+    stall_need = effective_stall_bars(trade)
+    stalled = _i(trade, "exit_bars_since_peak", 0) >= stall_need
+    # legacy missing stall counter past soft → treat as stalled (bank zombies)
+    if past_soft and trade.get("exit_bars_since_peak") is None:
+        stalled = True
+
+    # Protect first if needed
+    if not _stop_locks_min_net(trade, entry):
+        if str(trade.get("exit_tf_source") or "live") != "none":
+            new_stop = _protect_stop(trade, entry, unreal)
+            cur = trade.get("current_stop")
+            if cur is None or new_stop > float(cur) + 1e-12:
+                return Exit("trailing", current_price, new_stop=new_stop)
+
+    # Bank when score low or path failed / stalled
+    bank_bias = 0.35 / max(patience_mult(trade), 0.5)
+    if past_hard and stalled:
+        return Exit("profit_bank", current_price)
+    if past_hard and path["path_ok"] and not stalled:
+        # re-tighten protect once
+        new_stop = _protect_stop(trade, entry, unreal)
+        cur = trade.get("current_stop")
+        if cur is None or new_stop > float(cur) + 1e-12:
+            return Exit("trailing", current_price, new_stop=new_stop)
+        return Exit("profit_bank", current_price)
+
+    if (stalled and path["path_fail"]) or score < bank_bias:
+        return Exit("profit_bank", current_price)
+    if stalled and score < 0.55:
+        return Exit("profit_bank", current_price)
+    if path["path_fail"] and score < 0.55:
+        return Exit("profit_bank", current_price)
+
+    # mid score → already protected; hold
+    if score >= 0.55 and path["path_ok"]:
+        return None
+    if 0.35 <= score < 0.55:
+        return None
+    return None
+
+
 def evaluate_exit(
     trade: dict, current_price: float, prices: list[float] | None = None
 ) -> Exit | None:
-    """Evaluate one trade for an exit/stop action. Pure + deterministic.
-
-    ``trade`` keys: entry_price (req), stop_loss_pct, profit_target_pct,
-    time_exit_cycles, held_cycles, unrealised_pct (opt), breakeven_set (bool),
-    partial_done (bool), partial_enabled (bool), trailing_atr_mult (opt),
-    current_stop (opt), peak_mfe_pct (opt), mfe_giveback_* (opt).
-    """
     if not trade or "entry_price" not in trade:
         return None
 
     entry = trade["entry_price"]
     sl = trade.get("stop_loss_pct")
     tp = trade.get("profit_target_pct")
-    held = trade.get("held_cycles", 0)
-    te = trade.get("time_exit_cycles")
     unreal = _unrealised_pct(trade, current_price)
     partial_enabled = trade.get("partial_enabled", False)
     partial_done = trade.get("partial_done", False)
+    soft_partial_done = trade.get("soft_partial_done", False)
     breakeven_set = trade.get("breakeven_set", False)
 
-    # 1) Armed current_stop hit (EXIT_INTEL / trail / BE) — before %-SL
-    if trade.get("honor_current_stop") and trade.get("current_stop") is not None:
-        try:
-            if current_price <= float(trade["current_stop"]):
-                return Exit("stop_loss", current_price)
-        except (TypeError, ValueError):
-            pass
+    # Skip honor_current_stop on non-TF fallback for clock_protect
+    honor = trade.get("honor_current_stop")
+    stop_src = str(trade.get("stop_source") or "")
+    tf_src = str(trade.get("exit_tf_source") or "live")
+    if honor and trade.get("current_stop") is not None:
+        skip_wick = stop_src == "clock_protect" and tf_src not in ("live", "synthetic")
+        if not skip_wick:
+            try:
+                if current_price <= float(trade["current_stop"]):
+                    return Exit("stop_loss", current_price)
+            except (TypeError, ValueError):
+                pass
 
-    # 2) hard stop-loss
     if sl is not None and current_price <= entry * (1 - sl / 100.0):
         return Exit("stop_loss", current_price)
 
-    # 3) target / partial-close (both triggered at the FULL target)
+    # Soft partial ladder (L1) before full TP — always, even under SENTIENT_HOLD
+    if (
+        tp is not None
+        and partial_enabled
+        and not soft_partial_done
+        and not partial_done
+    ):
+        soft_frac = _f(trade, "soft_partial_tp_frac", DEFAULT_SOFT_PARTIAL_TP_FRAC)
+        soft_lvl = entry * (1.0 + (float(tp) * soft_frac) / 100.0)
+        if current_price >= soft_lvl:
+            return Exit(
+                "partial_close",
+                current_price,
+                new_stop=entry * (1.0 + _exit_haircut(trade) / 100.0),
+                partial_close_fraction=0.5,
+            )
+
     if tp is not None and current_price >= entry * (1 + tp / 100.0):
         if partial_enabled and not partial_done:
-            # [GUARD L27] 50% off at full target, remainder trailed at breakeven
             return Exit("partial_close", current_price, new_stop=entry, partial_close_fraction=0.5)
         return Exit("profit_target", current_price)
 
-    # 4) MFE giveback — lock winners before the clock donates them back
     if _mfe_giveback_hit(trade, unreal):
         return Exit("mfe_giveback", current_price)
 
-    # 5) [GUARD L26] breakeven — move stop to entry past be_trigger_frac * TP
-    #    (before time_exit so protectors can arm during the hold window)
     be_frac = 0.5
     try:
         if trade.get("be_trigger_frac") is not None:
@@ -135,34 +408,21 @@ def evaluate_exit(
     if tp is not None and not breakeven_set and unreal >= tp * be_frac:
         return Exit("breakeven", current_price, new_stop=entry)
 
-    # 6) Trailing stop (raises the stop only) — before time_exit
-    # Prefer live ATR trail; also honor YAML/reflection ``trailing_stop_pct``
-    # from peak MFE (was written by reflections but previously unwired).
-    #
-    # Guard: do NOT trail on microscopic green ticks. Short-bar ATR can be
-    # pennies, so trail_stop ≈ price and the next noise tick exits as
-    # ``stop_loss`` while %-SL (e.g. 2%) never mattered — BTC paper saw
-    # −0.13% "stops" that were almost entirely fees.
     try:
         min_trail_unreal = float(
             trade.get("mfe_giveback_min_pct", DEFAULT_MFE_GIVEBACK_MIN_PCT)
         )
     except (TypeError, ValueError):
         min_trail_unreal = DEFAULT_MFE_GIVEBACK_MIN_PCT
-    try:
-        fees_rt = float(trade.get("fees_pct_rt") or 0.0)
-    except (TypeError, ValueError):
-        fees_rt = 0.0
-    min_trail_unreal = max(min_trail_unreal, fees_rt)
+    min_trail_unreal = max(min_trail_unreal, _exit_haircut(trade))
 
     mult = trade.get("trailing_atr_mult")
     if mult is not None and unreal >= min_trail_unreal and prices:
         atr = compute_atr(prices)
         if atr > 0:
-            try:
-                floor_pct = float(trade.get("atr_floor_pct") or 0.0)
-            except (TypeError, ValueError):
-                floor_pct = 0.0
+            floor_pct = _f(trade, "atr_floor_pct", 0.0)
+            if str(trade.get("exit_tf_source") or "") == "synthetic":
+                floor_pct *= 1.25
             min_dist = max(float(atr) * float(mult), abs(entry) * (floor_pct / 100.0))
             if min_dist <= 0:
                 min_dist = float(atr) * float(mult)
@@ -171,24 +431,24 @@ def evaluate_exit(
             if cur is None or trail_stop > float(cur):
                 return Exit("trailing", current_price, new_stop=trail_stop)
 
-    try:
-        trail_pct = float(trade.get("trailing_stop_pct") or 0.0)
-    except (TypeError, ValueError):
-        trail_pct = 0.0
+    trail_pct = _f(trade, "trailing_stop_pct", 0.0)
     if trail_pct > 0 and unreal >= min_trail_unreal:
-        try:
-            peak = float(trade.get("peak_mfe_pct") or unreal)
-        except (TypeError, ValueError):
-            peak = unreal
+        peak = _f(trade, "peak_mfe_pct", unreal)
         if peak > trail_pct:
-            # Lock (peak - trail_pct) of entry as a raised stop.
             pct_trail_stop = entry * (1.0 + (peak - trail_pct) / 100.0)
             cur = trade.get("current_stop")
             if cur is None or pct_trail_stop > float(cur):
                 return Exit("trailing", current_price, new_stop=pct_trail_stop)
 
-    # 7) time-based exit — last resort after TP / giveback / BE / trail
-    if te is not None and held >= te:
-        return Exit("time_exit", current_price)
+    # L5 expert arbiter only for hold/bank after classic protectors (fail-open)
+    if trade.get("use_exit_experts") or _sentient_hold_enabled():
+        try:
+            from hermes_core.engines.exit_experts import arbitrate_exit
 
-    return None
+            return arbitrate_exit(trade, current_price, prices)
+        except Exception:  # noqa: BLE001
+            pass
+
+    return _layered_hold_bank(
+        trade, current_price, entry, unreal, float(tp) if tp is not None else None
+    )

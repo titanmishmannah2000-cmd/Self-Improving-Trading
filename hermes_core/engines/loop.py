@@ -454,9 +454,11 @@ def _process_exit(
             )
         pos["size"] = remain
         pos["partial_done"] = True
+        pos["soft_partial_done"] = True
         pos["breakeven_set"] = True
         if ex.new_stop is not None:
             pos["current_stop"] = ex.new_stop
+            pos["stop_source"] = "clock_protect"
         return
     # --- REAL close: log the trade BEFORE deleting the open (durability).
     entry_type = pos.get("entry_type", "mean_reversion")
@@ -522,6 +524,72 @@ def _process_exit(
             if k in _exc
         },
     }
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.outcome_class import stamp_exit_class
+
+        trade_rec["exit_class"] = stamp_exit_class(ex.reason)
+        trade_rec["soft_bank"] = trade_rec["exit_class"] == "soft_capture"
+        if pos.get("exit_votes"):
+            trade_rec["exit_votes"] = pos.get("exit_votes")
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.playbooks import update_playbook_on_close
+
+        update_playbook_on_close(
+            bot=bot,
+            pair=pair,
+            entry_type=str(entry_type),
+            d1=str(pos.get("live_d1") or pos.get("d1") or pos.get("entry_regime") or ""),
+            pnl=float(pnl),
+            mfe=_exc.get("mfe_pct"),
+            capture=_exc.get("mfe_capture"),
+            hold_cycles=pos.get("held_cycles"),
+        )
+    with contextlib.suppress(Exception):
+        from hermes_core.engines import counterfactual_exits as cfe
+        from hermes_core.engines import hold_policy as hp
+        from hermes_core.state.paths import bot_state_dir
+
+        path_pts = list(pos.get("mfe_path") or [])
+        if len(path_pts) >= 3:
+            labels = cfe.label_hold_vs_bank(
+                path_pts, cost_pct=float(pos.get("exit_haircut_pct") or 0.0)
+            )
+            feats = []
+            tpv = max(float(pos.get("profit_target_pct") or 1.5), 1e-6)
+            for p in path_pts:
+                peak = float(p.get("peak") or 0.0)
+                u = float(p.get("unreal") or 0.0)
+                feats.append(
+                    {
+                        "progress": max(0.0, min(1.0, peak / tpv)),
+                        "fresh": 1.0,
+                        "capture": (u / peak) if peak > 1e-9 else 0.0,
+                    }
+                )
+            pol_path = bot_state_dir(bot) / "hold_policy.json"
+            pol = hp.fit_from_labels(hp.load_hold_policy(pol_path), labels, feats)
+            hp.save_hold_policy(pol_path, pol)
+    with contextlib.suppress(Exception):
+        if pos.get("use_exit_experts") and pos.get("exit_votes"):
+            from hermes_core.engines.exit_experts import credit_experts, load_weights, save_weights
+            from hermes_core.state.paths import bot_state_dir
+
+            wpath = bot_state_dir(bot) / "exit_expert_weights.json"
+            w = load_weights(wpath)
+            best = "hold"
+            if ex.reason in (
+                "profit_bank",
+                "profit_target",
+                "mfe_giveback",
+                "failed_breakout",
+            ):
+                best = "bank"
+            elif ex.reason == "trailing":
+                best = "trail"
+            elif ex.reason == "partial_close":
+                best = "partial"
+            w = credit_experts(w, list(pos.get("exit_votes") or []), best)
+            save_weights(wpath, w)
     if not _log_trade(bot, trade_rec):
         # Disk write failed — keep the open so we retry next cycle.
         print(
@@ -554,6 +622,8 @@ def _process_exit(
             giveback_pct=_exc.get("giveback_pct"),
             giveback_frac=_exc.get("giveback_frac"),
             mfe_capture=_exc.get("mfe_capture"),
+            exit_class=trade_rec.get("exit_class"),
+            exit_reason=ex.reason,
         )
         _credited = pos.get("gp_indicators") or [] if is_gp else []
         for ind_id in _credited:
@@ -753,7 +823,8 @@ def _try_manage_open(
             }
 
     # Weekend recycled quotes must not burn time_exit held_cycles.
-    if not (market_closed and quote_unchanged):
+    hold_tick = not (market_closed and quote_unchanged)
+    if hold_tick:
         pos["held_cycles"] = pos.get("held_cycles", 0) + 1
     pos["unrealised_pct"] = (mark_f - pos["entry_price"]) / pos["entry_price"] * 100.0
     with contextlib.suppress(Exception):
@@ -779,15 +850,80 @@ def _try_manage_open(
                 pos["time_exit_cycles"] = max(60, min(int(te), 2880))
             except (TypeError, ValueError):
                 pass
+
+    # Exit TF mark + bar id (for stall counters) before excursion update.
+    exit_mark = mark_f
+    exit_prices = prices
+    exit_bar_id = None
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.layered_hold import resolve_exit_tf_prices
+
+        em, ep, src = resolve_exit_tf_prices(bot, pair, pos, prices)
+        pos["exit_tf_source"] = src
+        if em is not None and ep:
+            exit_mark = em
+            exit_prices = ep
+            exit_bar_id = f"{src}:{len(ep)}:{round(float(ep[-1]), 4)}"
+
     with contextlib.suppress(Exception):
         from hermes_core.engines.excursion import (
+            append_mfe_path_point,
             mfe_tracking_enabled,
             update_position_excursions,
         )
 
-        update_position_excursions(pos, pos["unrealised_pct"])
+        update_position_excursions(
+            pos,
+            pos["unrealised_pct"],
+            tick=hold_tick,
+            exit_bar_id=exit_bar_id,
+            peak_epsilon_pct=pos.get("peak_epsilon_pct"),
+        )
         if mfe_tracking_enabled():
             pos["mfe_tracking"] = True
+        if hold_tick and exit_bar_id and pos.get("exit_bar_id") == str(exit_bar_id):
+            append_mfe_path_point(
+                pos,
+                {
+                    "world": (pos.get("world") or {}).get("funding"),
+                    "d1": pos.get("live_d1"),
+                },
+            )
+
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.layered_hold import enrich_open_cycle
+
+        enrich_open_cycle(bot, pair, pos, prices)
+
+    # L2: refresh chart patience on new exit-TF bar / structure event
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.chart_vision import (
+            chart_soft_reasons,
+            chart_quality_mult,
+        )
+        from hermes_core.engines.layered_hold import continuous_vision_enabled
+
+        prev_bar = pos.get("_chart_bar_id")
+        struct_ev = pos.get("structure_event")
+        refresh = False
+        if exit_bar_id and exit_bar_id != prev_bar:
+            refresh = True
+            pos["_chart_bar_id"] = exit_bar_id
+        if struct_ev:
+            refresh = True
+            pos.pop("structure_event", None)
+        if continuous_vision_enabled() and hold_tick and int(pos.get("held_cycles") or 0) % 15 == 0:
+            refresh = True
+        ctx = chart_contexts.get(pair, "") if chart_contexts else ""
+        if refresh and ctx:
+            soft = chart_soft_reasons(ctx, strategy_type=str(pos.get("entry_type") or ""))
+            pos["live_chart_patience"] = 0.7 if soft else 1.0
+            if "avoid" in str(ctx).lower():
+                pos["live_chart_patience"] = min(float(pos["live_chart_patience"]), 0.7)
+            pos["chart_quality_mult"] = chart_quality_mult(
+                ctx, strategy_type=str(pos.get("entry_type") or "")
+            )
+        # L7b cheap 15m structure digest already in enrich_open_cycle
 
     from hermes_core.engines.exit import Exit
 
@@ -812,27 +948,13 @@ def _try_manage_open(
         mark_fails.pop(pair, None)
         return True, mark_f, consecutive_failures
 
-    # 4H (or configured) exit TF: evaluate SL/TP/trail on last closed bar of
-    # that interval so 1m noise cannot nick a swing stop. Live mark still
-    # drives unrealised % / dashboard.
-    exit_mark = mark_f
-    exit_prices = prices
-    exit_tf = str(pos.get("exit_tf") or pos.get("signal_interval") or "").strip().lower()
-    if exit_tf in {"4h", "1h", "1d", "2h", "6h", "12h"} and pair:
-        with contextlib.suppress(Exception):
-            from hermes_core.engines.entry import gp_invent_prices
-
-            tf_px = gp_invent_prices(
-                pair,
-                interval=exit_tf,
-                period=str(pos.get("signal_period") or "120d"),
-                max_candles=int(pos.get("signal_max_candles") or 800),
-            )
-            if tf_px and len(tf_px) >= 30:
-                exit_mark = float(tf_px[-1])
-                exit_prices = tf_px
+    # Tag clock protect stops for wick guard
+    if pos.get("stop_source") is None and pos.get("current_stop") is not None:
+        pos["stop_source"] = "initial"
 
     ex = evaluate_exit(pos, exit_mark, exit_prices)
+    if ex is not None and ex.reason == "trailing" and ex.new_stop is not None:
+        pos["stop_source"] = "clock_protect"
     if ex is not None:
         # Fill / PnL still use the live mark path inside _process_exit.
         _process_exit(
@@ -1955,6 +2077,54 @@ def run_cycle(
                 regime=regimes.get(pair) or ind.get("regime"),
                 bot=bot,
             )
+            # L7d: idle-market alternate sleeve when Donchian quiet in trend_up
+            with contextlib.suppress(Exception):
+                from hermes_core.engines.layered_hold import limit_removal_enabled
+                from hermes_core.engines import btc_regime as br
+
+                if (
+                    limit_removal_enabled()
+                    and trad_sig is None
+                    and str(_trad_skip or "").startswith("donchian:no_breakout")
+                    and str(pair).upper().startswith("BTC/")
+                ):
+                    key = f"_idle_donchian:{pair}"
+                    if not hasattr(run_cycle, "_idle_counts"):
+                        run_cycle._idle_counts = {}
+                    run_cycle._idle_counts[key] = int(run_cycle._idle_counts.get(key) or 0) + 1
+                    idle_need = int((strategy or {}).get("idle_sleeve_cycles") or 60)
+                    _br = br.classify_btc_regime(pair)
+                    if (
+                        run_cycle._idle_counts[key] >= idle_need
+                        and str(_br.get("label") or "") == br.TREND_UP
+                    ):
+                        alt = dict(strategy)
+                        alt["strategy_type"] = "mean_reversion"
+                        alt["position_size_r"] = float(strategy.get("position_size_r") or 0.15) * 0.5
+                        alt_sig, alt_skip = evaluate_entry_detailed(
+                            prices,
+                            alt,
+                            pair=pair,
+                            context=context,
+                            ensemble_consensus=ensemble,
+                            oversold_pairs=_os_count,
+                            vol_above=vol_above,
+                            reentry=reentry,
+                            current_cycle=cycle,
+                            session_token=session_token,
+                            regime=regimes.get(pair) or ind.get("regime"),
+                            bot=bot,
+                        )
+                        if alt_sig is not None:
+                            alt_sig.meta = dict(alt_sig.meta or {})
+                            alt_sig.meta["idle_sleeve"] = True
+                            alt_sig.meta["entry_type"] = "mean_reversion"
+                            trad_sig, _trad_skip = alt_sig, ""
+                            run_cycle._idle_counts[key] = 0
+                elif trad_sig is not None:
+                    key = f"_idle_donchian:{pair}"
+                    if hasattr(run_cycle, "_idle_counts"):
+                        run_cycle._idle_counts[key] = 0
             gp_sig = None
             # GP promote gate: expectancy-driven per-pair ban/unban (seeds from
             # GP_EXCLUDE_PAIRS). Invent/shadow still run when banned.
@@ -2482,6 +2652,11 @@ def run_cycle(
                 _gb_frac = DEFAULT_MFE_GIVEBACK_FRAC
             _gb_on = strategy.get("mfe_giveback_enabled", True) is not False
             stop = _atr_stop_for(strategy, price, atr)
+            _hold_knobs: dict = {}
+            with contextlib.suppress(Exception):
+                from hermes_core.engines.layered_hold import strategy_hold_knobs
+
+                _hold_knobs = strategy_hold_knobs(strategy)
             _side = str(getattr(sig, "side", None) or strategy.get("entry", {}).get("direction") or "long")
             _entry_mid = float(price)
             _cost = None
@@ -2516,7 +2691,11 @@ def run_cycle(
                 "held_cycles": 0,
                 "breakeven_set": False,
                 "partial_done": False,
-                "partial_enabled": bool(_xi.get("partial_enabled")),
+                "partial_enabled": bool(
+                    strategy.get("partial_enabled")
+                    if strategy.get("partial_enabled") is not None
+                    else _xi.get("partial_enabled")
+                ),
                 "current_stop": stop,
                 "atr": atr,
                 "atr_floor_pct": float(strategy.get("atr_floor_pct") or 0.0),
@@ -2593,7 +2772,11 @@ def run_cycle(
                 # HIF exit intelligence + baseline trail (trail before time_exit)
                 "exit_intel_mode": _xi.get("exit_intel_mode"),
                 "honor_current_stop": _honor,
-                "be_trigger_frac": _xi.get("be_trigger_frac"),
+                "be_trigger_frac": (
+                    strategy.get("be_trigger_frac")
+                    if strategy.get("be_trigger_frac") is not None
+                    else _xi.get("be_trigger_frac")
+                ),
                 "trailing_atr_mult": _trail,
                 "trailing_stop_pct": float(strategy.get("trailing_stop_pct", 0.0) or 0.0),
                 "exit_intel_n": _xi.get("exit_intel_n"),
@@ -2615,6 +2798,8 @@ def run_cycle(
                 "peak_mfe_pct": 0.0,
                 "trough_mae_pct": 0.0,
                 "mfe_tracking": False,
+                # Layered sentient hold knobs (L0–L1)
+                **_hold_knobs,
                 # Crisis recommend (soft advisory; stop may already be widened)
                 "crisis_name": _crisis_rec.get("crisis_name"),
                 "crisis_novel": _crisis_rec.get("novel"),

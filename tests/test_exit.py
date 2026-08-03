@@ -180,20 +180,57 @@ def test_pct_trailing_stop_from_peak_mfe():
 
 
 def test_time_exit_is_last_resort():
-    """At the clock with no TP/giveback/trail action → time_exit."""
+    """At soft clock flat/red → time_exit."""
     t = trade(
         1.1000,
         held=150,
         time_exit_cycles=150,
+        early_reeval_cycles=50,
+        time_exit_max_cycles=300,
         tp=3.0,
         sl=1.5,
-        unrealised_pct=0.1,
-        peak_mfe_pct=0.15,  # below min → no giveback
+        unrealised_pct=0.05,
+        peak_mfe_pct=0.15,
         mfe_giveback_min_pct=0.4,
         trailing_atr_mult=None,
+        fees_pct_rt=0.22,
+        exit_haircut_pct=0.11,
+        min_bank_net_pct=0.10,
+        honor_current_stop=False,
+        exit_tf_source="live",
+        mfe_giveback_enabled=False,
     )
-    ex = evaluate_exit(t, 1.1011, None)
+    ex = evaluate_exit(t, 1.10055, None)
     assert ex is not None and ex.reason == "time_exit"
+
+
+def test_time_exit_skips_when_still_green():
+    """Green past soft clock with fresh peak may protect/hold rather than time_exit."""
+    t = trade(
+        1.1000,
+        held=150,
+        time_exit_cycles=150,
+        early_reeval_cycles=50,
+        time_exit_max_cycles=400,
+        tp=3.0,
+        sl=1.5,
+        unrealised_pct=0.40,
+        peak_mfe_pct=0.45,
+        mfe_giveback_min_pct=0.5,
+        trailing_atr_mult=None,
+        fees_pct_rt=0.22,
+        exit_haircut_pct=0.11,
+        min_bank_net_pct=0.10,
+        exit_bars_since_peak=0,
+        mfe_bar_peaks=[0.4, 0.45],
+        current_stop=1.1000 * 1.0011,
+        honor_current_stop=True,
+        exit_tf_source="live",
+        mfe_giveback_enabled=False,
+    )
+    ex = evaluate_exit(t, 1.1044, None)
+    assert ex is None or ex.reason in ("trailing", "profit_bank", "breakeven")
+    assert ex is None or ex.reason != "time_exit"
 
 
 def test_breakeven():
