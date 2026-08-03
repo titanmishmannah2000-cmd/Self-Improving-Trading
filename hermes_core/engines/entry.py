@@ -23,7 +23,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from hermes_core.engines.chart_vision import apply_chart_soft_to_signal, hard_block, soft_block
+from hermes_core.engines.chart_vision import (
+    apply_chart_soft_to_signal,
+    chart_hard_blocks_strategy,
+    hard_block,
+    soft_block,
+)
 from hermes_core.engines.regime_split import (
     chart_blocks_sleeve,
     classify_market,
@@ -235,7 +240,9 @@ def evaluate_entry_detailed(
         split_on = False
 
     # Legacy L14: blanket avoid before anything else when regime-split is off.
-    if not split_on and hard_block(context):
+    # Donchian (BTC Phase 3): vision avoid is soft-only — see chart_hard_blocks_strategy.
+    _stype_early = str(strategy.get("strategy_type") or "")
+    if not split_on and chart_hard_blocks_strategy(context, strategy_type=_stype_early):
         return None, "chart:hard_block"
     if soft_block(context):
         return None, "chart:soft_block"
@@ -285,7 +292,9 @@ def evaluate_entry_detailed(
             sig.meta["btc_d1_regime"] = btc_reg.get("label")
             sig.meta["btc_d1_reason"] = btc_reg.get("reason")
             sig.meta["btc_d1_adx"] = btc_reg.get("adx")
-        apply_chart_soft_to_signal(sig, context)
+        apply_chart_soft_to_signal(
+            sig, context, strategy_type=str(sig.meta.get("entry_type") or stype or "")
+        )
         return sig, ""
 
     if stype == "mean_reversion":

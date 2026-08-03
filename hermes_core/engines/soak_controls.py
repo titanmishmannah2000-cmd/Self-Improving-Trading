@@ -368,19 +368,42 @@ def idle_skip_slo(skips_path: Path, *, hours: float = 6.0, window: int = 500) ->
         return {"effectively_paused": False, "detail": str(exc)}
     if len(reasons) < 20:
         return {"effectively_paused": False, "detail": f"few_recent={len(reasons)}"}
-    badish = sum(
-        1
-        for r in reasons
-        if r == "no_signal"
-        or r.startswith("no_signal:")
-        or _is_feed_failure_reason(r)
-        or r.startswith("bb_bandwidth")
-    )
+    badish = sum(1 for r in reasons if _is_idle_badish_reason(r))
     paused = badish == len(reasons)
     return {
         "effectively_paused": paused,
         "detail": f"recent={len(reasons)} badish={badish} last_age={now - recent_ts:.0f}s",
     }
+
+
+def _is_idle_badish_reason(reason: str) -> bool:
+    """True for 'bot looks dead' skips — not intentional strategy/chart vetoes.
+
+    Chart hard_block / Donchian / D1 regime skips are selective filters; treating
+    them as idle was writing ``idle_slo`` halts that froze BTC paper forever.
+    """
+    r = str(reason or "")
+    if r.startswith("no_signal:chart:"):
+        return False
+    if r.startswith(
+        (
+            "donchian:",
+            "btc_regime:",
+            "session",
+            "cooldown",
+            "rsi:",
+            "vol",
+            "trend:",
+            "flatline:",
+        )
+    ):
+        return False
+    return (
+        r == "no_signal"
+        or r.startswith("no_signal:")
+        or _is_feed_failure_reason(r)
+        or r.startswith("bb_bandwidth")
+    )
 
 
 def pair_price_scale_ok(pair: str, price: float) -> bool:

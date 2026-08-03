@@ -2081,9 +2081,22 @@ def run_cycle(
                             context, sleeve=str(_etype_pre), market=_mkt
                         )
                     else:
-                        _block = hard_block(context)
+                        from hermes_core.engines.chart_vision import chart_hard_blocks_strategy
+
+                        _block = chart_hard_blocks_strategy(
+                            context, strategy_type=str(_etype_pre)
+                        )
                 except Exception:  # noqa: BLE001
-                    _block = hard_block(context)
+                    from hermes_core.engines.chart_vision import chart_hard_blocks_strategy
+
+                    _block = chart_hard_blocks_strategy(
+                        context,
+                        strategy_type=str(
+                            (sig.meta.get("entry_type") if sig else None)
+                            or (strategy or {}).get("strategy_type")
+                            or ""
+                        ),
+                    )
                 if _block:
                     _log_skip(bot, pair, cycle, "no_signal:chart:hard_block")
                     summary["skips"] += 1

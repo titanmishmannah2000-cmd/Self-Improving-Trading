@@ -112,6 +112,10 @@ CHART_DOWNTREND_QUALITY_MULT = 0.70
 CHART_PULLBACK_QUALITY_MULT = 0.85
 CHART_DOWNTREND_SIZE_MULT = 0.50
 CHART_PULLBACK_SIZE_MULT = 0.50
+# Donchian (BTC Phase 3): vision "avoid" is a size/quality haircut, not a veto —
+# D1 + channel are the capital gates; LLM avoid was freezing paper for days.
+CHART_AVOID_QUALITY_MULT = 0.60
+CHART_AVOID_SIZE_MULT = 0.40
 
 
 # ── guard predicates (pure, never raise) ──────────────────────────────────
@@ -124,6 +128,18 @@ def hard_block(context: str) -> bool:
     """
     c = (context or "").lower()
     return "avoid" in c
+
+
+def chart_hard_blocks_strategy(context: str, *, strategy_type: str | None = None) -> bool:
+    """L14 capital veto, strategy-aware.
+
+    ``donchian_breakout`` ignores vision avoid (soft tilt only) so BTC Phase 3
+    is not frozen by a sideways ``Rec: avoid entirely`` cache.
+    """
+    st = (strategy_type or "").strip().lower()
+    if st == "donchian_breakout":
+        return False
+    return hard_block(context)
 
 
 def _quality_of(context: str) -> float:
@@ -150,12 +166,20 @@ def soft_block(context: str) -> bool:
     return "sell" in c and _quality_of(context) < 5.0
 
 
-def chart_soft_reasons(context: str) -> list[str]:
+def chart_soft_reasons(
+    context: str, *, strategy_type: str | None = None
+) -> list[str]:
     """Human-readable soft-tilt tags for skips/position meta (never a hard veto)."""
     c = (context or "").lower()
-    if not c or hard_block(c):
+    if not c:
+        return []
+    st = (strategy_type or "").strip().lower()
+    treat_avoid_soft = st == "donchian_breakout"
+    if hard_block(c) and not treat_avoid_soft:
         return []
     reasons: list[str] = []
+    if treat_avoid_soft and "avoid" in c:
+        reasons.append("avoid")
     if "downtrend" in c:
         reasons.append("downtrend")
     if "wait for pullback" in c or "wait on pullback" in c:
@@ -163,12 +187,14 @@ def chart_soft_reasons(context: str) -> list[str]:
     return reasons
 
 
-def chart_quality_mult(context: str) -> float:
+def chart_quality_mult(context: str, *, strategy_type: str | None = None) -> float:
     """Multiply Signal.quality for ranking. 1.0 = no chart soft tilt."""
-    reasons = chart_soft_reasons(context)
+    reasons = chart_soft_reasons(context, strategy_type=strategy_type)
     if not reasons:
         return 1.0
     mult = 1.0
+    if "avoid" in reasons:
+        mult *= CHART_AVOID_QUALITY_MULT
     if "downtrend" in reasons:
         mult *= CHART_DOWNTREND_QUALITY_MULT
     if "wait_for_pullback" in reasons:
@@ -176,12 +202,13 @@ def chart_quality_mult(context: str) -> float:
     return round(mult, 4)
 
 
-def chart_size_mult(context: str) -> float:
+def chart_size_mult(context: str, *, strategy_type: str | None = None) -> float:
     """Multiply position size for gray-zone chart. Never 0; hard_block handles veto."""
-    reasons = chart_soft_reasons(context)
+    reasons = chart_soft_reasons(context, strategy_type=strategy_type)
     if not reasons:
         return 1.0
-    # Stacking both still floors at the stronger single tilt (not 0.25).
+    if "avoid" in reasons:
+        return CHART_AVOID_SIZE_MULT
     if "downtrend" in reasons:
         return CHART_DOWNTREND_SIZE_MULT
     if "wait_for_pullback" in reasons:
@@ -189,21 +216,22 @@ def chart_size_mult(context: str) -> float:
     return 1.0
 
 
-def apply_chart_soft_to_signal(sig, context: str):
+def apply_chart_soft_to_signal(sig, context: str, *, strategy_type: str | None = None):
     """Haircut ``sig.quality`` and stamp chart soft meta. Returns ``sig`` (mutated).
 
     No-op when mult == 1.0 or ``sig`` is None. Never blocks.
     """
     if sig is None:
         return None
-    mult = chart_quality_mult(context)
-    reasons = chart_soft_reasons(context)
+    st = strategy_type or (getattr(sig, "meta", None) or {}).get("entry_type")
+    mult = chart_quality_mult(context, strategy_type=st)
+    reasons = chart_soft_reasons(context, strategy_type=st)
     meta = getattr(sig, "meta", None)
     if meta is None:
         sig.meta = {}
         meta = sig.meta
     meta["chart_quality_mult"] = mult
-    meta["chart_size_mult"] = chart_size_mult(context)
+    meta["chart_size_mult"] = chart_size_mult(context, strategy_type=st)
     meta["chart_soft_reasons"] = reasons
     if mult < 1.0:
         try:

@@ -87,8 +87,14 @@ def test_donchian_skips_when_no_breakout():
     assert reason == "donchian:no_breakout"
 
 
-def test_donchian_allowed_in_d1_chop(monkeypatch):
-    """Phase 3 soak: chop no longer hard-blocks Donchian (downtrend still does)."""
+def test_donchian_chart_avoid_is_soft_not_hard(monkeypatch):
+    """Vision 'avoid entirely' must not capital-veto Donchian (BTC Phase 3)."""
+    from hermes_core.engines.chart_vision import chart_hard_blocks_strategy
+
+    ctx = "trend: sideways (conf=0.85). Rec: avoid entirely"
+    assert chart_hard_blocks_strategy(ctx, strategy_type="donchian_breakout") is False
+    assert chart_hard_blocks_strategy(ctx, strategy_type="rsi_momentum") is True
+
     monkeypatch.setattr(
         br,
         "classify_btc_regime",
@@ -99,7 +105,6 @@ def test_donchian_allowed_in_d1_chop(monkeypatch):
             "adx": 10.0,
         },
     )
-    # Local series breakout; pair set so D1 gate runs.
     prices = [100.0] * 21 + [101.0]
     strategy = load_strategy_for_pair("BTC/USDT", bot="btc")
     monkeypatch.setattr(
@@ -112,7 +117,8 @@ def test_donchian_allowed_in_d1_chop(monkeypatch):
         pair="BTC/USDT",
         bot="btc",
         session_token="OTHER",
+        context=ctx,
     )
     assert reason == ""
     assert sig is not None
-    assert sig.meta["entry_type"] == "donchian_breakout"
+    assert "avoid" in (sig.meta.get("chart_soft_reasons") or [])
