@@ -2479,6 +2479,7 @@ def run_cycle(
                 "partial_enabled": bool(_xi.get("partial_enabled")),
                 "current_stop": stop,
                 "atr": atr,
+                "atr_floor_pct": float(strategy.get("atr_floor_pct") or 0.0),
                 "entry_type": _etype,
                 "strategy_version": str(strategy.get("version", "00")),
                 # B9: firing GP indicator IDs so that on close ONLY these are

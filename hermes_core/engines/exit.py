@@ -138,20 +138,44 @@ def evaluate_exit(
     # 6) Trailing stop (raises the stop only) — before time_exit
     # Prefer live ATR trail; also honor YAML/reflection ``trailing_stop_pct``
     # from peak MFE (was written by reflections but previously unwired).
+    #
+    # Guard: do NOT trail on microscopic green ticks. Short-bar ATR can be
+    # pennies, so trail_stop ≈ price and the next noise tick exits as
+    # ``stop_loss`` while %-SL (e.g. 2%) never mattered — BTC paper saw
+    # −0.13% "stops" that were almost entirely fees.
+    try:
+        min_trail_unreal = float(
+            trade.get("mfe_giveback_min_pct", DEFAULT_MFE_GIVEBACK_MIN_PCT)
+        )
+    except (TypeError, ValueError):
+        min_trail_unreal = DEFAULT_MFE_GIVEBACK_MIN_PCT
+    try:
+        fees_rt = float(trade.get("fees_pct_rt") or 0.0)
+    except (TypeError, ValueError):
+        fees_rt = 0.0
+    min_trail_unreal = max(min_trail_unreal, fees_rt)
+
     mult = trade.get("trailing_atr_mult")
-    if mult is not None and unreal > 0 and prices:
+    if mult is not None and unreal >= min_trail_unreal and prices:
         atr = compute_atr(prices)
         if atr > 0:
-            trail_stop = current_price - atr * mult
+            try:
+                floor_pct = float(trade.get("atr_floor_pct") or 0.0)
+            except (TypeError, ValueError):
+                floor_pct = 0.0
+            min_dist = max(float(atr) * float(mult), abs(entry) * (floor_pct / 100.0))
+            if min_dist <= 0:
+                min_dist = float(atr) * float(mult)
+            trail_stop = current_price - min_dist
             cur = trade.get("current_stop")
-            if cur is None or trail_stop > cur:
+            if cur is None or trail_stop > float(cur):
                 return Exit("trailing", current_price, new_stop=trail_stop)
 
     try:
         trail_pct = float(trade.get("trailing_stop_pct") or 0.0)
     except (TypeError, ValueError):
         trail_pct = 0.0
-    if trail_pct > 0 and unreal > 0:
+    if trail_pct > 0 and unreal >= min_trail_unreal:
         try:
             peak = float(trade.get("peak_mfe_pct") or unreal)
         except (TypeError, ValueError):

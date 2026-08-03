@@ -78,6 +78,33 @@ def test_mfe_giveback_locks_winner():
     assert ex is not None and ex.reason == "mfe_giveback"
 
 
+def test_micro_green_does_not_arm_tight_atr_trail():
+    """BTC paper bug: +0.01% MFE + tiny bar ATR must not ratchet stop to market."""
+    entry = 63919.0
+    # Flat-ish series → microscopic ATR
+    prices = [entry + (i % 3) * 0.5 for i in range(80)]
+    t = trade(
+        entry,
+        sl=2.0,
+        tp=4.0,
+        honor_current_stop=True,
+        current_stop=entry * 0.98,
+        trailing_atr_mult=1.5,
+        atr_floor_pct=0.5,
+        mfe_giveback_min_pct=0.4,
+        fees_pct_rt=0.22,
+        unrealised_pct=0.0129,  # below min trail unreal
+        peak_mfe_pct=0.0129,
+    )
+    ex = evaluate_exit(t, entry * 1.0001, prices)
+    assert ex is None or ex.reason != "trailing"
+    # And the armed SL must not fire from a 0.01% dip off entry fill noise
+    t2 = dict(t)
+    t2["unrealised_pct"] = -0.05
+    ex2 = evaluate_exit(t2, entry * 0.9995, prices)
+    assert ex2 is None or ex2.reason != "stop_loss"
+
+
 def test_mfe_giveback_below_min_mfe_holds():
     t = trade(
         1.1000,
