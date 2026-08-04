@@ -46,7 +46,10 @@ from hermes_core.engines.playbooks import (
 )
 from hermes_core.engines.reflect import trade_pathology
 from hermes_core.engines.structure import analyze_structure, structure_patience_mult
-from hermes_core.adapters.derivatives_context import world_patience_mult
+from hermes_core.adapters.derivatives_context import (
+    _perp_symbol,
+    world_patience_mult,
+)
 from hermes_core.adapters.event_context import event_patience_mult, fetch_event_context
 
 
@@ -326,6 +329,11 @@ class TestL4L5WorldExperts:
         st = analyze_structure(prices, donchian_period=20)
         assert "failed_auction" in st
         assert structure_patience_mult({"failed_auction": True}) < 1.0
+
+    def test_perp_symbol_normalization(self):
+        assert _perp_symbol("BTC/USDT") == "BTC/USDT:USDT"
+        assert _perp_symbol("BTC/USDT:USDT") == "BTC/USDT:USDT"
+        assert _perp_symbol("ETH/USDC") == "ETH/USDC:USDC"
 
     def test_world_and_event_patience(self):
         assert world_patience_mult({"world_degraded": True}, side="long") < 1.0

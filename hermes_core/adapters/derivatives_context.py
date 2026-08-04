@@ -27,6 +27,21 @@ def _cache_path(bot: str | None = None) -> Path:
         return Path("world_cache_derivatives.json")
 
 
+def _perp_symbol(symbol: str) -> str:
+    """Map spot pairs to USDT-m linear swap (BTC/USDT -> BTC/USDT:USDT)."""
+    s = str(symbol or "").strip()
+    if not s or ":" in s:
+        return s
+    if "/" not in s:
+        return s
+    base, quote = s.split("/", 1)
+    quote = quote.split(":")[0].strip()
+    base = base.strip()
+    if not base or not quote:
+        return s
+    return f"{base}/{quote}:{quote}"
+
+
 def _fetch_ccxt(symbol: str, exchange_id: str) -> dict | None:
     try:
         import ccxt  # type: ignore
@@ -37,18 +52,30 @@ def _fetch_ccxt(symbol: str, exchange_id: str) -> dict | None:
         if ex_cls is None:
             return None
         ex = ex_cls({"enableRateLimit": True})
-        # Normalize BTC/USDT -> BTC/USDT:USDT swap if needed
-        market = symbol
+        # Funding/OI are perp APIs — try swap first, then spot fallback for OI.
+        markets = []
+        perp = _perp_symbol(symbol)
+        if perp:
+            markets.append(perp)
+        if symbol and symbol not in markets:
+            markets.append(symbol)
         funding = None
         oi = None
-        with contextlib_suppress():
-            if hasattr(ex, "fetch_funding_rate"):
-                fr = ex.fetch_funding_rate(market)
-                funding = float(fr.get("fundingRate") or fr.get("funding") or 0)
-        with contextlib_suppress():
-            if hasattr(ex, "fetch_open_interest"):
-                o = ex.fetch_open_interest(market)
-                oi = float(o.get("openInterestAmount") or o.get("openInterest") or 0)
+        for market in markets:
+            if funding is None:
+                with contextlib_suppress():
+                    if hasattr(ex, "fetch_funding_rate"):
+                        fr = ex.fetch_funding_rate(market)
+                        funding = float(fr.get("fundingRate") or fr.get("funding") or 0)
+            if oi is None:
+                with contextlib_suppress():
+                    if hasattr(ex, "fetch_open_interest"):
+                        o = ex.fetch_open_interest(market)
+                        oi = float(o.get("openInterestAmount") or o.get("openInterest") or 0)
+            if funding is not None and oi is not None:
+                break
+        if funding is None and oi is None:
+            return None
         return {
             "funding": funding,
             "oi": oi,
