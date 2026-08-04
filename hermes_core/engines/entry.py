@@ -437,15 +437,18 @@ def evaluate_entry_detailed(
                 series = fetched
         if len(series) < period + 2:
             return None, "donchian:insufficient_bars"
-        # L1: require ADX on signal TF
+        # Donchian Phase 3: ADX is a quality haircut, not a hard skip.
+        # Range breakouts often fire while 4H ADX is still <20; a hard floor
+        # caused multi-day zero-trade lockups (donchian:adx_weak spam).
+        adx_v = 0.0
+        adx_soft = False
         try:
-            adx_floor = float(strategy.get("adx_threshold", 20) or 20)
-            adx_floor = max(adx_floor, 20.0)
+            adx_ref = float(strategy.get("adx_threshold", 20) or 20)
+            adx_ref = max(5.0, min(adx_ref, 40.0))
             sig_ind = compute_all(series)
             adx_v = float(sig_ind.get("adx") or 0.0)
-            # Fail-open when ADX is undefined/flat (common in unit fixtures).
-            if adx_v > 1e-6 and adx_v < adx_floor:
-                return None, "donchian:adx_weak"
+            if adx_v > 1e-6 and adx_v < adx_ref:
+                adx_soft = True
         except Exception:  # noqa: BLE001
             pass
         channel = compute_donchian(series, period=period)
@@ -513,6 +516,9 @@ def evaluate_entry_detailed(
             return None, "vol"
         breakout_pct = (close - float(upper)) / float(upper) * 100.0 if upper else 0.0
         quality = 0.55 + min(max(breakout_pct, 0.0) / 5.0, 0.35)
+        if adx_soft:
+            # Mild haircut when ADX is soft — still allow the breakout.
+            quality = max(0.35, quality * 0.85)
         sig = Signal(
             "donchian_breakout",
             round(min(quality, 1.0), 4),
@@ -529,6 +535,8 @@ def evaluate_entry_detailed(
                 "breakout_close_confirm": confirm,
                 "breakout_confirm_bars": confirm_bars,
                 "close": close,
+                "adx": round(adx_v, 4) if adx_v else None,
+                "adx_soft": adx_soft,
             },
         )
         return _finish(sig)

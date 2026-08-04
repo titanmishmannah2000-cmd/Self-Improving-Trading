@@ -200,7 +200,7 @@ def test_near_support_and_empty_chart_no_pullback(monkeypatch, tmp_path):
     assert "pullback" not in types
 
 
-def test_chop_blocks_alt_candidates(monkeypatch, tmp_path):
+def test_chop_blocks_mr_but_allows_chart_pullback(monkeypatch, tmp_path):
     monkeypatch.setenv("SENTIENT_ENTRY", "1")
     monkeypatch.setenv("HERMES_STATE_ROOT", str(tmp_path))
     monkeypatch.setattr(
@@ -213,7 +213,23 @@ def test_chop_blocks_alt_candidates(monkeypatch, tmp_path):
             "adx": 12.0,
         },
     )
-    prices = [100.0] * 25 + [99.0]
+    monkeypatch.setattr(
+        se,
+        "build_context_bundle",
+        lambda **kw: {
+            "world": {},
+            "world_mult": 1.0,
+            "structure": {},
+            "structure_mult": 1.0,
+            "chart_missing": False,
+            "support": 99.0,
+            "event_hard_pause": False,
+            "cost_rt": 0.22,
+            "cost_stressed": 0.44,
+            "donchian_mid": 100.0,
+        },
+    )
+    prices = [100.0] * 25 + [99.2]
     ctx = "trend: uptrend. SR: support at 99. Rec: wait for pullback"
     out = se.run_sentient_entry(
         bot="btc",
@@ -226,8 +242,85 @@ def test_chop_blocks_alt_candidates(monkeypatch, tmp_path):
         current_cycle=100,
     )
     types = [c["entry_type"] for c in out.get("candidates") or []]
+    assert "mean_reversion" not in types
+    assert "pullback" in types or (
+        out.get("signal") is not None
+        and out["signal"].meta.get("entry_type") == "pullback"
+    )
+
+
+def test_chop_without_pullback_soft_stays_flat(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTIENT_ENTRY", "1")
+    monkeypatch.setenv("HERMES_STATE_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        br,
+        "classify_btc_regime",
+        lambda pair, force=False: {
+            "label": br.CHOP,
+            "reason": "test",
+            "pair": pair,
+            "adx": 12.0,
+        },
+    )
+    prices = [100.0] * 25 + [99.2]
+    out = se.run_sentient_entry(
+        bot="btc",
+        pair="BTC/USDT",
+        prices=prices,
+        strategy=_donchian_strategy(),
+        context="trend: sideways. Rec: avoid entirely",
+        trad_sig=None,
+        trad_skip="donchian:no_breakout",
+        current_cycle=100,
+    )
+    types = [c["entry_type"] for c in out.get("candidates") or []]
     assert "pullback" not in types
     assert "mean_reversion" not in types
+
+
+def test_donchian_adx_soft_not_hard_skip(monkeypatch):
+    """Weak ADX haircuts quality but no longer returns donchian:adx_weak."""
+    monkeypatch.setattr(
+        br,
+        "classify_btc_regime",
+        lambda pair, force=False: {
+            "label": br.CHOP,
+            "reason": "test",
+            "pair": pair,
+            "adx": 8.0,
+        },
+    )
+    prices = [100.0] * 21 + [101.0]
+    monkeypatch.setattr(
+        "hermes_core.engines.entry.gp_invent_prices",
+        lambda *a, **k: prices,
+    )
+    # Force low ADX on signal TF
+    monkeypatch.setattr(
+        "hermes_core.engines.entry.compute_all",
+        lambda xs: {
+            "rsi": 55.0,
+            "adx": 10.0,
+            "atr": 1.0,
+            "bb": {"lower": 95.0, "mid": 100.0, "upper": 105.0},
+            "regime": "range",
+        },
+    )
+    strat = _donchian_strategy()
+    strat["entry"]["require_clean_chart"] = False
+    sig, reason = evaluate_entry_detailed(
+        prices,
+        strat,
+        pair="BTC/USDT",
+        bot="btc",
+        session_token="OTHER",
+        context="trend: uptrend. Rec: enter long",
+    )
+    assert reason != "donchian:adx_weak"
+    # May still be no_breakout/confirm/vol — but ADX must not hard-block.
+    if sig is not None:
+        assert sig.meta.get("adx_soft") is True
+        assert sig.meta.get("entry_type") == "donchian_breakout"
 
 
 def test_confirm_bars_pending(monkeypatch):

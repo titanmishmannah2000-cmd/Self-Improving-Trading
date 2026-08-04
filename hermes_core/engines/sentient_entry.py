@@ -479,11 +479,18 @@ def try_pullback_candidate(
         pass
     from hermes_core.engines import btc_regime as br
 
-    if br.hard_blocks_entry(d1, strategy_type="pullback"):
+    # Pullback eligibility:
+    # - trend_down: never
+    # - trend_up: when chart asks wait_for_pullback
+    # - chop: only when chart asks wait_for_pullback (probe) — otherwise zero
+    #   trades while Donchian waits for breakout + ADX was also locking
+    d1_lab = str(d1 or "").strip().lower()
+    if d1_lab == br.TREND_DOWN:
+        return None
+    if d1_lab not in {br.TREND_UP, br.CHOP}:
         return None
     if bundle.get("chart_missing") and "wait_for_pullback" not in soft_actionable:
         return None
-    # Prefer actionable soft; still allow near-support pullback in trend_up with soft tag
     if "wait_for_pullback" not in soft_actionable:
         return None
 
