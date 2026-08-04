@@ -243,6 +243,7 @@ def write_heartbeat(
     hif_flags: dict | None = None,
     regime_split: dict | None = None,
     btc_d1_regimes: dict | None = None,
+    sentient: dict | None = None,
 ) -> dict:
     """Emit heartbeat.json with the documented keys (blueprint loop.py:1774/4433).
 
@@ -275,6 +276,8 @@ def write_heartbeat(
         data["hif_flags"] = hif_flags
     if regime_split is not None:
         data["regime_split"] = regime_split
+    if sentient is not None:
+        data["sentient"] = sentient
     with contextlib.suppress(Exception):
         from hermes_core.env import llm_keys_present
 
@@ -543,6 +546,16 @@ def _process_exit(
             mfe=_exc.get("mfe_pct"),
             capture=_exc.get("mfe_capture"),
             hold_cycles=pos.get("held_cycles"),
+        )
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.sentient_entry import credit_entry_on_close
+
+        credit_entry_on_close(
+            bot,
+            entry_type=str(entry_type),
+            conviction=pos.get("entry_conviction"),
+            pnl=float(pnl),
+            world_mult=1.0,
         )
     with contextlib.suppress(Exception):
         from hermes_core.engines import counterfactual_exits as cfe
@@ -2077,54 +2090,48 @@ def run_cycle(
                 regime=regimes.get(pair) or ind.get("regime"),
                 bot=bot,
             )
-            # L7d: idle-market alternate sleeve when Donchian quiet in trend_up
+            # Layered sentient entries (replaces blunt L7d idle sleeve).
+            _sentient_meta: dict = {}
             with contextlib.suppress(Exception):
-                from hermes_core.engines.layered_hold import limit_removal_enabled
-                from hermes_core.engines import btc_regime as br
+                from hermes_core.engines.sentient_entry import (
+                    is_btc_entry_bot,
+                    run_sentient_entry,
+                )
 
-                if (
-                    limit_removal_enabled()
-                    and trad_sig is None
-                    and str(_trad_skip or "").startswith("donchian:no_breakout")
-                    and str(pair).upper().startswith("BTC/")
-                ):
-                    key = f"_idle_donchian:{pair}"
-                    if not hasattr(run_cycle, "_idle_counts"):
-                        run_cycle._idle_counts = {}
-                    run_cycle._idle_counts[key] = int(run_cycle._idle_counts.get(key) or 0) + 1
-                    idle_need = int((strategy or {}).get("idle_sleeve_cycles") or 60)
-                    _br = br.classify_btc_regime(pair)
-                    if (
-                        run_cycle._idle_counts[key] >= idle_need
-                        and str(_br.get("label") or "") == br.TREND_UP
-                    ):
-                        alt = dict(strategy)
-                        alt["strategy_type"] = "mean_reversion"
-                        alt["position_size_r"] = float(strategy.get("position_size_r") or 0.15) * 0.5
-                        alt_sig, alt_skip = evaluate_entry_detailed(
-                            prices,
-                            alt,
-                            pair=pair,
-                            context=context,
-                            ensemble_consensus=ensemble,
-                            oversold_pairs=_os_count,
-                            vol_above=vol_above,
-                            reentry=reentry,
-                            current_cycle=cycle,
-                            session_token=session_token,
-                            regime=regimes.get(pair) or ind.get("regime"),
-                            bot=bot,
+                if is_btc_entry_bot(bot, pair):
+                    _se = run_sentient_entry(
+                        bot=bot,
+                        pair=pair,
+                        prices=prices,
+                        strategy=strategy,
+                        context=context,
+                        trad_sig=trad_sig,
+                        trad_skip=_trad_skip or "",
+                        current_cycle=cycle,
+                        ensemble_consensus=ensemble,
+                        vol_above=vol_above,
+                        reentry=reentry,
+                        session_token=session_token,
+                        regime=regimes.get(pair) or ind.get("regime"),
+                    )
+                    _sentient_meta = _se
+                    if _se.get("event_pause"):
+                        _log_skip(bot, pair, cycle, "event:hard_pause")
+                        summary["skips"] += 1
+                        continue
+                    if _se.get("signal") is not None:
+                        trad_sig, _trad_skip = _se["signal"], ""
+                    elif not _se.get("observe_only"):
+                        trad_sig, _trad_skip = None, str(
+                            _se.get("skip") or _trad_skip or "sentient:no_winner"
                         )
-                        if alt_sig is not None:
-                            alt_sig.meta = dict(alt_sig.meta or {})
-                            alt_sig.meta["idle_sleeve"] = True
-                            alt_sig.meta["entry_type"] = "mean_reversion"
-                            trad_sig, _trad_skip = alt_sig, ""
-                            run_cycle._idle_counts[key] = 0
-                elif trad_sig is not None:
-                    key = f"_idle_donchian:{pair}"
-                    if hasattr(run_cycle, "_idle_counts"):
-                        run_cycle._idle_counts[key] = 0
+                    summary["sentient_entry"] = {
+                        "decision": _se.get("decision"),
+                        "conviction": _se.get("conviction"),
+                        "candidates": _se.get("candidates") or [],
+                        "blocked_by_regime": _se.get("blocked_by_regime"),
+                    }
+                    run_cycle._sentient_last = dict(summary["sentient_entry"])
             gp_sig = None
             # GP promote gate: expectancy-driven per-pair ban/unban (seeds from
             # GP_EXCLUDE_PAIRS). Invent/shadow still run when banned.
@@ -2413,6 +2420,15 @@ def run_cycle(
             # RR guard (S6) — reject R:R < 1.0 before committing
             sl = float(strategy["stop_loss_pct"])
             tp = float(strategy["profit_target_pct"])
+            # Sentient sleeve risk: stamp on position knobs only (never mutate strategy).
+            with contextlib.suppress(Exception):
+                from hermes_core.engines.sentient_entry import sleeve_risk_overlays
+
+                _ov = sleeve_risk_overlays(strategy, str(_etype))
+                if _ov.get("stop_loss_pct") is not None:
+                    sl = float(_ov["stop_loss_pct"])
+                if _ov.get("profit_target_pct") is not None:
+                    tp = float(_ov["profit_target_pct"])
             # Soft crisis recommend: widen stop only when non-novel + RR still ok.
             # Target not applied (would shrink R:R). Stamp rec on the position.
             # Default OFF (soak-dormant); set CRISIS_RECOMMEND=1 to enable.
@@ -2599,9 +2615,20 @@ def run_cycle(
             )
             size = float(_book["size"])
             if size <= 0:
-                _log_skip(bot, pair, cycle, "size_zero")
-                summary["skips"] += 1
-                continue
+                _dec = str((sig.meta or {}).get("entry_decision") or "")
+                _min_probe = 0.0
+                with contextlib.suppress(Exception):
+                    _min_probe = float(strategy.get("min_probe_size") or 0.0)
+                if _dec == "probe" and _min_probe > 0:
+                    size = _min_probe
+                elif _dec == "probe":
+                    _log_skip(bot, pair, cycle, "probe_size_zero")
+                    summary["skips"] += 1
+                    continue
+                else:
+                    _log_skip(bot, pair, cycle, "size_zero")
+                    summary["skips"] += 1
+                    continue
             # HIF exit intelligence — stamp knobs only (no size / fill change).
             from hermes_core.engines.exit_intel import apply_exit_intel, exit_intel_enabled
 
@@ -2717,6 +2744,15 @@ def run_cycle(
                 ),
                 "entry_type": _etype,
                 "strategy_version": str(strategy.get("version", "00")),
+                "entry_conviction": (sig.meta or {}).get("conviction"),
+                "entry_decision": (sig.meta or {}).get("entry_decision"),
+                "entry_sleeve": (sig.meta or {}).get("entry_sleeve")
+                or (
+                    _etype
+                    if _etype in {"pullback", "mean_reversion"}
+                    else None
+                ),
+                "world": (sig.meta or {}).get("world"),
                 # B9: firing GP indicator IDs so that on close ONLY these are
                 # credited (per-vote credit, not the whole ensemble blob).
                 "gp_indicators": sig.meta.get("gp_indicators", []),
@@ -2892,6 +2928,12 @@ def run_cycle(
         hif_flags=_hif,
         regime_split=_rs,
         btc_d1_regimes=getattr(run_cycle, "_btc_d1_regimes", None),
+        sentient={
+            "SENTIENT_ENTRY": get_env("SENTIENT_ENTRY", "0") == "1",
+            "SENTIENT_HOLD": get_env("SENTIENT_HOLD", "0") == "1",
+            "CONTINUOUS_VISION": get_env("CONTINUOUS_VISION", "0") == "1",
+            "last": getattr(run_cycle, "_sentient_last", None),
+        },
     )
     summary["consecutive_failures"] = consecutive_failures
     summary["oversold_pairs"] = oversold_pairs

@@ -398,7 +398,9 @@ def evaluate_entry_detailed(
         signal_interval = str(
             entry_cfg.get("interval") or strategy.get("signal_interval") or "4h"
         )
-        # Clean-chart gate: skip soft vision tilts (avoid / downtrend / pullback).
+        # Clean-chart gate: hard soft (avoid / downtrend) still vetoes.
+        # Actionable soft (wait_for_pullback) does NOT veto — continue Donchian
+        # eval so real breakouts can fire (sentient pullback is separate).
         require_clean = entry_cfg.get("require_clean_chart", False)
         if require_clean is True or str(require_clean).strip().lower() in {
             "1",
@@ -406,10 +408,14 @@ def evaluate_entry_detailed(
             "yes",
             "on",
         }:
+            from hermes_core.engines.sentient_entry import split_soft_reasons
+
             soft = chart_soft_reasons(context, strategy_type="donchian_breakout")
-            if soft:
-                return None, f"donchian:chart_soft:{','.join(soft)}"
-            if hard_block(context):
+            hard_soft, _actionable = split_soft_reasons(soft)
+            if hard_soft:
+                return None, f"donchian:chart_soft:{','.join(hard_soft)}"
+            if hard_block(context) and "avoid" not in soft:
+                # Legacy hard_block without soft tags (non-donchian style).
                 return None, "donchian:chart_hard_block"
         series = list(prices)
         if pair and signal_interval:
@@ -467,7 +473,12 @@ def evaluate_entry_detailed(
             from hermes_core.env import get_env
             from hermes_core.engines.playbooks import load_playbooks, setup_key
 
-            if get_env("SENTIENT_HOLD", "0") == "1" or get_env("LIMIT_REMOVAL", "0") == "1":
+            # Entry-side playbook buffer: SENTIENT_ENTRY (migrate off SENTIENT_HOLD).
+            if (
+                get_env("SENTIENT_ENTRY", "0") == "1"
+                or get_env("SENTIENT_HOLD", "0") == "1"
+                or get_env("LIMIT_REMOVAL", "0") == "1"
+            ):
                 d1 = str((btc_reg or {}).get("label") or "")
                 books = load_playbooks(bot)
                 st = books.get(setup_key(pair or "", "donchian_breakout", d1)) or {}
@@ -483,7 +494,20 @@ def evaluate_entry_detailed(
         threshold_px = float(upper) * (1.0 + buffer_pct / 100.0)
         if close <= threshold_px:
             return None, "donchian:no_breakout"
-        # breakout_close_confirm: invent series are closes; threshold check is the confirm.
+        # Real N-bar close confirm on signal TF (default 1 = last close only).
+        try:
+            confirm_bars = int(
+                entry_cfg.get("breakout_confirm_bars")
+                or strategy.get("breakout_confirm_bars")
+                or (1 if confirm else 0)
+            )
+        except (TypeError, ValueError):
+            confirm_bars = 1 if confirm else 0
+        confirm_bars = max(0, min(confirm_bars, 10))
+        if confirm_bars >= 1:
+            need = min(confirm_bars, len(series))
+            if any(float(series[-i]) <= threshold_px for i in range(1, need + 1)):
+                return None, "donchian:confirm_pending"
         atr = compute_all(series)["atr"]
         if not _vol_gate(strategy, atr, close, vol_above):
             return None, "vol"
@@ -503,6 +527,7 @@ def evaluate_entry_detailed(
                 "breakout_buffer_pct": buffer_pct,
                 "breakout_pct": round(breakout_pct, 4),
                 "breakout_close_confirm": confirm,
+                "breakout_confirm_bars": confirm_bars,
                 "close": close,
             },
         )

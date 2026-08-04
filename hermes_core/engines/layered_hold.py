@@ -20,6 +20,10 @@ def continuous_vision_enabled() -> bool:
     return get_env("CONTINUOUS_VISION", "0") == "1"
 
 
+def sentient_entry_enabled() -> bool:
+    return get_env("SENTIENT_ENTRY", "0") == "1"
+
+
 def strategy_hold_knobs(strategy: dict) -> dict:
     """Extract L0–L1 knobs from strategy YAML for open stamp."""
     s = strategy or {}

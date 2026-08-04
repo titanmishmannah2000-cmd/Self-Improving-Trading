@@ -130,10 +130,12 @@ def test_counterfactual_and_hold_policy_fit():
     assert abs(sum(pol["weights"]) - 1.0) < 1e-6
 
 
-def test_btc_v04_strategy_knobs():
+def test_btc_v05_strategy_knobs():
     from hermes_core.config import load_strategy_for_pair
 
     s = load_strategy_for_pair("BTC/USDT", bot="btc")
-    assert s.get("version") == "04"
+    assert s.get("version") == "05"
     assert int(s.get("early_reeval_cycles") or 0) == 120
     assert float(s.get("soft_partial_tp_frac") or 0) == 0.4
+    assert float(s.get("entry_conviction_take") or 0) >= 0.5
+    assert float(s.get("pullback_stop_pct") or 0) >= 0.5

@@ -1,6 +1,8 @@
 pair: BTC/USDT
-version: "04"
-# Layered sentient exits L0–L2 defaults (L3+ via SENTIENT_HOLD / LIMIT_REMOVAL flags).
+version: "05"
+# Layered sentient exits L0–L2 + sentient entries (L3+ alts via SENTIENT_ENTRY).
+# require_clean_chart = no avoid/downtrend (wait_for_pullback does not veto Donchian).
+# Frozen from reflect until sleeve_promote_n: entry_conviction_*, pullback_*, mr_*, sleeve_*.
 strategy_type: donchian_breakout
 regime_split: false
 entry:
@@ -11,6 +13,7 @@ entry:
   max_candles: 800
   breakout_buffer_pct: 0.4
   breakout_close_confirm: true
+  breakout_confirm_bars: 1
   require_clean_chart: true
   session_filter: "24h"
 stop_loss_pct: 2.5
@@ -42,3 +45,18 @@ vol_max_pct: 8.0
 vol_min_pct: 0.005
 minimum_entry_quality: 6
 allow_bear_entries: false
+# Sentient entry knobs (v05)
+entry_conviction_take: 0.55
+entry_conviction_probe: 0.40
+entry_policy_min_n: 20
+pullback_max_dist_pct: 1.0
+pullback_cooldown_cycles: 30
+pullback_stop_pct: 1.5
+pullback_tp_pct: 1.2
+mr_stop_pct: 2.0
+mr_tp_pct: 1.2
+sleeve_promote_n: 8
+max_alt_entries_per_day: 2
+idle_sleeve_cycles: 60
+min_probe_size: 0.05
+shadow_horizon_bars: 8
