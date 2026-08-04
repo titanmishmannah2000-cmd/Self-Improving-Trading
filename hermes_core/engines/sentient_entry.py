@@ -76,16 +76,30 @@ def _state_paths(bot: str | None) -> tuple[Path, Path, Path]:
     return d / "entry_runtime.json", d / "entry_policy.json", d / "entry_shadow.jsonl"
 
 
+# Bump when runtime semantics change so poisoned volume state self-heals once.
+_ENTRY_RUNTIME_SCHEMA = 2
+
+
 def load_entry_runtime(bot: str | None) -> dict:
     path, _, _ = _state_paths(bot)
     try:
         if path.exists():
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
+                if int(data.get("schema") or 0) < _ENTRY_RUNTIME_SCHEMA:
+                    # Pre-fix alt quota could burn slots without opens; clear once.
+                    data["alt_entries_today"] = 0
+                    data["schema"] = _ENTRY_RUNTIME_SCHEMA
+                    save_entry_runtime(bot, data)
                 return data
     except Exception:  # noqa: BLE001
         pass
-    return {"pairs": {}, "day": "", "alt_entries_today": 0}
+    return {
+        "pairs": {},
+        "day": "",
+        "alt_entries_today": 0,
+        "schema": _ENTRY_RUNTIME_SCHEMA,
+    }
 
 
 def save_entry_runtime(bot: str | None, data: dict) -> None:

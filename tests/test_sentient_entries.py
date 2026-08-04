@@ -483,3 +483,16 @@ def test_event_hard_pause_blocks(monkeypatch, tmp_path):
     assert out.get("event_pause") is True
     assert out.get("skip") == "event:hard_pause"
     assert out.get("signal") is None
+
+
+def test_entry_runtime_schema_clears_poisoned_alt_quota(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_STATE_ROOT", str(tmp_path))
+    path, _, _ = se._state_paths("btc")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        '{"pairs": {}, "day": "2099-01-01", "alt_entries_today": 9}',
+        encoding="utf-8",
+    )
+    rt = se.load_entry_runtime("btc")
+    assert int(rt.get("alt_entries_today") or 0) == 0
+    assert int(rt.get("schema") or 0) >= 2
