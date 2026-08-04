@@ -22,7 +22,8 @@ def test_btc_strategy_is_donchian_phase3():
     assert float((s.get("entry") or {}).get("breakout_buffer_pct") or 0) >= 0.3
     assert (s.get("entry") or {}).get("require_clean_chart") is True
     assert int(s.get("time_exit_cycles") or 0) >= 300
-    assert float(s.get("profit_target_pct") or 0) <= 2.0
+    assert float(s.get("profit_target_pct") or 0) <= 3.0
+    assert float(s.get("profit_target_pct") or 0) >= float(s.get("stop_loss_pct") or 0)
     assert float(s.get("be_trigger_frac") or 1) <= 0.35
     assert int(s.get("early_reeval_cycles") or 0) >= 60
     assert str(s.get("exit_tf") or "") == "4h"

@@ -2417,7 +2417,9 @@ def run_cycle(
                     _log_skip(bot, pair, cycle, "regime_decay_suppress")
                     summary["skips"] += 1
                     continue
-            # RR guard (S6) — reject R:R < 1.0 before committing
+            # RR guard (S6) — classic target/stop >= 1.0.
+            # BTC swing stack banks via trail / soft-partial / time-bank, so fixed
+            # TP may be <= SL by design; do not hard-block those.
             sl = float(strategy["stop_loss_pct"])
             tp = float(strategy["profit_target_pct"])
             # Sentient sleeve risk: stamp on position knobs only (never mutate strategy).
@@ -2429,6 +2431,14 @@ def run_cycle(
                     sl = float(_ov["stop_loss_pct"])
                 if _ov.get("profit_target_pct") is not None:
                     tp = float(_ov["profit_target_pct"])
+            _rr_relax = False
+            with contextlib.suppress(Exception):
+                _rr_relax = (
+                    str(bot or "").lower() in {"btc", "crypto"}
+                    or float(strategy.get("trailing_stop_pct") or 0) > 0
+                    or bool(strategy.get("partial_enabled"))
+                    or str(_etype) in {"pullback", "donchian_breakout"}
+                )
             # Soft crisis recommend: widen stop only when non-novel + RR still ok.
             # Target not applied (would shrink R:R). Stamp rec on the position.
             # Default OFF (soak-dormant); set CRISIS_RECOMMEND=1 to enable.
@@ -2442,7 +2452,7 @@ def run_cycle(
                         _sl_w = soft_widen_stop(sl, _crisis_rec)
                         if _sl_w != sl and check_rr_guard(_sl_w, tp):
                             sl = _sl_w
-            if not check_rr_guard(sl, tp):
+            if not _rr_relax and not check_rr_guard(sl, tp):
                 _log_skip(bot, pair, cycle, "rr_guard")
                 summary["skips"] += 1
                 continue
@@ -2846,6 +2856,17 @@ def run_cycle(
             # [CORTEX] record the entry (per-type memory; exile persists across cycles)
             with contextlib.suppress(Exception):
                 cortex.record_entry(pair, _etype)
+            # Burn alt daily quota only after a real open (not on rejected signals).
+            if str(_etype) in {"pullback", "mean_reversion"}:
+                with contextlib.suppress(Exception):
+                    from hermes_core.engines.sentient_entry import (
+                        load_entry_runtime,
+                        save_entry_runtime,
+                    )
+
+                    _rt = load_entry_runtime(bot)
+                    _rt["alt_entries_today"] = int(_rt.get("alt_entries_today") or 0) + 1
+                    save_entry_runtime(bot, _rt)
             summary["entries"].append(pair)
         # Open positions are managed at the top of the pair loop (exit-before-guard).
 

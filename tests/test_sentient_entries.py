@@ -30,11 +30,11 @@ def _donchian_strategy(**extra):
         "entry_conviction_take": 0.55,
         "entry_conviction_probe": 0.40,
         "entry_policy_min_n": 20,
-        "pullback_max_dist_pct": 1.5,
+        "pullback_max_dist_pct": 2.0,
         "sleeve_promote_n": 8,
         "max_alt_entries_per_day": 2,
         "pullback_stop_pct": 1.5,
-        "pullback_tp_pct": 1.2,
+        "pullback_tp_pct": 2.0,
         "idle_sleeve_cycles": 2,
     }
     s.update(extra)
@@ -400,6 +400,30 @@ def test_pullback_opens_probe_in_trend_up(monkeypatch, tmp_path):
     assert out["signal"].meta.get("entry_type") == "pullback"
     assert out.get("decision") == "probe"
     assert out["signal"].meta.get("sleeve_risk", {}).get("stop_loss_pct") == 1.5
+    assert out["signal"].meta.get("sleeve_risk", {}).get("profit_target_pct") == 2.0
+
+
+def test_near_support_rejects_resistance_chase():
+    assert (
+        se.near_support(
+            63940.0,
+            support=63000.0,
+            donchian_mid=63450.0,
+            max_dist_pct=2.0,
+            resistance=63900.0,
+        )
+        is False
+    )
+    assert (
+        se.near_support(
+            63100.0,
+            support=63000.0,
+            donchian_mid=63450.0,
+            max_dist_pct=2.0,
+            resistance=63900.0,
+        )
+        is True
+    )
 
 
 def test_event_hard_pause_blocks(monkeypatch, tmp_path):

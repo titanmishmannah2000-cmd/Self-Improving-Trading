@@ -363,17 +363,47 @@ def near_support(
     support: float | None,
     donchian_mid: float | None,
     max_dist_pct: float,
+    resistance: float | None = None,
 ) -> bool:
+    """True when price is in a pullback zone (near support/mid), not chasing resistance."""
     if price <= 0 or max_dist_pct <= 0:
         return False
+    # Do not "pullback-buy" while hugging resistance — that is chase, not pullback.
+    try:
+        if resistance is not None and float(resistance) > 0:
+            if abs(price - float(resistance)) / float(resistance) * 100.0 <= 0.35:
+                return False
+    except (TypeError, ValueError):
+        pass
     targets = [t for t in (support, donchian_mid) if t is not None and t > 0]
-    if not targets:
-        return False
     for t in targets:
         dist = abs(price - t) / t * 100.0
         if dist <= max_dist_pct:
             return True
+    # Value zone: between support and mid (inclusive), even if mid gap > max_dist.
+    try:
+        if (
+            support is not None
+            and donchian_mid is not None
+            and float(support) > 0
+            and float(donchian_mid) > float(support)
+            and float(support) * 0.998 <= price <= float(donchian_mid)
+        ):
+            return True
+    except (TypeError, ValueError):
+        pass
     return False
+
+
+def parse_resistance_level(context: str | None) -> float | None:
+    c = context or ""
+    m = re.search(r"resistance\s+at\s+([0-9]+(?:\.[0-9]+)?)", c, re.I)
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except (TypeError, ValueError):
+        return None
 
 
 def build_context_bundle(
@@ -392,6 +422,7 @@ def build_context_bundle(
         "structure_mult": 1.0,
         "chart_missing": not bool((context or "").strip()),
         "support": parse_support_level(context),
+        "resistance": parse_resistance_level(context),
         "event_hard_pause": False,
         "cost_rt": 0.22,
         "cost_stressed": 0.44,
@@ -500,13 +531,18 @@ def try_pullback_candidate(
         return None
 
     entry_cfg = strategy.get("entry") if isinstance(strategy.get("entry"), dict) else {}
-    max_dist = float(strategy.get("pullback_max_dist_pct") or entry_cfg.get("pullback_max_dist_pct") or 1.0)
+    max_dist = float(
+        strategy.get("pullback_max_dist_pct")
+        or entry_cfg.get("pullback_max_dist_pct")
+        or 2.0
+    )
     price = float(prices[-1])
     if not near_support(
         price,
         support=bundle.get("support"),
         donchian_mid=bundle.get("donchian_mid"),
         max_dist_pct=max_dist,
+        resistance=bundle.get("resistance"),
     ):
         return None
 
@@ -965,7 +1001,23 @@ def run_sentient_entry(
                 rt["pairs"][pair] = pst
                 save_entry_runtime(bot, rt)
         out["signal"] = None
-        out["skip"] = trad_skip or "sentient:no_winner"
+        if candidates:
+            out["skip"] = trad_skip or "sentient:no_winner"
+        elif "wait_for_pullback" in actionable and prices:
+            # Explain empty pullback: usually extended toward resistance.
+            price = float(prices[-1])
+            if not near_support(
+                price,
+                support=bundle.get("support"),
+                donchian_mid=bundle.get("donchian_mid"),
+                max_dist_pct=float(strategy.get("pullback_max_dist_pct") or 2.0),
+                resistance=bundle.get("resistance"),
+            ):
+                out["skip"] = "sentient:pullback_not_in_zone"
+            else:
+                out["skip"] = trad_skip or "sentient:no_winner"
+        else:
+            out["skip"] = trad_skip or "sentient:no_winner"
         out["blocked_by_regime"] = d1 in {br.CHOP, br.TREND_DOWN} and not had_breakout
         return out
 
@@ -980,26 +1032,27 @@ def run_sentient_entry(
         overlays = sleeve_risk_overlays(strategy, str(winner.get("entry_type") or ""))
         if overlays:
             sig.meta["sleeve_risk"] = overlays
-        if str(winner.get("entry_type") or "") in {"pullback", "mean_reversion"}:
-            rt = load_entry_runtime(bot)
-            rt["alt_entries_today"] = int(rt.get("alt_entries_today") or 0) + 1
-            save_entry_runtime(bot, rt)
-            # Shadow-log would-be until promoted
-            if decision == "probe" and not _sleeve_promoted(
+        # Shadow-log would-be until promoted (do NOT burn daily alt quota here —
+        # quota increments only after the position actually opens in loop).
+        if (
+            str(winner.get("entry_type") or "") in {"pullback", "mean_reversion"}
+            and decision == "probe"
+            and not _sleeve_promoted(
                 winner.get("playbook") or {}, int(strategy.get("sleeve_promote_n") or 8)
-            ):
-                append_entry_shadow(
-                    bot,
-                    {
-                        "ts": time.time(),
-                        "pair": pair,
-                        "cycle": current_cycle,
-                        "entry_type": winner.get("entry_type"),
-                        "mark": float(prices[-1]) if prices else None,
-                        "price_index": len(prices) - 1 if prices else -1,
-                        "features": winner.get("features") or {},
-                        "reason": "probe_open",
-                        "labeled": False,
-                    },
-                )
+            )
+        ):
+            append_entry_shadow(
+                bot,
+                {
+                    "ts": time.time(),
+                    "pair": pair,
+                    "cycle": current_cycle,
+                    "entry_type": winner.get("entry_type"),
+                    "mark": float(prices[-1]) if prices else None,
+                    "price_index": len(prices) - 1 if prices else -1,
+                    "features": winner.get("features") or {},
+                    "reason": "probe_open",
+                    "labeled": False,
+                },
+            )
     return out
