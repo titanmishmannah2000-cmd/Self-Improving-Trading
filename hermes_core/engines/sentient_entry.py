@@ -357,6 +357,37 @@ def compute_entry_conviction(
     return max(0.0, min(1.0, base * (0.65 + 0.35 * mult)))
 
 
+def resistance_chase(
+    price: float,
+    *,
+    support: float | None,
+    resistance: float | None,
+) -> bool:
+    """True when price is hugging / above resistance (chase, not pullback).
+
+    Absolute %-to-resistance is a poor guard on tight SR bands (~1%): mid-range
+    can sit 0.3% under resistance and flip every few ticks. Prefer position in
+    the support→resistance span (upper quartile = chase). Fall back to a tight
+    absolute band only when support is missing.
+    """
+    if price <= 0 or resistance is None:
+        return False
+    try:
+        res = float(resistance)
+        if res <= 0:
+            return False
+        if price >= res:
+            return True
+        if support is not None and float(support) > 0 and res > float(support):
+            span = res - float(support)
+            if span <= 0:
+                return False
+            return (price - float(support)) / span >= 0.75
+        return abs(price - res) / res * 100.0 <= 0.35
+    except (TypeError, ValueError):
+        return False
+
+
 def near_support(
     price: float,
     *,
@@ -368,13 +399,8 @@ def near_support(
     """True when price is in a pullback zone (near support/mid), not chasing resistance."""
     if price <= 0 or max_dist_pct <= 0:
         return False
-    # Do not "pullback-buy" while hugging resistance — that is chase, not pullback.
-    try:
-        if resistance is not None and float(resistance) > 0:
-            if abs(price - float(resistance)) / float(resistance) * 100.0 <= 0.35:
-                return False
-    except (TypeError, ValueError):
-        pass
+    if resistance_chase(price, support=support, resistance=resistance):
+        return False
     targets = [t for t in (support, donchian_mid) if t is not None and t > 0]
     for t in targets:
         dist = abs(price - t) / t * 100.0
@@ -911,6 +937,7 @@ def run_sentient_entry(
         pass
 
     candidates: list[dict] = []
+    alt_quota_blocked = False
     if trad_sig is not None:
         candidates.append(
             donchian_candidate_from_signal(
@@ -922,7 +949,9 @@ def run_sentient_entry(
         rt = load_entry_runtime(bot)
         max_alt = int(strategy.get("max_alt_entries_per_day") or 2)
         alt_today = int(rt.get("alt_entries_today") or 0)
-        if alt_today < max_alt:
+        if alt_today >= max_alt:
+            alt_quota_blocked = True
+        else:
             pull = try_pullback_candidate(
                 prices=prices,
                 strategy=strategy,
@@ -1003,10 +1032,18 @@ def run_sentient_entry(
         out["signal"] = None
         if candidates:
             out["skip"] = trad_skip or "sentient:no_winner"
+        elif alt_quota_blocked and "wait_for_pullback" in actionable:
+            out["skip"] = "sentient:alt_quota"
         elif "wait_for_pullback" in actionable and prices:
-            # Explain empty pullback: usually extended toward resistance.
+            # Explain empty pullback: chase vs not near support/mid.
             price = float(prices[-1])
-            if not near_support(
+            if resistance_chase(
+                price,
+                support=bundle.get("support"),
+                resistance=bundle.get("resistance"),
+            ):
+                out["skip"] = "sentient:resistance_chase"
+            elif not near_support(
                 price,
                 support=bundle.get("support"),
                 donchian_mid=bundle.get("donchian_mid"),

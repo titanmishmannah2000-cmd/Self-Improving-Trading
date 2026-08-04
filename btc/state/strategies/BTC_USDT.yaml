@@ -1,5 +1,5 @@
 pair: BTC/USDT
-version: "05"
+version: "06"
 # Layered sentient exits L0–L2 + sentient entries (L3+ alts via SENTIENT_ENTRY).
 # require_clean_chart = no avoid/downtrend (wait_for_pullback does not veto Donchian).
 # Frozen from reflect until sleeve_promote_n: entry_conviction_*, pullback_*, mr_*, sleeve_*.
@@ -46,7 +46,7 @@ vol_max_pct: 8.0
 vol_min_pct: 0.005
 minimum_entry_quality: 6
 allow_bear_entries: false
-# Sentient entry knobs (v05)
+# Sentient entry knobs (v06) — bump version so Railway /data refreshes from seed
 entry_conviction_take: 0.55
 entry_conviction_probe: 0.40
 entry_policy_min_n: 20

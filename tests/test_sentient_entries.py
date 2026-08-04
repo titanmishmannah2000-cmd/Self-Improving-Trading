@@ -404,6 +404,7 @@ def test_pullback_opens_probe_in_trend_up(monkeypatch, tmp_path):
 
 
 def test_near_support_rejects_resistance_chase():
+    # Above / at resistance → chase
     assert (
         se.near_support(
             63940.0,
@@ -414,6 +415,7 @@ def test_near_support_rejects_resistance_chase():
         )
         is False
     )
+    # Near support → ok
     assert (
         se.near_support(
             63100.0,
@@ -423,6 +425,30 @@ def test_near_support_rejects_resistance_chase():
             resistance=63900.0,
         )
         is True
+    )
+    # Tight SR band: mid-upper (~70% of span) must still be allowed when within
+    # max_dist of support — absolute 0.35%-to-res was flipping every tick.
+    assert (
+        se.near_support(
+            63992.0,
+            support=63500.0,
+            donchian_mid=63800.0,
+            max_dist_pct=2.0,
+            resistance=64200.0,
+        )
+        is True
+    )
+    # Upper quartile of SR band → chase
+    assert se.resistance_chase(64100.0, support=63500.0, resistance=64200.0) is True
+    assert (
+        se.near_support(
+            64100.0,
+            support=63500.0,
+            donchian_mid=63800.0,
+            max_dist_pct=2.0,
+            resistance=64200.0,
+        )
+        is False
     )
 
 
