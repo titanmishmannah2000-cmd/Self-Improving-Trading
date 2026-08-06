@@ -1,8 +1,9 @@
 pair: BTC/USDT
-version: "06"
+version: "07"
 # Layered sentient exits L0–L2 + sentient entries (L3+ alts via SENTIENT_ENTRY).
 # require_clean_chart = no avoid/downtrend (wait_for_pullback does not veto Donchian).
 # Frozen from reflect until sleeve_promote_n: entry_conviction_*, pullback_*, mr_*, sleeve_*.
+# v07: chop blocks Donchian; FB Donchian-only + MAE floor + post-FB cooldown (10-loss fix).
 strategy_type: donchian_breakout
 regime_split: false
 entry:
@@ -28,7 +29,10 @@ peak_epsilon_pct: 0.05
 mfe_stall_bars: 1
 clock_lock_frac: 0.5
 path_slack: 1.25
-failed_breakout_bars: 1
+# Donchian-only FB: 2 exit bars + MAE past ~2x fee so noise is not a forced RT.
+failed_breakout_bars: 2
+failed_breakout_min_mae_pct: 0.40
+failed_breakout_cooldown_cycles: 60
 partial_enabled: true
 soft_partial_tp_frac: 0.4
 mfe_giveback_min_pct: 0.35
@@ -46,7 +50,7 @@ vol_max_pct: 8.0
 vol_min_pct: 0.005
 minimum_entry_quality: 6
 allow_bear_entries: false
-# Sentient entry knobs (v06) — bump version so Railway /data refreshes from seed
+# Sentient entry knobs (v07)
 entry_conviction_take: 0.55
 entry_conviction_probe: 0.40
 entry_policy_min_n: 20

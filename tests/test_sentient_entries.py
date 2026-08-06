@@ -87,10 +87,10 @@ def test_avoid_still_vetoes_clean_chart(monkeypatch):
         br,
         "classify_btc_regime",
         lambda pair, force=False: {
-            "label": br.CHOP,
+            "label": br.TREND_UP,
             "reason": "test",
             "pair": pair,
-            "adx": 10.0,
+            "adx": 30.0,
         },
     )
     prices = [100.0] * 21 + [101.0]
@@ -114,8 +114,10 @@ def test_avoid_still_vetoes_clean_chart(monkeypatch):
 def test_hard_blocks_pullback_in_chop():
     assert br.hard_blocks_entry(br.CHOP, strategy_type="pullback") is True
     assert br.hard_blocks_entry(br.CHOP, strategy_type="mean_reversion") is True
-    assert br.hard_blocks_entry(br.CHOP, strategy_type="donchian_breakout") is False
+    # v07: Donchian also blocked in chop (0% WR fee grind).
+    assert br.hard_blocks_entry(br.CHOP, strategy_type="donchian_breakout") is True
     assert br.hard_blocks_entry(br.TREND_UP, strategy_type="pullback") is False
+    assert br.hard_blocks_entry(br.TREND_UP, strategy_type="donchian_breakout") is False
 
 
 def test_conviction_and_cold_policy_fail_open():
@@ -496,3 +498,33 @@ def test_entry_runtime_schema_clears_poisoned_alt_quota(tmp_path, monkeypatch):
     rt = se.load_entry_runtime("btc")
     assert int(rt.get("alt_entries_today") or 0) == 0
     assert int(rt.get("schema") or 0) >= 2
+
+
+def test_failed_breakout_cooldown_latches(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_STATE_ROOT", str(tmp_path))
+    se.note_failed_breakout_cooldown(
+        "btc",
+        "BTC/USDT",
+        entry_type="donchian_breakout",
+        current_cycle=100,
+        strategy={"failed_breakout_cooldown_cycles": 60},
+    )
+    assert (
+        se.failed_breakout_cooldown_active(
+            "btc", "BTC/USDT", current_cycle=120, entry_type="donchian_breakout"
+        )
+        is True
+    )
+    assert (
+        se.failed_breakout_cooldown_active(
+            "btc", "BTC/USDT", current_cycle=160, entry_type="donchian_breakout"
+        )
+        is False
+    )
+    # Pullback sleeve not blocked by donchian FB cooldown
+    assert (
+        se.failed_breakout_cooldown_active(
+            "btc", "BTC/USDT", current_cycle=120, entry_type="pullback"
+        )
+        is False
+    )

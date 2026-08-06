@@ -86,6 +86,48 @@ def min_net_floor(trade: dict) -> float:
     return max(_exit_haircut(trade), _f(trade, "min_bank_net_pct", DEFAULT_MIN_BANK_NET_PCT))
 
 
+def _is_donchian_entry(trade: dict) -> bool:
+    et = str(trade.get("entry_type") or trade.get("entry_sleeve") or "").strip().lower()
+    if not et:
+        # Legacy / unset: treat as Donchian-capable (strategy default sleeve).
+        return True
+    return et in {"donchian_breakout", "donchian", "breakout"}
+
+
+def is_failed_breakout_cut(trade: dict, unreal: float) -> bool:
+    """True when Donchian failed-breakout exit should fire.
+
+    Guards:
+    * only Donchian sleeves (pullback/MR never use FB)
+    * enough exit bars held
+    * still not net-green
+    * adverse depth past ``failed_breakout_min_mae_pct`` (fee-floor knife guard)
+    """
+    if not _is_donchian_entry(trade):
+        return False
+    fb_bars = _i(trade, "failed_breakout_bars", 0)
+    if fb_bars <= 0:
+        return False
+    if _i(trade, "exit_bars_held", 0) < fb_bars:
+        return False
+    if float(unreal) > 0:
+        return False
+    if net_unreal(trade, unreal) >= min_net_floor(trade):
+        return False
+    min_mae = _f(trade, "failed_breakout_min_mae_pct", 0.0)
+    if min_mae > 0:
+        try:
+            trough = trade.get("trough_mae_pct")
+            mae_depth = (
+                abs(float(trough)) if trough is not None else abs(min(0.0, float(unreal)))
+            )
+        except (TypeError, ValueError):
+            mae_depth = abs(min(0.0, float(unreal)))
+        if mae_depth < min_mae:
+            return False
+    return True
+
+
 def _mfe_giveback_hit(trade: dict, unreal: float) -> bool:
     if trade.get("mfe_giveback_enabled", True) is False:
         return False
@@ -274,14 +316,11 @@ def _layered_hold_bank(
     te_i = _i(trade, "time_exit_cycles", DEFAULT_TIME_EXIT_CYCLES) if te is not None else None
     hard = _i(trade, "time_exit_max_cycles", DEFAULT_TIME_EXIT_MAX_CYCLES)
 
-    # Failed breakout: first N exit bars never net-green
-    fb_bars = _i(trade, "failed_breakout_bars", 0)
-    exit_bars_held = _i(trade, "exit_bars_held", 0)
+    # Failed breakout: Donchian-only, N bars red, MAE past fee floor
     net = net_unreal(trade, unreal)
     floor = min_net_floor(trade)
-    if fb_bars > 0 and exit_bars_held <= fb_bars and net < floor and unreal <= 0:
-        if exit_bars_held >= fb_bars:
-            return Exit("failed_breakout", current_price)
+    if is_failed_breakout_cut(trade, unreal):
+        return Exit("failed_breakout", current_price)
 
     armed = held >= early
     past_soft = te_i is not None and held >= te_i

@@ -232,6 +232,19 @@ def evaluate_entry_detailed(
                 )
         except Exception:  # noqa: BLE001 — fail closed for BTC focus
             return None, "btc_regime:classifier_error"
+        # Post-FB cooldown: stop Donchian re-entry grind after failed_breakout.
+        try:
+            from hermes_core.engines.sentient_entry import failed_breakout_cooldown_active
+
+            if failed_breakout_cooldown_active(
+                bot,
+                pair,
+                current_cycle=int(current_cycle or 0),
+                entry_type=str(strategy.get("strategy_type") or "donchian_breakout"),
+            ):
+                return None, "sentient:fb_cooldown"
+        except Exception:  # noqa: BLE001
+            pass
 
     split_on = False
     try:

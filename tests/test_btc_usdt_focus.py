@@ -48,9 +48,10 @@ def test_hard_blocks_non_uptrend():
     assert br.hard_blocks_entry(br.TREND_DOWN) is True
     assert br.hard_blocks_entry(br.TREND_UP) is False
     assert br.allows_long(br.TREND_UP) is True
-    # Phase 3: Donchian may fire in chop; downtrend still hard-flat.
-    assert br.hard_blocks_entry(br.CHOP, strategy_type="donchian_breakout") is False
+    # v07: Donchian also hard-flat in chop (failed-breakout fee grind).
+    assert br.hard_blocks_entry(br.CHOP, strategy_type="donchian_breakout") is True
     assert br.hard_blocks_entry(br.TREND_DOWN, strategy_type="donchian_breakout") is True
+    assert br.hard_blocks_entry(br.TREND_UP, strategy_type="donchian_breakout") is False
 
 
 def test_donchian_still_blocked_by_d1_downtrend(monkeypatch):

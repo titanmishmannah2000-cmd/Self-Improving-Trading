@@ -65,6 +65,8 @@ STRATEGY_PARAM_RANGES: dict[str, tuple[float, float]] = {
     "path_slack": (0.5, 3.0),
     "soft_partial_tp_frac": (0.1, 1.0),
     "failed_breakout_bars": (0, 10),
+    "failed_breakout_min_mae_pct": (0.0, 5.0),
+    "failed_breakout_cooldown_cycles": (0, 500),
     "be_trigger_frac": (0.15, 0.9),
     "entry.threshold": (5, 95),
     "entry.min_oversold_pairs": (1, 10),

@@ -24,9 +24,21 @@ def sentient_entry_enabled() -> bool:
     return get_env("SENTIENT_ENTRY", "0") == "1"
 
 
-def strategy_hold_knobs(strategy: dict) -> dict:
-    """Extract L0–L1 knobs from strategy YAML for open stamp."""
+def strategy_hold_knobs(strategy: dict, *, entry_type: str | None = None) -> dict:
+    """Extract L0–L1 knobs from strategy YAML for open stamp.
+
+    Failed-breakout exits only apply to Donchian breakouts — pullback / MR
+    sleeves get ``failed_breakout_bars=0`` so they are not knife-cut on the
+    first red exit bar.
+    """
     s = strategy or {}
+    et = (entry_type or "").strip().lower()
+    donchian = et in {"", "donchian_breakout", "donchian", "breakout"}
+    # Empty entry_type: keep strategy default (legacy opens). Explicit alts: off.
+    if et and not donchian:
+        fb_bars = 0
+    else:
+        fb_bars = int(s.get("failed_breakout_bars") or 2)
     return {
         "early_reeval_cycles": int(s.get("early_reeval_cycles") or 120),
         "time_exit_max_cycles": int(s.get("time_exit_max_cycles") or 720),
@@ -36,7 +48,10 @@ def strategy_hold_knobs(strategy: dict) -> dict:
         "clock_lock_frac": float(s.get("clock_lock_frac") or 0.5),
         "path_slack": float(s.get("path_slack") or 1.25),
         "soft_partial_tp_frac": float(s.get("soft_partial_tp_frac") or 0.4),
-        "failed_breakout_bars": int(s.get("failed_breakout_bars") or 1),
+        "failed_breakout_bars": fb_bars,
+        "failed_breakout_min_mae_pct": float(
+            s.get("failed_breakout_min_mae_pct") or 0.40
+        ),
         "cycles_per_exit_bar": int(s.get("cycles_per_exit_bar") or 240),
         "soft_partial_done": False,
         "exit_bars_since_peak": 0,

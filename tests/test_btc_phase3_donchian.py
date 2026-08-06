@@ -123,10 +123,10 @@ def test_donchian_require_clean_chart_rejects_avoid(monkeypatch):
         br,
         "classify_btc_regime",
         lambda pair, force=False: {
-            "label": br.CHOP,
-            "reason": "test_chop",
+            "label": br.TREND_UP,
+            "reason": "test_up",
             "pair": pair,
-            "adx": 10.0,
+            "adx": 30.0,
         },
     )
     prices = [100.0] * 21 + [101.0]

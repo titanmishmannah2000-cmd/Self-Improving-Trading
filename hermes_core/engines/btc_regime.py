@@ -185,11 +185,10 @@ def hard_blocks_entry(label: str, *, strategy_type: str | None = None) -> bool:
     """True when spot v1 must skip.
 
     * ``trend_down`` — always hard-flat (no shorts in v1).
-    * ``chop`` — hard-flat for RSI/MR/pullback; **Donchian (Phase 3)** may
-      break out of ranges, so chop is allowed for ``donchian_breakout`` only.
+    * ``chop`` — hard-flat for all sleeves including Donchian. Chop breakouts
+      were a 0% WR fee grind; pullbacks still enter via sentient soft path
+      that bypasses this gate with chart ``wait_for_pullback``.
     * ``trend_up`` — never blocks.
-    * ``pullback`` / ``mean_reversion`` entry sleeves: chop blocks (use
-      strategy_type=``pullback`` or ``mean_reversion`` when checking).
     """
     lab = (label or "").strip().lower()
     if lab == TREND_UP:
@@ -197,8 +196,7 @@ def hard_blocks_entry(label: str, *, strategy_type: str | None = None) -> bool:
     if lab == TREND_DOWN:
         return True
     if lab == CHOP:
-        st = (strategy_type or "").strip().lower()
-        return st != "donchian_breakout"
+        return True
     return True
 
 

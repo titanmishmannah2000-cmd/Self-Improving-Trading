@@ -12,6 +12,7 @@ from hermes_core.engines.exit import (
     compute_hold_score,
     dual_slope_path,
     effective_stall_bars,
+    is_failed_breakout_cut,
     min_net_floor,
     net_unreal,
     _i,
@@ -68,9 +69,7 @@ def tp_ladder_expert(trade: dict, price: float) -> dict:
 
 
 def failed_breakout_expert(trade: dict, unreal: float) -> dict:
-    fb = _i(trade, "failed_breakout_bars", 0)
-    held_bars = _i(trade, "exit_bars_held", 0)
-    if fb > 0 and held_bars >= fb and unreal <= 0 and net_unreal(trade, unreal) < min_net_floor(trade):
+    if is_failed_breakout_cut(trade, unreal):
         return _vote("bank", 0.9, "failed_breakout")
     return _vote("hold", 0.2, "ok")
 

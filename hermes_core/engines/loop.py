@@ -557,6 +557,21 @@ def _process_exit(
             pnl=float(pnl),
             world_mult=1.0,
         )
+    if str(ex.reason) == "failed_breakout":
+        with contextlib.suppress(Exception):
+            from hermes_core.engines.sentient_entry import note_failed_breakout_cooldown
+            from hermes_core.config.loader import load_strategy_for_pair
+
+            _strat = {}
+            with contextlib.suppress(Exception):
+                _strat = load_strategy_for_pair(pair, bot) or {}
+            note_failed_breakout_cooldown(
+                bot,
+                pair,
+                entry_type=str(entry_type),
+                current_cycle=int(cycle),
+                strategy=_strat,
+            )
     with contextlib.suppress(Exception):
         from hermes_core.engines import counterfactual_exits as cfe
         from hermes_core.engines import hold_policy as hp
@@ -2693,7 +2708,7 @@ def run_cycle(
             with contextlib.suppress(Exception):
                 from hermes_core.engines.layered_hold import strategy_hold_knobs
 
-                _hold_knobs = strategy_hold_knobs(strategy)
+                _hold_knobs = strategy_hold_knobs(strategy, entry_type=_etype)
             _side = str(getattr(sig, "side", None) or strategy.get("entry", {}).get("direction") or "long")
             _entry_mid = float(price)
             _cost = None

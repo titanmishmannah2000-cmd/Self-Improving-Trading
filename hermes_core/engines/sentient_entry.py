@@ -141,6 +141,48 @@ def bump_runtime_cycle(
     return st
 
 
+def note_failed_breakout_cooldown(
+    bot: str | None,
+    pair: str,
+    *,
+    entry_type: str,
+    current_cycle: int,
+    strategy: dict | None = None,
+) -> None:
+    """Latch re-entry cooldown after a failed_breakout exit (stops 30m grind)."""
+    cd = int((strategy or {}).get("failed_breakout_cooldown_cycles") or 60)
+    if cd <= 0:
+        return
+    rt = load_entry_runtime(bot)
+    pairs = rt.setdefault("pairs", {})
+    pst = pairs.setdefault(pair, {})
+    pst["fb_cooldown_until"] = int(current_cycle) + cd
+    pst["fb_cooldown_sleeve"] = str(entry_type or "donchian_breakout")
+    pairs[pair] = pst
+    rt["pairs"] = pairs
+    save_entry_runtime(bot, rt)
+
+
+def failed_breakout_cooldown_active(
+    bot: str | None,
+    pair: str,
+    *,
+    current_cycle: int,
+    entry_type: str | None = None,
+) -> bool:
+    rt = load_entry_runtime(bot)
+    pst = (rt.get("pairs") or {}).get(pair) or {}
+    until = int(pst.get("fb_cooldown_until") or 0)
+    if until <= 0 or int(current_cycle) >= until:
+        return False
+    sleeve = str(pst.get("fb_cooldown_sleeve") or "donchian_breakout").strip().lower()
+    et = str(entry_type or "donchian_breakout").strip().lower()
+    donchian = {"donchian_breakout", "donchian", "breakout", ""}
+    if sleeve in donchian:
+        return et in donchian
+    return et == sleeve
+
+
 def load_entry_policy(bot: str | None) -> dict:
     _, path, _ = _state_paths(bot)
     try:
@@ -911,6 +953,16 @@ def run_sentient_entry(
 
     soft = chart_soft_reasons(context, strategy_type="donchian_breakout")
     hard_soft, actionable = split_soft_reasons(soft)
+
+    # Drop Donchian traditional signal during post-FB cooldown.
+    if trad_sig is not None and failed_breakout_cooldown_active(
+        bot,
+        pair,
+        current_cycle=int(current_cycle or 0),
+        entry_type="donchian_breakout",
+    ):
+        trad_sig = None
+        trad_skip = trad_skip or "sentient:fb_cooldown"
 
     bundle = build_context_bundle(
         bot=bot, pair=pair, prices=prices, strategy=strategy, context=context

@@ -198,11 +198,41 @@ class TestL1Adaptive:
             early_reeval_cycles=10,
             failed_breakout_bars=1,
             exit_bars_held=1,
-            unrealised_pct=-0.2,
+            unrealised_pct=-0.5,
             peak_mfe_pct=0.0,
+            trough_mae_pct=-0.5,
+            entry_type="donchian_breakout",
+            failed_breakout_min_mae_pct=0.40,
         )
-        ex = evaluate_exit(t, 99.8, None)
+        ex = evaluate_exit(t, 99.5, None)
         assert ex is not None and ex.reason == "failed_breakout"
+
+    def test_failed_breakout_skips_pullback_and_shallow_mae(self):
+        from hermes_core.engines.exit import is_failed_breakout_cut
+
+        pull = T(
+            failed_breakout_bars=2,
+            exit_bars_held=2,
+            unrealised_pct=-0.5,
+            trough_mae_pct=-0.5,
+            entry_type="pullback",
+            failed_breakout_min_mae_pct=0.40,
+        )
+        assert is_failed_breakout_cut(pull, -0.5) is False
+        shallow = T(
+            failed_breakout_bars=1,
+            exit_bars_held=1,
+            unrealised_pct=-0.15,
+            trough_mae_pct=-0.15,
+            entry_type="donchian_breakout",
+            failed_breakout_min_mae_pct=0.40,
+        )
+        assert is_failed_breakout_cut(shallow, -0.15) is False
+        kn = strategy_hold_knobs({"failed_breakout_bars": 2}, entry_type="pullback")
+        assert kn["failed_breakout_bars"] == 0
+        kn_d = strategy_hold_knobs({"failed_breakout_bars": 2}, entry_type="donchian_breakout")
+        assert kn_d["failed_breakout_bars"] == 2
+        assert kn_d["failed_breakout_min_mae_pct"] == 0.40
 
     def test_outcome_class_weights(self):
         assert stamp_exit_class("profit_bank") == "soft_capture"
@@ -491,13 +521,16 @@ class TestReflectAndConfig:
         assert stats["soft_bank_frac"] == pytest.approx(2 / 3)
         assert stats["timeout_frac"] == pytest.approx(1 / 3)
 
-    def test_btc_v05_validates(self):
+    def test_btc_v07_validates(self):
         s = load_strategy_for_pair("BTC/USDT", bot="btc")
-        assert s["version"] == "05"
+        assert s["version"] == "07"
         assert s.get("partial_enabled") is True
         assert float(s.get("soft_partial_tp_frac")) == 0.4
         assert int(s.get("early_reeval_cycles")) == 120
         assert int(s.get("time_exit_max_cycles")) == 720
+        assert int(s.get("failed_breakout_bars") or 0) == 2
+        assert float(s.get("failed_breakout_min_mae_pct") or 0) >= 0.4
+        assert int(s.get("failed_breakout_cooldown_cycles") or 0) >= 60
         assert float(s.get("entry_conviction_take") or 0) >= 0.5
         assert float(s.get("pullback_stop_pct") or 0) >= 0.5
         ok, errors = validate_strategy_params(s, raise_on_fail=False)
