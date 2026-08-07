@@ -521,9 +521,9 @@ class TestReflectAndConfig:
         assert stats["soft_bank_frac"] == pytest.approx(2 / 3)
         assert stats["timeout_frac"] == pytest.approx(1 / 3)
 
-    def test_btc_v07_validates(self):
+    def test_btc_v08_validates(self):
         s = load_strategy_for_pair("BTC/USDT", bot="btc")
-        assert s["version"] == "07"
+        assert s["version"] == "08"
         assert s.get("partial_enabled") is True
         assert float(s.get("soft_partial_tp_frac")) == 0.4
         assert int(s.get("early_reeval_cycles")) == 120
@@ -531,6 +531,7 @@ class TestReflectAndConfig:
         assert int(s.get("failed_breakout_bars") or 0) == 2
         assert float(s.get("failed_breakout_min_mae_pct") or 0) >= 0.4
         assert int(s.get("failed_breakout_cooldown_cycles") or 0) >= 60
+        assert int(s.get("max_alt_entries_per_day") or 0) >= 6
         assert float(s.get("entry_conviction_take") or 0) >= 0.5
         assert float(s.get("pullback_stop_pct") or 0) >= 0.5
         ok, errors = validate_strategy_params(s, raise_on_fail=False)

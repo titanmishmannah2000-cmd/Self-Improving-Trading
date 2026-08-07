@@ -77,7 +77,8 @@ def _state_paths(bot: str | None) -> tuple[Path, Path, Path]:
 
 
 # Bump when runtime semantics change so poisoned volume state self-heals once.
-_ENTRY_RUNTIME_SCHEMA = 2
+# 3: clear alt_entries_today after winners burned the v07 cap of 2.
+_ENTRY_RUNTIME_SCHEMA = 3
 
 
 def load_entry_runtime(bot: str | None) -> dict:
@@ -139,6 +140,29 @@ def bump_runtime_cycle(
     rt["pairs"] = pairs
     save_entry_runtime(bot, rt)
     return st
+
+
+def release_alt_quota_on_green(
+    bot: str | None,
+    *,
+    entry_type: str,
+    pnl: float,
+) -> None:
+    """Free one daily alt slot when a pullback/MR close is net-green.
+
+    Quota exists to cap losing spam, not to lock the bot after winners while
+    D1 chop still blocks Donchian.
+    """
+    if str(entry_type or "").strip().lower() not in {"pullback", "mean_reversion"}:
+        return
+    if float(pnl) <= 0:
+        return
+    rt = load_entry_runtime(bot)
+    cur = int(rt.get("alt_entries_today") or 0)
+    if cur <= 0:
+        return
+    rt["alt_entries_today"] = cur - 1
+    save_entry_runtime(bot, rt)
 
 
 def note_failed_breakout_cooldown(
@@ -1013,7 +1037,7 @@ def run_sentient_entry(
 
     if sentient_entry_enabled() and not hard_soft:
         rt = load_entry_runtime(bot)
-        max_alt = int(strategy.get("max_alt_entries_per_day") or 2)
+        max_alt = int(strategy.get("max_alt_entries_per_day") or 6)
         alt_today = int(rt.get("alt_entries_today") or 0)
         if alt_today >= max_alt:
             alt_quota_blocked = True

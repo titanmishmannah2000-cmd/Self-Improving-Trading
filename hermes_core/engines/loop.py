@@ -557,6 +557,12 @@ def _process_exit(
             pnl=float(pnl),
             world_mult=1.0,
         )
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.sentient_entry import release_alt_quota_on_green
+
+        release_alt_quota_on_green(
+            bot, entry_type=str(entry_type), pnl=float(pnl)
+        )
     if str(ex.reason) == "failed_breakout":
         with contextlib.suppress(Exception):
             from hermes_core.engines.sentient_entry import note_failed_breakout_cooldown

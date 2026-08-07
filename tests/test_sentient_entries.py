@@ -497,7 +497,23 @@ def test_entry_runtime_schema_clears_poisoned_alt_quota(tmp_path, monkeypatch):
     )
     rt = se.load_entry_runtime("btc")
     assert int(rt.get("alt_entries_today") or 0) == 0
-    assert int(rt.get("schema") or 0) >= 2
+    assert int(rt.get("schema") or 0) >= 3
+
+
+def test_release_alt_quota_on_green(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_STATE_ROOT", str(tmp_path))
+    path, _, _ = se._state_paths("btc")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        '{"pairs": {}, "day": "2099-01-01", "alt_entries_today": 2, "schema": 3}',
+        encoding="utf-8",
+    )
+    se.release_alt_quota_on_green("btc", entry_type="pullback", pnl=0.35)
+    assert int(se.load_entry_runtime("btc").get("alt_entries_today") or 0) == 1
+    se.release_alt_quota_on_green("btc", entry_type="pullback", pnl=-0.2)
+    assert int(se.load_entry_runtime("btc").get("alt_entries_today") or 0) == 1
+    se.release_alt_quota_on_green("btc", entry_type="donchian_breakout", pnl=1.0)
+    assert int(se.load_entry_runtime("btc").get("alt_entries_today") or 0) == 1
 
 
 def test_failed_breakout_cooldown_latches(tmp_path, monkeypatch):
