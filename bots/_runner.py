@@ -44,8 +44,26 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def dedupe_skips(rows: list) -> list:
+    """Keep latest row per (pair, reason) so identical skip spam does not dominate."""
+    latest: dict = {}
+    order: list = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        key = (
+            str(r.get("pair") or ""),
+            str(r.get("reason") or r.get("reason_skipped") or ""),
+        )
+        if key not in latest:
+            order.append(key)
+        latest[key] = r
+    return [latest[k] for k in order]
+
+
 from hermes_core.adapters import make_aggregator_fetch, make_default_fetch, seed_history
 from hermes_core.config.loader import load_config, load_strategy_for_pair
+from hermes_core.engines.size_stamp import normalize_open_size_fields
 from hermes_core.env import get_env, load_env
 
 load_env()  # before chart_vision so get_env sees .env keys on first call
@@ -237,6 +255,11 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
             "gp_indicators": pos.get("gp_indicators") or [],
             # HIF Phase-1 probe sizing (dashboard Live / Detail indicators)
             "size_mode": pos.get("size_mode", "full"),
+            "size_reason": pos.get("size_reason"),
+            "entry_decision": pos.get("entry_decision"),
+            "entry_conviction": pos.get("entry_conviction"),
+            "entry_sleeve": pos.get("entry_sleeve"),
+            "strategy_version": pos.get("strategy_version"),
             "evidence_n": pos.get("evidence_n"),
             "evidence_state": pos.get("evidence_state", "disabled"),
             "base_size": pos.get("base_size"),
@@ -295,6 +318,8 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
         }
         for pair, pos in open_positions.items()
     ]
+    # Backfill size_mode for opens stamped before sentient/chart probe reasons existed.
+    recent_open_trades = [normalize_open_size_fields(t) for t in recent_open_trades]
     # recent trades / skips / hypotheses / flatline from the jsonl the engines append
     flatline_events = _read_jsonl("flatline_log.jsonl", limit=200)
     gp_promote_gate: dict = {}
@@ -307,7 +332,7 @@ def _push_state(bot: str, cfg: dict, cycle: int, summary: dict | None = None) ->
         "goal": cfg.get("goal"),
         "heartbeat": heartbeat,
         "recent_trades": _read_jsonl("trades.jsonl"),
-        "recent_skips": _read_jsonl("skips.jsonl"),
+        "recent_skips": dedupe_skips(_read_jsonl("skips.jsonl")),
         "recent_hypotheses": _read_jsonl("hypotheses.jsonl"),
         "discovered": discovered,
         "cortex": cortex,

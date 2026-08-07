@@ -106,6 +106,13 @@ function installFetchMock(overview = mockOverview()) {
     if (u.includes("/api/strategy-params/")) {
       return { ok: true, status: 200, json: async () => ({ pairs: {} }) };
     }
+    if (u.includes("/api/ui-config")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ bots: ["forex", "gold", "crypto", "btc"], title: "Hermes", scope: null }),
+      };
+    }
     if (u.includes("/api/spark")) {
       return { ok: true, status: 200, json: async () => ({ prices: [1.1, 1.11, 1.12] }) };
     }
@@ -303,6 +310,110 @@ describe("Phase 17 dashboard frontend", () => {
     expect(await screen.findByTestId("pipeline-gap")).toHaveTextContent(
       "pipeline gap for crypto",
     );
+  });
+
+  it("test_btc_pullback_strategy_badge_not_rsi", async () => {
+    const overview = mockOverview();
+    overview.active_bots = ["forex", "gold", "crypto", "btc"];
+    overview.bots.btc = {
+      recent_trades: [],
+      recent_skips: [],
+      recent_hypotheses: [],
+      recent_open_trades: [
+        {
+          id: "btc:BTC/USDT:1",
+          pair: "BTC/USDT",
+          entry_type: "pullback",
+          entry_decision: "probe",
+          size_mode: "probe",
+          size_reason: "sentient_probe",
+          probe_fraction: 0.5,
+          chart_size_mult: 0.5,
+          entry_price: 65000,
+          size: 0.075,
+          base_size: 0.15,
+          entry_ts: "2026-01-01T00:00:00Z",
+          held_cycles: 10,
+          unrealised_pct: -0.1,
+          peak_mfe_pct: 0,
+          trough_mae_pct: -0.2,
+          mfe_tracking: true,
+        },
+      ],
+      closed_trades: 0,
+      open_count: 1,
+      heartbeat: { cycle: 1 },
+      _received_at: "2026-01-01T00:00:00Z",
+      strategy: {
+        "BTC/USDT": { pair: "BTC/USDT", strategy_type: "donchian_breakout", version: "08" },
+      },
+    };
+    overview.totals.open_trades = 1;
+    installFetchMock(overview);
+    const baseFetch = global.fetch;
+    global.fetch = vi.fn(async (url) => {
+      const u = String(url);
+      if (u.includes("/api/strategy-params/")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            pairs: { "BTC/USDT": { strategy_type: "donchian_breakout", version: "08" } },
+          }),
+        };
+      }
+      if (u.includes("/api/ui-config")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            bots: ["forex", "gold", "crypto", "btc"],
+            title: "Hermes",
+            scope: null,
+          }),
+        };
+      }
+      return baseFetch(url);
+    });
+
+    render(<App />);
+    // Mode toggle shows current mode; click Watcher → Advanced (badges only on Advanced).
+    fireEvent.click(await screen.findByRole("button", { name: /^Watcher$/i }));
+    const badges = await screen.findAllByTestId("strategy-badge");
+    const pullback = badges.find((el) => /Pullback/i.test(el.textContent || ""));
+    expect(pullback).toBeTruthy();
+    expect(pullback).not.toHaveTextContent(/RSI Momentum/i);
+    const sizeBadge = await screen.findByTestId("size-mode-badge");
+    expect(sizeBadge).toHaveTextContent(/Probe/i);
+  });
+
+  it("test_legacy_full_with_entry_decision_probe_shows_probe", async () => {
+    const overview = mockOverview();
+    overview.bots.forex.recent_open_trades = [
+      {
+        id: "forex:EUR/USD:legacy",
+        pair: "EUR/USD",
+        entry_type: "pullback",
+        entry_decision: "probe",
+        size_mode: "full", // legacy stamp — dashboard must still show Probe
+        size: 0.075,
+        base_size: 0.15,
+        chart_size_mult: 0.5,
+        entry_price: 1.1,
+        entry_ts: "2026-01-01T00:00:00Z",
+        held_cycles: 2,
+        unrealised_pct: 0,
+      },
+    ];
+    overview.bots.forex.open_count = 1;
+    overview.totals.open_trades = 1;
+    installFetchMock(overview);
+
+    render(<App />);
+    await screen.findAllByTestId("pair-card");
+    fireEvent.click(screen.getByRole("button", { name: "Watcher" }));
+    const badge = await screen.findByTestId("size-mode-badge");
+    expect(badge).toHaveTextContent(/Probe 50%/i);
   });
 
   it("test_probe_size_mode_badge", async () => {

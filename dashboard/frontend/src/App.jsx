@@ -127,7 +127,69 @@ function regimeLabel(regime) {
 function plainStrategy(strategyType) {
   if (strategyType === "mean_reversion") return "Buy dips";
   if (strategyType === "rsi_momentum") return "Catch rebounds";
+  if (strategyType === "donchian_breakout") return "Breakout rides";
+  if (strategyType === "pullback") return "Buy pullbacks";
+  if (strategyType === "gp_ensemble") return "GP brain";
   return strategyType || "—";
+}
+
+/** Advanced-mode strategy / sleeve badge text (never default unknowns to RSI). */
+function strategyTypeLabel(strategyType) {
+  const map = {
+    mean_reversion: "Mean Reversion",
+    rsi_momentum: "RSI Momentum",
+    donchian_breakout: "Donchian Breakout",
+    pullback: "Pullback",
+    mean_reversion_alt: "Mean Reversion",
+    gp_ensemble: "GP Ensemble",
+  };
+  return map[strategyType] || (strategyType ? String(strategyType).replace(/_/g, " ") : "—");
+}
+
+function entrySleeveLabel(entryType) {
+  if (!entryType) return null;
+  const map = {
+    donchian_breakout: "Donchian",
+    pullback: "Pullback",
+    mean_reversion: "Mean Reversion",
+    rsi_momentum: "RSI Momentum",
+    gp_ensemble: "GP Brain",
+  };
+  return map[entryType] || String(entryType).replace(/_/g, " ");
+}
+
+/** Primary card label: live sleeve when it differs from YAML strategy_type. */
+function primaryStrategyLabel(strategyType, entryType, { watcher = false } = {}) {
+  const sleeve = entryType && entryType !== strategyType ? entryType : null;
+  const primary = sleeve || strategyType;
+  return watcher ? plainStrategy(primary) : strategyTypeLabel(primary);
+}
+
+/** Resolve display size_mode so legacy opens (stamped full) still show probe correctly. */
+function effectiveSizeMode(t) {
+  if (!t) return { mode: null, reason: null, probeFrac: null, chartSizeMult: 1 };
+  let mode = t.size_mode || "full";
+  let reason = t.size_reason || null;
+  const dec = String(t.entry_decision || "");
+  const csm = Number(t.chart_size_mult ?? 1);
+  const size = Number(t.size ?? 0);
+  const base = Number(t.base_size ?? 0);
+  if (dec === "probe") {
+    mode = "probe";
+    reason = reason || "sentient_probe";
+  } else if (Number.isFinite(csm) && csm < 0.999 && mode === "full") {
+    mode = "probe";
+    reason = reason || "chart_soft";
+  } else if (mode === "full" && base > 1e-12 && size / base < 0.99) {
+    mode = "probe";
+    reason = reason || "size_haircut";
+  }
+  let probeFrac = t.probe_fraction;
+  if (mode === "probe" && (probeFrac == null || !Number.isFinite(Number(probeFrac))) && base > 1e-12) {
+    probeFrac = size / base;
+  }
+  if (mode === "probe" && !reason) reason = "cortex_probe";
+  return { mode, reason, probeFrac, chartSizeMult: Number.isFinite(csm) ? csm : 1 };
 }
 
 function plainExit(reason) {
@@ -174,7 +236,7 @@ const GLOSSARY = {
   },
   size_mode: {
     term: "Size mode (Probe / Full)",
-    plain: "When Probe Sizing is ON (PROBE_SIZING=1), new trades open at 25% size until the cortex has enough closed trades for that pair and entry style (usually 5). Then they use full size. Probe never blocks a trade — it only shrinks risk while learning.",
+    plain: "Probe = reduced size. Causes: (1) sentient entry decision=probe (conviction between probe/take thresholds), (2) chart soft haircut (e.g. wait_for_pullback ×0.5), or (3) HIF PROBE_SIZING when cortex evidence is thin. Full = no those haircuts. Probe never blocks a trade — it only shrinks risk.",
     analogy: "Trying a new restaurant with a small plate first, then ordering the full meal once you know you like it.",
   },
   expert_weight: {
@@ -377,6 +439,14 @@ function humanizeSkip(reason) {
     if (rest === "cost:atr_too_small") return "move too small to cover costs — skipping";
     if (rest.startsWith("trend:")) return "trend playbook not ready yet";
     if (rest === "chart:hard_block") return "chart says avoid this playbook for now";
+    if (rest === "sentient:alt_quota") return "daily pullback/MR quota used — waiting for reset or a Donchian setup";
+    if (rest === "sentient:fb_cooldown") return "cooling off after a failed breakout";
+    if (rest === "sentient:pullback_not_in_zone") return "waiting for price nearer support (pullback zone)";
+    if (rest === "sentient:resistance_chase") return "too close to resistance — not a pullback";
+    if (rest === "sentient:no_winner") return "signals scored too soft to take";
+    if (rest.startsWith("donchian:")) return `breakout filter: ${rest.slice("donchian:".length).replace(/_/g, " ")}`;
+    if (rest.startsWith("btc_regime:")) return `daily regime blocked entry (${rest.slice("btc_regime:".length)})`;
+    if (rest.startsWith("sentient:")) return rest.slice("sentient:".length).replace(/_/g, " ");
   }
   return map[r] || r.replace(/_/g, " ");
 }
@@ -461,6 +531,8 @@ function FilterChain({ strategy_type, lastSkip }) {
   const chains = {
     rsi_momentum: ["RSI", "Volume", "Regime", "Quality", "Chart"],
     mean_reversion: ["Bollinger", "RSI", "ADX", "Session"],
+    donchian_breakout: ["Donchian", "ADX", "Regime", "Chart"],
+    pullback: ["Chart", "Support", "Conviction", "Quota"],
   };
   const steps = chains[strategy_type] || chains.rsi_momentum;
 
@@ -473,8 +545,20 @@ function FilterChain({ strategy_type, lastSkip }) {
     fear_greed_high: "Regime",
     funding_rate_high: "Regime",
     quality_below_min: "Quality",
+    "donchian:no_breakout": "Donchian",
+    "donchian:adx_weak": "ADX",
+    "sentient:pullback_not_in_zone": "Support",
+    "sentient:resistance_chase": "Support",
+    "sentient:alt_quota": "Quota",
+    "sentient:no_winner": "Conviction",
+    "btc_regime:chop": "Regime",
   };
-  const failedLabel = lastSkip ? stepFailMap[lastSkip.reason_skipped] : null;
+  const raw = String(lastSkip?.reason_skipped || lastSkip?.reason || "");
+  const bare = raw.startsWith("no_signal:") ? raw.slice("no_signal:".length) : raw;
+  let failedLabel = lastSkip ? stepFailMap[bare] || stepFailMap[raw] : null;
+  if (!failedLabel && bare.startsWith("btc_regime:")) failedLabel = "Regime";
+  if (!failedLabel && bare.startsWith("donchian:")) failedLabel = "Donchian";
+  if (!failedLabel && bare.includes("chart")) failedLabel = "Chart";
   const failIdx = steps.indexOf(failedLabel);
 
   return (
@@ -523,7 +607,17 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
   const pnl = openTrade?._unrealised_pct ?? openTrade?.pnl_pct ?? openTrade?.unrealised_pct ?? null;
   const isUp = pnl !== null && pnl > 0;
 
-  const strategyLabel = isWatcher ? plainStrategy(strategy) : (strategy === "mean_reversion" ? "Mean Reversion" : "RSI Momentum");
+  const strategyLabel = primaryStrategyLabel(strategy, openTrade?.entry_type, { watcher: isWatcher });
+  // When sleeve is primary, show YAML base as secondary context (not a duplicate sleeve).
+  const baseStrategyLabel =
+    !isWatcher && openTrade?.entry_type && openTrade.entry_type !== strategy
+      ? strategyTypeLabel(strategy)
+      : null;
+  const sizeStamp = effectiveSizeMode(openTrade);
+  const filterStrategy =
+    openTrade?.entry_type === "pullback" || openTrade?.entry_type === "mean_reversion"
+      ? openTrade.entry_type
+      : strategy;
   const sessions = meta?.timezone === "24h" ? ["24h"] : sessionStatus();
   const [fresh, setFresh] = useState(false);
   useEffect(() => {
@@ -606,7 +700,18 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
         </div>
         {!isWatcher && (
           <div className="pc-strategies">
-            <span className={`pc-strategy pc-strategy-${strategy}`}>{strategyLabel}</span>
+            <span className={`pc-strategy pc-strategy-${openTrade?.entry_type || strategy}`} data-testid="strategy-badge">
+              {strategyLabel}
+            </span>
+            {baseStrategyLabel && (
+              <span
+                className={`pc-strategy pc-strategy-${strategy}`}
+                data-testid="base-strategy-badge"
+                title={`YAML strategy_type=${strategy}; live entry sleeve=${openTrade.entry_type}`}
+              >
+                base {baseStrategyLabel}
+              </span>
+            )}
             {openTrade?.entry_type === "gp_ensemble" && (
               <span className="pc-strategy pc-strategy-gp_ensemble" title="Entry generated by the GP genetic-programming brain (paper)">GP Brain</span>
             )}
@@ -637,16 +742,22 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
                 {data.gpGate.banned || data.gpGate.env_listed ? "Leave exclude" : "Unban?"}
               </span>
             )}
-            {openTrade?.size_mode === "probe" && (
+            {sizeStamp.mode === "probe" && (
               <span
                 className="pc-strategy pc-strategy-probe"
                 data-testid="size-mode-badge"
-                title={`Probe size — thin cortex evidence (${openTrade.evidence_n ?? 0} closed). Learning at ${Math.round((openTrade.probe_fraction ?? 0.25) * 100)}% size.`}
+                title={
+                  sizeStamp.reason === "sentient_probe"
+                    ? `Sentient probe — conviction below take (decision=probe). Size ${Math.round((sizeStamp.probeFrac ?? 0.5) * 100)}% of base.`
+                    : sizeStamp.reason === "chart_soft"
+                      ? `Chart soft size ×${Number(sizeStamp.chartSizeMult ?? 1).toFixed(2)}`
+                      : `Probe size — thin cortex evidence (${openTrade.evidence_n ?? 0} closed). Learning at ${Math.round((sizeStamp.probeFrac ?? 0.25) * 100)}% size.`
+                }
               >
-                Probe {Math.round((openTrade.probe_fraction ?? 0.25) * 100)}%
+                Probe {Math.round((sizeStamp.probeFrac ?? (sizeStamp.reason === "sentient_probe" ? 0.5 : 0.25)) * 100)}%
               </span>
             )}
-            {openTrade && openTrade.size_mode === "full" && openTrade.evidence_state === "ok" && (
+            {openTrade && sizeStamp.mode === "full" && openTrade.evidence_state === "ok" && openTrade.entry_decision !== "probe" && (
               <span
                 className="pc-strategy pc-strategy-full"
                 data-testid="size-mode-badge"
@@ -755,7 +866,7 @@ function PairCard({ pair, data, strategy, regime, onSelect, isSelected, botPause
         </div>
       )}
 
-      {!isWatcher && <FilterChain strategy_type={strategy} lastSkip={!openTrade ? lastSkip : null} />}
+      {!isWatcher && <FilterChain strategy_type={filterStrategy} lastSkip={!openTrade ? lastSkip : null} />}
 
       {waitReason && (
         <div className="pc-skip-reason">
@@ -911,9 +1022,16 @@ function DetailPanel({ pair, botData, strategyParams, lastSkip }) {
   const openTrade = openTrades[0] || null;
   const closedTrades = trades.filter((t) => t.exit_reason).slice(-10).reverse();
   const strategy = strategyParams?.[pair] || {};
-  const strategyLabel = isWatcher
-    ? plainStrategy(strategy.strategy_type)
-    : (strategy.strategy_type === "mean_reversion" ? "Mean Reversion" : "RSI Momentum");
+  const strategyLabel = primaryStrategyLabel(
+    strategy.strategy_type,
+    openTrade?.entry_type,
+    { watcher: isWatcher },
+  );
+  const baseStrategyLabel =
+    !isWatcher && openTrade?.entry_type && openTrade.entry_type !== strategy.strategy_type
+      ? strategyTypeLabel(strategy.strategy_type)
+      : null;
+  const sizeStamp = effectiveSizeMode(openTrade);
 
   const chartData = closedTrades
     .slice()
@@ -958,7 +1076,18 @@ function DetailPanel({ pair, botData, strategyParams, lastSkip }) {
         <div className="detail-title">
           <h3>{isWatcher ? (meta?.plain || pair) : pair}</h3>
           {isWatcher && <span className="pc-pair-code detail-pair-code">{pair}</span>}
-          <span className={`pc-strategy pc-strategy-${strategy.strategy_type}`}>{strategyLabel}</span>
+          <span className={`pc-strategy pc-strategy-${openTrade?.entry_type || strategy.strategy_type}`} data-testid="detail-strategy-badge">
+            {strategyLabel}
+          </span>
+          {baseStrategyLabel && (
+            <span
+              className={`pc-strategy pc-strategy-${strategy.strategy_type}`}
+              data-testid="detail-base-strategy-badge"
+              title={`YAML strategy_type=${strategy.strategy_type}; live entry sleeve=${openTrade.entry_type}`}
+            >
+              base {baseStrategyLabel}
+            </span>
+          )}
           {!isWatcher && openTrade?.entry_type === "gp_ensemble" && (
             <span className="pc-strategy pc-strategy-gp_ensemble" title="Entry generated by the GP genetic-programming brain (paper)">GP Brain</span>
           )}
@@ -970,9 +1099,11 @@ function DetailPanel({ pair, botData, strategyParams, lastSkip }) {
           {isWatcher && (
             <p className="detail-story-why">
               <strong>Why the bot cares:</strong>{" "}
-              {strategy.strategy_type === "mean_reversion"
-                ? "It looks for prices that dipped too far, then bets on a bounce back toward normal."
-                : "It looks for short-term exhaustion, then bets on a rebound."}
+              {strategy.strategy_type === "mean_reversion" || openTrade?.entry_type === "pullback"
+                ? "It looks for prices that dipped toward support, then bets on a bounce."
+                : strategy.strategy_type === "donchian_breakout"
+                  ? "It looks for range breakouts, then rides continuation with layered exits."
+                  : "It looks for short-term exhaustion, then bets on a rebound."}
             </p>
           )}
         </div>
@@ -1142,14 +1273,16 @@ function DetailPanel({ pair, botData, strategyParams, lastSkip }) {
                 <span className="mono dp-gp">GP Brain · paper</span>
               </div>
             )}
-            {!isWatcher && (openTrade.size_mode || openTrade.evidence_state) && (
+            {!isWatcher && (sizeStamp.mode || openTrade.evidence_state) && (
               <>
                 <div className="dp-row" data-testid="detail-size-mode">
                   <span><GlossaryTerm id="size_mode">Size mode</GlossaryTerm></span>
-                  <span className={`mono ${openTrade.size_mode === "probe" ? "dp-probe" : "dp-full"}`}>
-                    {(openTrade.size_mode || "full").toUpperCase()}
+                  <span className={`mono ${sizeStamp.mode === "probe" ? "dp-probe" : "dp-full"}`}>
+                    {(sizeStamp.mode || "full").toUpperCase()}
+                    {sizeStamp.reason ? ` · ${String(sizeStamp.reason).replace(/_/g, " ")}` : ""}
+                    {openTrade.entry_decision ? ` · decision ${openTrade.entry_decision}` : ""}
                     {openTrade.size != null ? ` · ${Number(openTrade.size).toFixed(3)}` : ""}
-                    {openTrade.base_size != null && openTrade.size_mode === "probe"
+                    {openTrade.base_size != null && sizeStamp.mode === "probe"
                       ? ` (base ${Number(openTrade.base_size).toFixed(3)})`
                       : ""}
                   </span>
@@ -1909,7 +2042,8 @@ function ActivityFeed({ overview }) {
       if (!pair) continue;
       const pairLabel = isWatcher ? (ALL_PAIR_META[pair]?.plain || pair) : pair;
       const etype = t.entry_type || "entry";
-      const mode = t.size_mode === "probe" ? "probe" : (t.size_mode === "full" ? "full" : "");
+      const stamp = effectiveSizeMode(t);
+      const mode = stamp.mode === "probe" ? "probe" : (stamp.mode === "full" ? "full" : "");
       events.push({
         ts: t.entry_ts || t.ts,
         type: "entry",
@@ -3676,7 +3810,7 @@ export default function App() {
                   key={pair}
                   pair={pair}
                   data={pairData[pair]}
-                  strategy={strategyParams?.pairs?.[pair]?.strategy_type || "rsi_momentum"}
+                  strategy={strategyParams?.pairs?.[pair]?.strategy_type || "donchian_breakout"}
                   regime={liveRegimes[pair] || pairData[pair]?.openTrades?.[0]?.entry_regime || "—"}
                   livePrice={livePrices[pair]}
                   onSelect={handleSelectPair}

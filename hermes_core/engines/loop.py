@@ -40,6 +40,7 @@ from hermes_core.engines.chart_vision import (
     chart_size_mult,
     hard_block,
 )
+from hermes_core.engines.size_stamp import resolve_size_stamp
 from hermes_core.engines.crisis_learning import (
     check_novel_regime,
     recommend_from_prices,
@@ -294,6 +295,25 @@ def write_heartbeat(
 
 
 def _log_skip(bot: str, pair: str, cycle: int, reason: str) -> None:
+    """Append a skip row, coalescing identical reasons so the feed is not spam.
+
+    Same (pair, reason) within 60 cycles updates an in-memory latch only —
+    we rewrite at most every 60 cycles so dashboards still see a fresh ts.
+    """
+    latch = getattr(run_cycle, "_skip_latch", None)
+    if not isinstance(latch, dict):
+        latch = {}
+        run_cycle._skip_latch = latch
+    key = f"{bot}:{pair}"
+    prev = latch.get(key) if isinstance(latch.get(key), dict) else None
+    if (
+        prev
+        and str(prev.get("reason") or "") == str(reason)
+        and int(cycle) - int(prev.get("cycle") or 0) < 60
+    ):
+        return
+    latch[key] = {"reason": str(reason), "cycle": int(cycle)}
+
     SKIPS_PATH = _state_dir(bot) / "skips.jsonl"
     # `reason_skipped` is the dashboard's DB column key; keep `reason` too for
     # any consumer that read the legacy key.
@@ -2727,6 +2747,18 @@ def run_cycle(
                     _atr_pct = float(atr) / _entry_mid * 100.0
                 _cost = estimate(pair, atr_pct=_atr_pct)
                 _entry_fill = apply_entry_fill(_entry_mid, _side, _cost.entry_haircut_pct)
+            # Accurate size_mode for dashboard (sentient probe / chart soft / HIF probe).
+            _size_stamp = resolve_size_stamp(
+                size_mode=_probe.get("size_mode"),
+                entry_decision=(sig.meta or {}).get("entry_decision"),
+                chart_size_mult=_chart_size_mult,
+                size=size,
+                base_size=_probe.get("base_size") or size,
+                probe_fraction=_probe.get("probe_fraction"),
+            )
+            _size_mode = _size_stamp["size_mode"]
+            _size_reason = _size_stamp["size_reason"]
+            _probe_frac = _size_stamp["probe_fraction"]
             open_positions[pair] = {
                 "id": f"{bot}:{pair}:{int(time.time())}",
                 "entry_ts": _now_iso(),
@@ -2787,13 +2819,14 @@ def run_cycle(
                 # B9: firing GP indicator IDs so that on close ONLY these are
                 # credited (per-vote credit, not the whole ensemble blob).
                 "gp_indicators": sig.meta.get("gp_indicators", []),
-                # HIF Phase-1 dashboard fields
-                "size_mode": _probe["size_mode"],
+                # HIF Phase-1 + sentient/chart size mode (accurate for dashboard)
+                "size_mode": _size_mode,
+                "size_reason": _size_reason,
                 "size_regime": _size_regime,
                 "evidence_n": _probe.get("evidence_n") if _probe_enabled else _evidence_n,
                 "evidence_state": _probe["evidence_state"],
                 "base_size": _probe.get("base_size"),
-                "probe_fraction": _probe.get("probe_fraction"),
+                "probe_fraction": _probe_frac,
                 # Chart soft tilt (L14 avoid = hard veto earlier; this is size only)
                 "chart_size_mult": _chart_size_mult,
                 "chart_quality_mult": (sig.meta or {}).get("chart_quality_mult"),
