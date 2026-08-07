@@ -171,7 +171,12 @@ def test_pipeline_deploy_on_approve(reflect_env):
     )
     # Either deploy or backtest_reject is fine as long as we went past L1;
     # sine+tighter stop often still passes. Assert we did not skip L2 wrongly.
-    assert res["status"] in ("deployed", "backtest_reject", "approved_pending_deploy")
+    assert res["status"] in (
+        "deployed",
+        "backtest_reject",
+        "approved_pending_deploy",
+        "verifier_reject",
+    )
     assert "proposal" in res or res["status"] == "no_proposal"
     if res.get("deployed"):
         disk = yaml.safe_load(reflect_env["strat_path"].read_text(encoding="utf-8"))

@@ -956,16 +956,16 @@ def deploy_blocked(
 def get_deploy_stage(bot: str) -> str:
     """Current staged-deploy rung for ``bot`` (prove|canary|full).
 
-    Precedence: stage file → ``REFLECT_DEPLOY_STAGE`` env → ``full``.
-    Defaulting to ``full`` preserves legacy ``auto_deploy=True`` callers (tests /
-    explicit unlock). A soak that wants shadow-prove must set the env or call
-    ``set_deploy_stage(bot, "prove")``.
+    Precedence: stage file → ``REFLECT_DEPLOY_STAGE`` env → ``DEFAULT_DEPLOY_STAGE``.
     """
     data = _load(bot, _DEPLOY_STAGE)
     if isinstance(data.get("stage"), str) and data.get("stage"):
         stage = str(data["stage"]).lower()
     else:
-        stage = str(os.environ.get("REFLECT_DEPLOY_STAGE", "full") or "full").lower()
+        stage = str(
+            os.environ.get("REFLECT_DEPLOY_STAGE", DEFAULT_DEPLOY_STAGE)
+            or DEFAULT_DEPLOY_STAGE
+        ).lower()
     if stage not in VALID_DEPLOY_STAGES:
         stage = "prove"
     return stage

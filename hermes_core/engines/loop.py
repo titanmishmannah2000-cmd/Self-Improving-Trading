@@ -521,7 +521,7 @@ def _process_exit(
         "reason": ex.reason,
         "exit_reason": ex.reason,
         "entry_type": entry_type,
-        "strategy_version": pos.get("strategy_version") or entry_type,
+        "strategy_version": pos.get("strategy_version"),
         "entry_price": _entry_fill,
         "entry_mid": _entry_mid,
         "exit_price": _exit_fill,
@@ -541,12 +541,46 @@ def _process_exit(
         "cost_model": pos.get("cost_model"),
         # Phase 5.1: stamp entry regime so reflection can build same-regime batches.
         "entry_regime": pos.get("entry_regime") or pos.get("regime_label") or pos.get("regime"),
+        "size_mode": pos.get("size_mode"),
+        "size_reason": pos.get("size_reason"),
+        "probe_fraction": pos.get("probe_fraction"),
+        "entry_decision": pos.get("entry_decision"),
+        "entry_conviction": pos.get("entry_conviction"),
+        "entry_sleeve": pos.get("entry_sleeve"),
+        "chart_size_mult": pos.get("chart_size_mult"),
+        "chart_soft_reasons": list(pos.get("chart_soft_reasons") or []),
+        "base_size": pos.get("base_size"),
+        "decision_source": "stamped" if pos.get("entry_decision") is not None else "unknown",
+        "stop_loss_pct": pos.get("stop_loss_pct"),
+        "profit_target_pct": pos.get("profit_target_pct"),
         **{
             k: _exc[k]
             for k in ("mfe_pct", "mae_pct", "giveback_pct", "giveback_frac", "mfe_capture")
             if k in _exc
         },
     }
+    _mfe_path = list(pos.get("mfe_path") or [])
+    if len(_mfe_path) >= 3:
+        trade_rec["mfe_path"] = _mfe_path
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.trade_truth import append_entry_taken
+
+        append_entry_taken(
+            bot,
+            {
+                "id": trade_rec["id"],
+                "pair": pair,
+                "event": "close",
+                "entry_type": entry_type,
+                "entry_decision": pos.get("entry_decision"),
+                "size_mode": pos.get("size_mode"),
+                "size": pos.get("size"),
+                "base_size": pos.get("base_size"),
+                "entry_mid": _entry_mid,
+                "exit_reason": ex.reason,
+                "pnl_pct": trade_rec.get("pnl_pct"),
+            },
+        )
     with contextlib.suppress(Exception):
         from hermes_core.engines.outcome_class import stamp_exit_class
 
@@ -556,18 +590,26 @@ def _process_exit(
             trade_rec["exit_votes"] = pos.get("exit_votes")
     with contextlib.suppress(Exception):
         from hermes_core.engines.playbooks import update_playbook_on_close
+        from hermes_core.engines.sentient_entry import _playbook_stats
 
+        _d1 = str(pos.get("live_d1") or pos.get("d1") or pos.get("entry_regime") or "")
         update_playbook_on_close(
             bot=bot,
             pair=pair,
             entry_type=str(entry_type),
-            d1=str(pos.get("live_d1") or pos.get("d1") or pos.get("entry_regime") or ""),
+            d1=_d1,
             pnl=float(pnl),
             mfe=_exc.get("mfe_pct"),
             capture=_exc.get("mfe_capture"),
             hold_cycles=pos.get("held_cycles"),
         )
-    with contextlib.suppress(Exception):
+        _pb = _playbook_stats(bot, pair, str(entry_type), _d1)
+        _pb_wr = float(_pb.get("wr") or 0.5) if _pb else 0.5
+        _world = 1.0
+        with contextlib.suppress(Exception):
+            w = pos.get("world") or {}
+            if isinstance(w, dict) and w.get("mult") is not None:
+                _world = float(w.get("mult"))
         from hermes_core.engines.sentient_entry import credit_entry_on_close
 
         credit_entry_on_close(
@@ -575,7 +617,8 @@ def _process_exit(
             entry_type=str(entry_type),
             conviction=pos.get("entry_conviction"),
             pnl=float(pnl),
-            world_mult=1.0,
+            playbook_wr=_pb_wr,
+            world_mult=_world,
         )
     with contextlib.suppress(Exception):
         from hermes_core.engines.sentient_entry import release_alt_quota_on_green
@@ -610,19 +653,67 @@ def _process_exit(
             )
             feats = []
             tpv = max(float(pos.get("profit_target_pct") or 1.5), 1e-6)
-            for p in path_pts:
+            for i, p in enumerate(path_pts):
                 peak = float(p.get("peak") or 0.0)
                 u = float(p.get("unreal") or 0.0)
+                bars_since = max(0, len(path_pts) - 1 - i)
+                # Prefer stamped counter when present on the point / position.
+                if p.get("bars_since_peak") is not None:
+                    try:
+                        bars_since = int(p.get("bars_since_peak"))
+                    except (TypeError, ValueError):
+                        pass
+                elif pos.get("exit_bars_since_peak") is not None and i == len(path_pts) - 1:
+                    try:
+                        bars_since = int(pos.get("exit_bars_since_peak"))
+                    except (TypeError, ValueError):
+                        pass
+                fresh = 1.0 / (1.0 + float(bars_since))
                 feats.append(
                     {
                         "progress": max(0.0, min(1.0, peak / tpv)),
-                        "fresh": 1.0,
+                        "fresh": fresh,
                         "capture": (u / peak) if peak > 1e-9 else 0.0,
                     }
                 )
             pol_path = bot_state_dir(bot) / "hold_policy.json"
             pol = hp.fit_from_labels(hp.load_hold_policy(pol_path), labels, feats)
             hp.save_hold_policy(pol_path, pol)
+            # CF observation → hypotheses when best policy beats realized net.
+            with contextlib.suppress(Exception):
+                from hermes_core.engines.counterfactual_exits import counterfactual_evs
+                from hermes_core.engines.reflect import _log_hypothesis
+
+                cost = float(pos.get("fees_pct_rt") or pos.get("exit_haircut_pct") or 0.22)
+                ev = counterfactual_evs(
+                    path_pts,
+                    tp=float(pos.get("profit_target_pct") or 1.5),
+                    cost_pct=cost,
+                    min_bank_net=float(pos.get("min_bank_net_pct") or 0.10),
+                )
+                best = float(ev.get("best") or 0.0)
+                if best > float(pnl) + max(0.05, cost * 0.25):
+                    pol_name = str(ev.get("best_policy") or "")
+                    axis = "min_bank_net_pct"
+                    if "giveback" in pol_name:
+                        axis = "mfe_giveback_frac"
+                    elif "tp" in pol_name:
+                        axis = "profit_target_pct"
+                    elif "trail" in pol_name:
+                        axis = "trailing_stop_pct"
+                    _log_hypothesis(
+                        {
+                            "pair": pair,
+                            "bot": bot,
+                            "status": "cf_observation",
+                            "variable": axis,
+                            "gap_pct": round(best - float(pnl), 4),
+                            "best_policy": pol_name,
+                            "realized_pnl": round(float(pnl), 4),
+                            "cf_best": round(best, 4),
+                            "ts": time.time(),
+                        }
+                    )
     with contextlib.suppress(Exception):
         if pos.get("use_exit_experts") and pos.get("exit_votes"):
             from hermes_core.engines.exit_experts import credit_experts, load_weights, save_weights
@@ -1066,7 +1157,7 @@ def _maybe_reflect_after_close(
 
     def _work() -> None:
         if not _REFLECT_SEM.acquire(blocking=False):
-            log.info("[reflect] %s/%s: skipped (thread cap)", bot, pair)
+            log.info("[reflect] %s/%s: skipped (thread cap) — no latch, will retry", bot, pair)
             return
         try:
             result = maybe_reflect_pair(
@@ -2907,6 +2998,26 @@ def run_cycle(
                 "crisis_recommended_stop_pct": _crisis_rec.get("recommended_stop_pct"),
                 "crisis_recommended_target_pct": _crisis_rec.get("recommended_target_pct"),
             }
+            with contextlib.suppress(Exception):
+                from hermes_core.engines.trade_truth import append_entry_taken
+
+                _op = open_positions[pair]
+                append_entry_taken(
+                    bot,
+                    {
+                        "id": _op.get("id"),
+                        "pair": pair,
+                        "event": "open",
+                        "reason": "taken_open",
+                        "entry_type": _op.get("entry_type"),
+                        "entry_decision": _op.get("entry_decision"),
+                        "size_mode": _op.get("size_mode"),
+                        "size": _op.get("size"),
+                        "base_size": _op.get("base_size"),
+                        "entry_mid": _op.get("entry_mid"),
+                        "mark": _op.get("entry_mid"),
+                    },
+                )
             # [CORTEX] record the entry (per-type memory; exile persists across cycles)
             with contextlib.suppress(Exception):
                 cortex.record_entry(pair, _etype)

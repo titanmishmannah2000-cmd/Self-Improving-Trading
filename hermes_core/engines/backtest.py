@@ -326,6 +326,38 @@ def _entry_signal(
             threshold_px = float(upper) * (1.0 + max(0.0, buffer_pct) / 100.0)
             if close > threshold_px:
                 sig[i] = 1.0
+        elif strat_type == "pullback":
+            # Surrogate: long near rolling support / Donchian mid (no chart LLM).
+            from hermes_core.indicators import compute_donchian
+
+            entry_cfg = strategy.get("entry") if isinstance(strategy.get("entry"), dict) else {}
+            period = int(entry_cfg.get("donchian_period") or strategy.get("donchian_period") or 20)
+            period = max(5, min(period, 100))
+            try:
+                max_dist = float(strategy.get("pullback_max_dist_pct") or 2.0)
+            except (TypeError, ValueError):
+                max_dist = 2.0
+            window = prices[: i + 1]
+            if len(window) < period + 2:
+                continue
+            channel = compute_donchian(window, period=period)
+            mid = channel.get("mid") or channel.get("middle")
+            lower = channel.get("lower")
+            close = float(window[-1])
+            support = float(lower) if lower is not None else None
+            anchor = support if support is not None else (float(mid) if mid is not None else None)
+            if anchor is None or anchor <= 0:
+                continue
+            dist_pct = abs(close - anchor) / anchor * 100.0
+            # Reject resistance chase: too close to upper vs support.
+            upper = channel.get("upper")
+            if upper is not None and support is not None:
+                up = float(upper)
+                band = up - support
+                if band > 0 and (up - close) / band < 0.25:
+                    continue
+            if dist_pct <= max_dist and close >= anchor * 0.995:
+                sig[i] = 1.0
     return sig
 
 
@@ -356,10 +388,11 @@ def _simulate(
 
     Default path is next-bar clip to stop/target (legacy reflection SL/TP proofs).
 
-    When ``max_hold`` is set (used for ``trailing_stop_pct`` proofs), holds the
+    When ``max_hold`` is set (used for ``trailing_stop_pct`` / layered proofs), holds the
     trade up to ``max_hold`` bars and applies hard SL/TP plus optional %-trail
     from peak MFE — matching live ``trailing_stop_pct`` semantics so trail
-    proposals are not identical no-ops.
+    proposals are not identical no-ops. Also applies fee-aware min-bank,
+    MFE giveback, and Donchian failed-breakout exits when strategy knobs are set.
 
     ``cost_pct`` subtracts a round-trip cost (percent) from each closed trade
     (Phase 1 stress / profitability scorecard alignment).
@@ -368,6 +401,22 @@ def _simulate(
 
     if len(prices) < 10:
         return {"pnl": 0.0, "wr": 0.0, "entries": 0, "max_dd": 0.0}
+    strat = strategy if isinstance(strategy, dict) else {}
+    stype = str(strat_type or strat.get("strategy_type") or "").lower()
+    # Pullback sleeve overlays (frozen from reflect for live; used in secondary BT).
+    if stype in {"pullback", "pullback_near_sr"}:
+        try:
+            ps = float(strat.get("pullback_stop_pct") or 0.0)
+        except (TypeError, ValueError):
+            ps = 0.0
+        try:
+            pt = float(strat.get("pullback_tp_pct") or 0.0)
+        except (TypeError, ValueError):
+            pt = 0.0
+        if ps > 0:
+            stop_pct = ps
+        if pt > 0:
+            target_pct = pt
     raw = _entry_signal(
         prices,
         strat_type,
@@ -391,6 +440,27 @@ def _simulate(
         cost = max(0.0, float(cost_pct or 0.0))
     except (TypeError, ValueError):
         cost = 0.0
+    try:
+        min_bank = float(strat.get("min_bank_net_pct") or 0.10)
+    except (TypeError, ValueError):
+        min_bank = 0.10
+    try:
+        giveback_frac = float(strat.get("mfe_giveback_frac") or 0.0)
+    except (TypeError, ValueError):
+        giveback_frac = 0.0
+    try:
+        giveback_min = float(strat.get("mfe_giveback_min_pct") or 0.0)
+    except (TypeError, ValueError):
+        giveback_min = 0.0
+    try:
+        fb_mae = float(strat.get("failed_breakout_min_mae_pct") or 0.0)
+    except (TypeError, ValueError):
+        fb_mae = 0.0
+    try:
+        fb_bars = int(strat.get("failed_breakout_bars") or 0)
+    except (TypeError, ValueError):
+        fb_bars = 0
+    donchian = stype in {"donchian_breakout", "donchian", "breakout"}
 
     for i in range(1, n - 1):
         if raw[i] == 0.0:
@@ -414,30 +484,34 @@ def _simulate(
         if entry <= 0:
             continue
         peak_mfe = 0.0
+        trough_mae = 0.0
         pnl = 0.0
         hit_stop = False
         end = min(n - 1, i + hold)
         exited = False
         bars_since_peak = 0
-        peak_hist: list[float] = []
         # Approximate regime patience from local window
         try:
-            from hermes_core.engines.backtest import _classify_regime as _cr
-
-            local_reg = _cr(list(p[max(0, i - 30) : i + 1]))
+            local_reg = _classify_regime(list(p[max(0, i - 30) : i + 1]))
         except Exception:  # noqa: BLE001
             local_reg = "unknown"
         patience = 1.5 if local_reg == "trend" else (0.7 if local_reg == "range" else 1.0)
-        stall_bars = max(1, int(round(1 * patience)))
+        try:
+            stall_cfg = int(strat.get("mfe_stall_bars") or 1)
+        except (TypeError, ValueError):
+            stall_cfg = 1
+        stall_bars = max(1, int(round(stall_cfg * patience)))
         cost_one = float(cost) if cost else 0.0
         for j in range(i + 1, end + 1):
             mfe = (float(p[j]) - entry) / entry * 100.0
+            if mfe < trough_mae:
+                trough_mae = mfe
             if mfe > peak_mfe + 0.05:
                 peak_mfe = mfe
                 bars_since_peak = 0
             else:
                 bars_since_peak += 1
-            peak_hist.append(peak_mfe)
+            held_bars = j - i
             if mfe <= -stop_pct:
                 pnl = -float(stop_pct)
                 hit_stop = True
@@ -453,10 +527,36 @@ def _simulate(
                     pnl = float(floor)
                     exited = True
                     break
-            # Layered bank: stalled + net green after early fraction of hold
-            held_bars = j - i
+            # MFE giveback (fee-aware peak capture)
+            if (
+                giveback_frac > 0
+                and peak_mfe >= max(giveback_min, min_bank + cost_one)
+                and peak_mfe > 1e-9
+            ):
+                capture = mfe / peak_mfe if peak_mfe > 1e-9 else 1.0
+                if capture <= (1.0 - giveback_frac):
+                    pnl = float(mfe)
+                    exited = True
+                    break
+            # Failed breakout: Donchian only — deep MAE early then still underwater
+            if (
+                donchian
+                and fb_mae > 0
+                and fb_bars > 0
+                and held_bars <= max(fb_bars, 3)
+                and trough_mae <= -fb_mae
+                and mfe < 0
+            ):
+                pnl = float(mfe)
+                exited = True
+                break
+            # Soft bank: stalled + net green after early fraction of hold
             net = mfe - cost_one
-            if held_bars >= max(2, hold // 4) and net >= 0.10 and bars_since_peak >= stall_bars:
+            if (
+                held_bars >= max(2, hold // 4)
+                and net >= min_bank
+                and bars_since_peak >= stall_bars
+            ):
                 pnl = float(mfe)
                 exited = True
                 break
@@ -840,12 +940,24 @@ def _backtest_with_history_impl(
         old_trail = base_trail
         new_trail = base_trail
 
-    # Trail proofs need a multi-bar hold path; otherwise old/new are identical.
+    # Trail / layered proofs need a multi-bar hold path (live BTC uses hundreds of cycles).
     try:
         te = int(strategy.get("time_exit_cycles") or 24)
     except (TypeError, ValueError):
         te = 24
-    trail_hold = max(8, min(te, 48)) if param == "trailing_stop_pct" else None
+    layered_params = {
+        "trailing_stop_pct",
+        "min_bank_net_pct",
+        "mfe_giveback_frac",
+        "mfe_giveback_min_pct",
+        "failed_breakout_min_mae_pct",
+        "failed_breakout_bars",
+        "mfe_stall_bars",
+    }
+    if param in layered_params:
+        trail_hold = max(8, min(te, 480))
+    else:
+        trail_hold = None
 
     if prices is None:
         prices = fetch_prices(pair)
@@ -871,13 +983,19 @@ def _backtest_with_history_impl(
         return verdict
 
     sim_kw = dict(
-        strategy=strategy,
         pair=pair,
         candle_ts=candle_ts,
         ensemble_consensus=ensemble_consensus,
         max_hold=trail_hold,
         cost_pct=float(cost_pct or 0.0),
     )
+    old_strat = dict(strategy)
+    new_strat = dict(strategy)
+    if param in layered_params:
+        # Layered knobs must differ in the strategy dict passed to _simulate.
+        with contextlib.suppress(Exception):
+            old_strat[param] = old_val
+            new_strat[param] = new_val
 
     phases: dict[str, object] = {}
     reasons: list[str] = []
@@ -912,7 +1030,6 @@ def _backtest_with_history_impl(
     )
     oos_corr = phase0_corr(oos_signal, oos_prices)
     oos_kw = dict(
-        strategy=strategy,
         pair=pair,
         candle_ts=oos_ts,
         ensemble_consensus=oos_ens,
@@ -926,6 +1043,7 @@ def _backtest_with_history_impl(
         old_stop,
         old_target,
         trail_pct=old_trail,
+        strategy=old_strat,
         **oos_kw,
     )
     oos_new = _simulate(
@@ -935,6 +1053,7 @@ def _backtest_with_history_impl(
         new_stop,
         new_target,
         trail_pct=new_trail,
+        strategy=new_strat,
         **oos_kw,
     )
     oos_delta = oos_new["pnl"] - oos_old["pnl"]
@@ -956,6 +1075,7 @@ def _backtest_with_history_impl(
         old_stop,
         old_target,
         trail_pct=old_trail,
+        strategy=old_strat,
         **sim_kw,
     )
     new_res = _simulate(
@@ -965,6 +1085,7 @@ def _backtest_with_history_impl(
         new_stop,
         new_target,
         trail_pct=new_trail,
+        strategy=new_strat,
         **sim_kw,
     )
     delta = new_res["pnl"] - old_res["pnl"]
@@ -981,6 +1102,7 @@ def _backtest_with_history_impl(
         new_stop,
         new_target,
         trail_pct=new_trail,
+        strategy=new_strat,
         **sim_kw,
     )
     phases["phase1_5_crisis"] = crisis

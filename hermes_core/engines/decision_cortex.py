@@ -117,7 +117,7 @@ REINSTATE_WR = 0.40  # WR at/above this reinstates an exiled indicator
 EXILE_DECAY_ENTRIES = 100  # reconsider exiled indicators every 100 entries
 # Wall-clock escape so an early-soak exile streak cannot empty GP forever.
 EXILE_WALL_CLOCK_S = int(os.getenv("EXILE_DECAY_S", str(7 * 86400)))
-VALID_ENTRY_TYPES = ("mean_reversion", "gp_ensemble")
+VALID_ENTRY_TYPES = ("mean_reversion", "gp_ensemble", "donchian_breakout", "pullback")
 # Cap closed+open rows kept on disk (30-day soak hygiene). Opens always kept.
 MEMORY_MAX_ENTRIES = 5000
 

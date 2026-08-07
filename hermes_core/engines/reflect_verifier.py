@@ -25,6 +25,15 @@ PROFITABILITY_TUNABLES: frozenset[str] = frozenset(
         "entry.session_filter",
         "session_filter",
         "trailing_stop_pct",  # still one-variable; allowed for giveback fixes
+        "position_size_r",
+        "min_bank_net_pct",
+        "mfe_giveback_frac",
+        "mfe_giveback_min_pct",
+        "mfe_stall_bars",
+        "soft_partial_tp_frac",
+        "failed_breakout_min_mae_pct",
+        "failed_breakout_bars",
+        "early_reeval_cycles",
     }
 )
 
@@ -41,6 +50,7 @@ def verify_reflection_candidate(
     max_dd: float = DEFAULT_MAX_DD,
     min_trades: int = DEFAULT_MIN_TRADES,
     bot: str = "forex",
+    book_n: int | None = None,
 ) -> dict[str, Any]:
     """Return ``{ok, reason, details}``. ``ok=False`` → do not deploy."""
     details: dict[str, Any] = {}
@@ -57,6 +67,15 @@ def verify_reflection_candidate(
             "threshold",
             "session_filter",
             "trailing_stop_pct",
+            "position_size_r",
+            "min_bank_net_pct",
+            "mfe_giveback_frac",
+            "mfe_giveback_min_pct",
+            "mfe_stall_bars",
+            "soft_partial_tp_frac",
+            "failed_breakout_min_mae_pct",
+            "failed_breakout_bars",
+            "early_reeval_cycles",
         }:
             return {
                 "ok": False,
@@ -66,7 +85,11 @@ def verify_reflection_candidate(
 
     n = len(trades or [])
     details["n_trades"] = n
-    if n < int(min_trades):
+    details["book_n"] = book_n
+    enough = n >= int(min_trades) or (
+        book_n is not None and int(book_n) >= int(min_trades)
+    )
+    if not enough:
         return {
             "ok": False,
             "reason": f"insufficient_trades:{n}<{min_trades}",

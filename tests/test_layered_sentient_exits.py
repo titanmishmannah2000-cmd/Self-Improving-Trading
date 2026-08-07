@@ -134,7 +134,8 @@ def test_btc_v05_strategy_knobs():
     from hermes_core.config import load_strategy_for_pair
 
     s = load_strategy_for_pair("BTC/USDT", bot="btc")
-    assert s.get("version") == "05"
+    # Seed version may bump (v05 layered knobs → v08+); require layered fields only.
+    assert str(s.get("version") or "") >= "05"
     assert int(s.get("early_reeval_cycles") or 0) == 120
     assert float(s.get("soft_partial_tp_frac") or 0) == 0.4
     assert float(s.get("entry_conviction_take") or 0) >= 0.5

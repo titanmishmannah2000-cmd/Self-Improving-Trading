@@ -126,6 +126,38 @@ def same_regime_batch(trades: list[dict], every: int) -> tuple[list[dict], str |
     return batch, dominant
 
 
+def _trade_sleeve(t: dict) -> str | None:
+    for key in ("entry_type", "entry_sleeve"):
+        v = t.get(key)
+        if v:
+            return str(v).lower()
+    return None
+
+
+def same_sleeve_batch(trades: list[dict], every: int) -> tuple[list[dict], str | None]:
+    """Dominant entry_type batch (sentient sleeves), else last ``every`` closes."""
+    if not trades or every < 1:
+        return [], None
+    window = trades[-max(every * 2, every) :]
+    labels = [_trade_sleeve(t) for t in window]
+    present = [r for r in labels if r]
+    if not present:
+        return trades[-every:], None
+    counts: dict[str, int] = {}
+    for r in present:
+        counts[r] = counts.get(r, 0) + 1
+    best_n = max(counts.values())
+    candidates = {k for k, n in counts.items() if n == best_n}
+    dominant = None
+    for t in reversed(window):
+        r = _trade_sleeve(t)
+        if r in candidates:
+            dominant = r
+            break
+    batch = [t for t in window if _trade_sleeve(t) == dominant][-every:]
+    return batch, dominant
+
+
 def _exit_reason(t: dict) -> str:
     return str(t.get("exit_reason") or t.get("reason") or "").lower()
 
@@ -148,6 +180,7 @@ def trade_pathology(trades: list[dict]) -> dict:
         if r in ("profit_bank", "soft_bank")
         or (isinstance(t, dict) and (t.get("soft_bank") or t.get("exit_class") == "soft_capture"))
     )
+    fb_n = sum(1 for r in reasons if "failed_breakout" in r)
     # Soft banks must NOT count as timeouts (would lower TP).
     time_n = sum(
         1
@@ -160,6 +193,57 @@ def trade_pathology(trades: list[dict]) -> dict:
     caps = [float(t["mfe_capture"]) for t in trades if t.get("mfe_capture") is not None]
     gbs = [float(t["giveback_frac"]) for t in trades if t.get("giveback_frac") is not None]
     winners = [t for t in trades if float(t.get("pnl_pct", 0.0)) > 0]
+    maes = []
+    for t in trades:
+        v = t.get("mae_pct")
+        if v is None:
+            v = t.get("trough_mae_pct")
+        if v is not None:
+            try:
+                maes.append(abs(float(v)))
+            except (TypeError, ValueError):
+                pass
+    known_probe = 0
+    known_take = 0
+    unknown_dec = 0
+    for t in trades:
+        dec = str(t.get("entry_decision") or "").lower()
+        mode = str(t.get("size_mode") or "").lower()
+        src = str(t.get("decision_source") or "")
+        if dec == "probe" or (mode == "probe" and src != "unknown" and dec):
+            known_probe += 1
+        elif dec == "take":
+            known_take += 1
+        elif src == "unknown" or (not dec and mode == "probe"):
+            # size-inferred probe without decision still unknown for decision frac
+            if not dec:
+                unknown_dec += 1
+            elif mode == "probe":
+                known_probe += 1
+        elif not dec:
+            unknown_dec += 1
+    known_n = known_probe + known_take
+    soft_nets = [
+        float(t.get("pnl_pct") or 0.0)
+        for t, r in zip(trades, reasons)
+        if r in ("profit_bank", "soft_bank")
+        or (isinstance(t, dict) and (t.get("soft_bank") or t.get("exit_class") == "soft_capture"))
+    ]
+    fees = [float(t.get("fees_pct") or 0.0) for t in trades if t.get("fees_pct") is not None]
+    fee_cover = 0
+    for t in trades:
+        fee = float(t.get("fees_pct") or 0.0)
+        pnl = float(t.get("pnl_pct") or 0.0)
+        if fee <= 0 or pnl >= fee:
+            fee_cover += 1
+    sleeves = [_trade_sleeve(t) for t in trades]
+    sleeve_counts: dict[str, int] = {}
+    for s in sleeves:
+        if s:
+            sleeve_counts[s] = sleeve_counts.get(s, 0) + 1
+    dominant_sleeve = None
+    if sleeve_counts:
+        dominant_sleeve = max(sleeve_counts, key=sleeve_counts.get)
     # MFE left on the table by time-exits (profit that existed but wasn't taken).
     time_mfe = [
         float(t.get("mfe_pct", 0.0))
@@ -172,10 +256,19 @@ def trade_pathology(trades: list[dict]) -> dict:
         "tp_frac": tp_n / n if n else 0.0,
         "timeout_frac": time_n / n if n else 0.0,
         "soft_bank_frac": soft_n / n if n else 0.0,
+        "failed_breakout_frac": fb_n / n if n else 0.0,
         "winners": len(winners),
         "avg_capture": (sum(caps) / len(caps)) if caps else None,
         "avg_giveback": (sum(gbs) / len(gbs)) if gbs else None,
         "avg_time_mfe": (sum(time_mfe) / len(time_mfe)) if time_mfe else None,
+        "avg_mae": (sum(maes) / len(maes)) if maes else None,
+        "probe_frac": (known_probe / known_n) if known_n else None,
+        "unknown_decision_frac": unknown_dec / n if n else 0.0,
+        "avg_soft_bank_net": (sum(soft_nets) / len(soft_nets)) if soft_nets else None,
+        "fee_cover_rate": fee_cover / n if n else None,
+        "avg_fee": (sum(fees) / len(fees)) if fees else None,
+        "dominant_sleeve": dominant_sleeve,
+        "sleeve_counts": sleeve_counts,
     }
 
 
@@ -328,7 +421,10 @@ def _axis_candidates(
 
     # P1 — drawdown breach → tighten stop (classic; always emitted even if the
     # floor clamps it, matching the legacy floor-enforced contract).
-    if agg["drawdown"] > max_dd:
+    # Pullback-dominant: YAML stop_loss_pct is a no-op (sleeve overlays).
+    sleeve = str(path.get("dominant_sleeve") or "").lower()
+    donchian_batch = sleeve in {"", "donchian_breakout", "donchian", "breakout"}
+    if agg["drawdown"] > max_dd and donchian_batch:
         effect = min(1.0, (agg["drawdown"] - max_dd) / max(1e-9, max_dd))
         step = _step("stop_loss_pct", STOP_TIGHTEN, effect)
         # STOP_FLOOR is a hard risk guard — never adaptive.
@@ -339,11 +435,33 @@ def _axis_candidates(
              effect)
         )
 
-    # P2 — winners give back too much of peak MFE → capture with a trailing stop.
+    # P1b — failed-breakout fee grind on Donchian → raise MAE floor
+    fb_frac = float(path.get("failed_breakout_frac") or 0.0)
+    if donchian_batch and fb_frac >= 0.25:
+        cur_mae = float(strategy.get("failed_breakout_min_mae_pct") or 0.40)
+        effect = min(1.0, fb_frac)
+        new_mae = round(min(0.60, cur_mae + 0.05), 4)
+        if new_mae > cur_mae + 1e-9:
+            out.append(
+                (1, "failed_breakout_min_mae_pct", cur_mae, new_mae,
+                 f"failed_breakout {fb_frac:.0%} of batch; raise MAE floor to cut fee knife-cuts",
+                 effect)
+            )
+
+    # P2 — winners give back too much of peak MFE → trailing / giveback
     cap = path.get("avg_capture")
     if cap is not None and path["winners"] >= 3 and cap < capture_lo:
         cur_trail = float(strategy.get("trailing_stop_pct", 0.0) or 0.0)
         effect = min(1.0, (capture_lo - cap) / max(1e-9, capture_lo))
+        cur_gb = float(strategy.get("mfe_giveback_frac") or 0.4)
+        if cur_gb < 0.85:
+            new_gb = round(min(0.85, cur_gb + 0.05), 4)
+            out.append(
+                (2, "mfe_giveback_frac", cur_gb, new_gb,
+                 f"winners capture only {cap:.0%} of peak MFE (<{capture_lo:.0%}); "
+                 f"tighten giveback frac to lock gains",
+                 effect)
+            )
         step = _step("trailing_stop_pct", TRAIL_STEP, effect)
         new_trail = round(min(TRAIL_CAP, (cur_trail or 0.0) + step), 4)
         out.append(
@@ -353,8 +471,25 @@ def _axis_candidates(
              effect)
         )
 
+    # P2b — soft banks below fee floor → raise min_bank_net_pct
+    soft_net = path.get("avg_soft_bank_net")
+    min_bank = float(strategy.get("min_bank_net_pct") or 0.10)
+    avg_fee = float(path.get("avg_fee") or 0.22)
+    if (
+        soft_net is not None
+        and float(path.get("soft_bank_frac") or 0) >= 0.2
+        and soft_net < max(min_bank, avg_fee * 0.5)
+    ):
+        new_bank = round(min(0.35, max(min_bank + 0.02, avg_fee * 0.5)), 4)
+        if new_bank > min_bank + 1e-9:
+            out.append(
+                (2, "min_bank_net_pct", min_bank, new_bank,
+                 f"soft banks avg net {soft_net:.3f}% below fee floor; raise min_bank_net_pct",
+                 0.6)
+            )
+
     # P3 — most exits are timeouts leaving profit on the table → take profit sooner.
-    if path["timeout_frac"] > timeout_hi and (path.get("avg_time_mfe") or 0.0) > 0:
+    if path["timeout_frac"] > timeout_hi and (path.get("avg_time_mfe") or 0.0) > 0 and donchian_batch:
         cur_tgt = float(strategy.get("profit_target_pct", 3.0))
         effect = min(1.0, path["timeout_frac"])
         step = _step("profit_target_pct", TARGET_STEP, effect)
@@ -367,7 +502,7 @@ def _axis_candidates(
         )
 
     # P4 — low win-rate → widen stop so noise doesn't stop us out (classic).
-    if agg["win_rate"] < low_wr:
+    if agg["win_rate"] < low_wr and donchian_batch:
         effect = min(1.0, (low_wr - agg["win_rate"]) / max(1e-9, low_wr))
         step = _step("stop_loss_pct", STOP_WIDEN, effect)
         new_stop = min(STOP_CAP, round(cur_stop + step, 4))
@@ -393,7 +528,7 @@ def _axis_candidates(
         )
 
     # P6 — legacy sustained-loss widen-stop (low WR path already covered by P4).
-    if agg["ret"] < -0.5 and agg["count"] >= 10 and agg["win_rate"] < low_wr:
+    if agg["ret"] < -0.5 and agg["count"] >= 10 and agg["win_rate"] < low_wr and donchian_batch:
         effect = min(1.0, abs(agg["ret"]) / 5.0)
         step = _step("stop_loss_pct", STOP_WIDEN, effect)
         new_stop = min(STOP_CAP, round(cur_stop + step, 4))
@@ -403,8 +538,13 @@ def _axis_candidates(
              effect)
         )
 
-    if blocked:
-        out = [c for c in out if c[1] not in blocked]
+    frozen: set[str] = set(blocked or ())
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.sentient_entry import frozen_reflect_keys
+
+        frozen |= set(frozen_reflect_keys())
+    if frozen:
+        out = [c for c in out if c[1] not in frozen]
 
     # Soft direction / near-dupe quarantine (#6).
     if bot and pair is not None:
@@ -460,7 +600,7 @@ def layer1_rule_based(
         return None  # [guard] need a minimum sample before anything changes
 
     path = trade_pathology(trades)
-    entry_type = str(strategy.get("strategy_type") or "mean_reversion")
+    entry_type = str(path.get("dominant_sleeve") or strategy.get("strategy_type") or "mean_reversion")
     stability = _cortex_stability(cortex, pair, entry_type)
 
     bars = adaptive_bars(bot, pair, trades) if bot else None
@@ -1277,6 +1417,10 @@ def apply_strategy_change(
     import yaml
 
     from hermes_core.config import validate_strategy_params
+    from hermes_core.engines.sentient_entry import frozen_reflect_keys
+
+    if str(variable) in frozen_reflect_keys():
+        raise ValueError(f"frozen_reflect_key:{variable}")
 
     strat = copy.deepcopy(strategy if strategy is not None else load_strategy_for_pair(pair, bot))
     _set_strategy_param(strat, variable, new_val)
@@ -1294,6 +1438,30 @@ def apply_strategy_change(
     return strat
 
 
+def _pathology_l2_brief(path: dict | None) -> str:
+    """Compact sleeve/fee pathology line for the L2 critic."""
+    if not isinstance(path, dict) or not path:
+        return ""
+    sleeve = path.get("dominant_sleeve") or "?"
+    fb = path.get("failed_breakout_frac")
+    soft = path.get("avg_soft_bank_net")
+    fee = path.get("fee_cover_rate")
+    probe = path.get("probe_frac")
+    bits = [f"sleeve={sleeve}"]
+    if fb is not None:
+        bits.append(f"FB={float(fb):.0%}")
+    if soft is not None:
+        bits.append(f"soft_bank={float(soft):.3f}%")
+    if fee is not None:
+        bits.append(f"fee_cover={float(fee):.0%}")
+    if probe is not None:
+        bits.append(f"known_probe={float(probe):.0%}")
+    unk = path.get("unknown_decision_frac")
+    if unk:
+        bits.append(f"unknown_dec={float(unk):.0%}")
+    return "PATHOLOGY: " + " ".join(bits)
+
+
 def _build_l2_context(
     pair: str,
     bot: str,
@@ -1301,6 +1469,7 @@ def _build_l2_context(
     chart_context: str = "",
     skipped_json: str = "",
     variable: str = "",
+    pathology: dict | None = None,
 ) -> str:
     """Assemble a variable-aware critic brief for L2.
 
@@ -1313,6 +1482,10 @@ def _build_l2_context(
     if chart_context:
         cap = 120 if kind == "trail" else 200
         parts.append(f"CHART: {chart_context[:cap]}")
+
+    path_brief = _pathology_l2_brief(pathology)
+    if path_brief:
+        parts.append(path_brief)
 
     with contextlib.suppress(Exception):
         from hermes_core.engines.decision_cortex import Cortex
@@ -1361,6 +1534,7 @@ def run_reflection_pipeline(
     llm_callers: dict | None = None,
     auto_deploy: bool = True,
     skipped_json: str = "",
+    book_n: int | None = None,
 ) -> dict:
     """L1 → (optional L2) → backtest → deploy. Returns a status dict.
 
@@ -1407,6 +1581,7 @@ def run_reflection_pipeline(
             chart_context=chart_context,
             skipped_json=skipped_json,
             variable=str(prop.get("variable") or ""),
+            pathology=trade_pathology(trades),
         )
         cons = call_llm_consensus(
             prop,
@@ -1449,9 +1624,21 @@ def run_reflection_pipeline(
                 "l2": cons.to_dict(),
             }
 
-    # Phase 1: reflection deploy proof is STRICT by default — a candidate must
-    # strictly beat the last version on real data (escape hatch: REFLECT_STRICT=0).
+    # Prove: path-replay (primary for layered/trail) → backtest → live CF fallback.
+    # Classic SL/TP: backtest is authoritative (path-replay still available as
+    # secondary fill when BT cannot run).
     strict = __import__("os").getenv("REFLECT_STRICT", "1") != "0"
+    var = str(prop.get("variable") or "")
+    verdict: dict = {"approved": False, "reason": "no_prove"}
+    from hermes_core.engines.path_replay import is_classic_var, is_layered_var, replay_prove
+
+    layered_prefer = is_layered_var(var) or var == "trailing_stop_pct"
+    if layered_prefer:
+        verdict = replay_prove(trades, strategy=strategy, proposal=prop, min_paths=MIN_SAMPLE)
+        verdict.setdefault("method", "path_replay")
+
+    bt = None
+    _stress = None
     kwargs = {
         "strategy": strategy,
         "prices": prices,
@@ -1464,22 +1651,25 @@ def run_reflection_pipeline(
         from hermes_core.engines.cost_model import round_trip_pct, stress_mult
 
         kwargs["cost_pct"] = round_trip_pct(pair)
-        kwargs["cost_stress_mult"] = 1.0  # primary gate at 1×; stress logged separately
+        kwargs["cost_stress_mult"] = 1.0
         _stress = round_trip_pct(pair, stressed=True)
     except Exception:  # noqa: BLE001
         _stress = None
-    verdict = backtest_with_history(
-        pair,
-        prop["variable"],
-        prop["old"],
-        prop["new"],
-        **kwargs,
-    )
-    if _stress is not None and isinstance(verdict, dict):
+    try:
+        bt = backtest_with_history(
+            pair,
+            prop["variable"],
+            prop["old"],
+            prop["new"],
+            **kwargs,
+        )
+    except Exception as exc:  # noqa: BLE001
+        bt = {"approved": False, "reason": f"backtest_error:{exc}"}
+    if _stress is not None and isinstance(bt, dict):
         try:
             from hermes_core.engines.cost_model import estimate, stress_mult
 
-            verdict["cost_model"] = estimate(pair).as_dict()
+            bt["cost_model"] = estimate(pair).as_dict()
             stress_v = backtest_with_history(
                 pair,
                 prop["variable"],
@@ -1487,17 +1677,68 @@ def run_reflection_pipeline(
                 prop["new"],
                 **{**kwargs, "cost_pct": round_trip_pct(pair), "cost_stress_mult": stress_mult()},
             )
-            verdict["cost_stress"] = {
+            bt["cost_stress"] = {
                 "approved": stress_v.get("approved"),
                 "reason": stress_v.get("reason"),
                 "stressed_round_trip_pct": _stress,
             }
-            # BTC/USDT Focus: fail reflect deploy if 2× cost stress does not pass.
-            if verdict.get("approved") and not stress_v.get("approved"):
-                verdict["approved"] = False
-                verdict["reason"] = (
+            if bt.get("approved") and not stress_v.get("approved"):
+                bt["approved"] = False
+                bt["reason"] = (
                     f"cost_stress_failed:{stress_v.get('reason') or '2x_cost'}"
                 )
+        except Exception:  # noqa: BLE001
+            pass
+    if isinstance(bt, dict):
+        if layered_prefer:
+            # Path-replay wins when approved; BT fills when path sample thin.
+            if not verdict.get("approved") and bt.get("approved"):
+                verdict = bt
+                verdict.setdefault("method", "backtest")
+            elif verdict.get("approved") and bt.get("approved"):
+                verdict = {**verdict, "backtest_double_check": True}
+        else:
+            # Classic / entry: BT primary; optional path-replay if BT unavailable.
+            if bt.get("approved") or not verdict.get("approved"):
+                verdict = bt
+                verdict.setdefault("method", "backtest")
+            if not verdict.get("approved") and is_classic_var(var):
+                pr = replay_prove(
+                    trades, strategy=strategy, proposal=prop, min_paths=MIN_SAMPLE
+                )
+                if pr.get("approved"):
+                    verdict = pr
+                    verdict.setdefault("method", "path_replay")
+
+    if not verdict.get("approved") and layered_prefer:
+        try:
+            from hermes_core.engines.counterfactual_exits import counterfactual_evs
+            from hermes_core.engines.size_stamp import ensure_mfe_path
+
+            gaps = []
+            for t in trades:
+                path = ensure_mfe_path(t).get("mfe_path") or []
+                if len(path) < 3:
+                    continue
+                cost = float(t.get("fees_pct") or 0.22)
+                min_bank = float(strategy.get("min_bank_net_pct") or 0.10)
+                if var == "min_bank_net_pct":
+                    min_bank = float(prop.get("new") or min_bank)
+                ev = counterfactual_evs(
+                    path,
+                    tp=float(strategy.get("profit_target_pct") or 1.5),
+                    cost_pct=cost,
+                    min_bank_net=min_bank,
+                )
+                gaps.append(float(ev.get("best") or 0) - float(t.get("pnl_pct") or 0))
+            if len(gaps) >= MIN_SAMPLE and (sum(gaps) / len(gaps)) > 0.05:
+                verdict = {
+                    "approved": True,
+                    "reason": "live_cf_fallback_ok",
+                    "improvement": sum(gaps) / len(gaps),
+                    "improvement_full": sum(gaps) / len(gaps),
+                    "method": "live_cf",
+                }
         except Exception:  # noqa: BLE001
             pass
 
@@ -1560,6 +1801,7 @@ def run_reflection_pipeline(
             verdict=verdict,
             trades=trades,
             bot=bot,
+            book_n=book_n,
         )
         if not vcheck.get("ok"):
             record_verifier_reject(
@@ -1795,9 +2037,23 @@ def maybe_reflect_pair(
             result["experiment"] = revert_result
         return result
 
-    batch, batch_regime = same_regime_batch(closed, every)
+    # Truth recovery for legacy closes (probe/size/mfe_path) before batching.
+    with contextlib.suppress(Exception):
+        from hermes_core.engines.trade_truth import backfill_trades_jsonl, enrich_closed_trades
+
+        strat0 = load_strategy_for_pair(pair, bot)
+        backfill_trades_jsonl(bot, pair, strategy=strat0)
+        closed = enrich_closed_trades(
+            _closed_trades_for_pair(bot, pair), bot=bot, strategy=strat0
+        )
+        total = len(closed)
+
+    sleeve_batch, batch_sleeve = same_sleeve_batch(closed, every)
+    batch, batch_regime = same_regime_batch(sleeve_batch or closed, every)
+    if len(batch) < MIN_SAMPLE and len(sleeve_batch) >= MIN_SAMPLE:
+        batch, batch_regime = sleeve_batch, None
     if len(batch) < MIN_SAMPLE and not force_retune:
-        # Not enough same-regime evidence yet — wait for a cleaner batch.
+        # Not enough evidence yet — do NOT latch (retry next close).
         result = {
             "status": "no_proposal",
             "pair": pair,
@@ -1805,11 +2061,11 @@ def maybe_reflect_pair(
             "deployed": False,
             "reason": "insufficient_same_regime_sample",
             "regime": batch_regime,
+            "sleeve": batch_sleeve,
             "batch_n": len(batch),
         }
         if revert_result is not None:
             result["experiment"] = revert_result
-        _mark_reflection_done(pair, total, bot)
         return result
     skipped_json = ""
     try:
@@ -1842,6 +2098,7 @@ def maybe_reflect_pair(
             llm_callers=llm_callers,
             auto_deploy=auto_deploy,
             skipped_json=skipped_json,
+            book_n=total,
         )
     except Exception as exc:  # noqa: BLE001 — never break the trade loop
         result = {
