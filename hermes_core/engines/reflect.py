@@ -1636,6 +1636,9 @@ def run_reflection_pipeline(
     if layered_prefer:
         verdict = replay_prove(trades, strategy=strategy, proposal=prop, min_paths=MIN_SAMPLE)
         verdict.setdefault("method", "path_replay")
+        # Blind / non-scorable path result must not block secondary BT.
+        if str(verdict.get("reason") or "").startswith("path_replay_not_applicable"):
+            verdict = {"approved": False, "reason": verdict.get("reason"), "method": "path_replay"}
 
     bt = None
     _stress = None

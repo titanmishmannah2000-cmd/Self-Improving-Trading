@@ -347,3 +347,94 @@ def test_path_replay_rejects_worse_challenger():
         min_paths=5,
     )
     assert out["approved"] is False
+
+
+def test_path_replay_fb_mae_not_false_reject():
+    """Trade-15 style batch: raising FB floor must not false-reject via fee/CF bias."""
+    from hermes_core.engines.size_stamp import synthesize_mfe_path
+
+    batch = [
+        {
+            "pnl_pct": -0.128494,
+            "fees_pct": 0.22,
+            "exit_reason": "stop_loss",
+            "mae_pct": -0.1175,
+            "mfe_pct": 0.0129,
+            "hold_cycles": 8,
+        },
+        {
+            "pnl_pct": -0.432625,
+            "fees_pct": 0.22,
+            "exit_reason": "failed_breakout",
+            "mae_pct": -0.3406,
+            "mfe_pct": 0.0,
+            "hold_cycles": 30,
+        },
+        {
+            "pnl_pct": -0.25354,
+            "fees_pct": 0.22,
+            "exit_reason": "failed_breakout",
+            "mae_pct": -0.2015,
+            "mfe_pct": 0.0,
+            "hold_cycles": 30,
+        },
+        {
+            "pnl_pct": -0.290181,
+            "fees_pct": 0.22,
+            "exit_reason": "failed_breakout",
+            "mae_pct": -0.2326,
+            "mfe_pct": 0.0,
+            "hold_cycles": 30,
+        },
+        {
+            "pnl_pct": -0.243862,
+            "fees_pct": 0.22,
+            "exit_reason": "failed_breakout",
+            "mae_pct": -0.134,
+            "mfe_pct": 0.0,
+            "hold_cycles": 30,
+        },
+    ]
+    for t in batch:
+        t["mfe_path"] = synthesize_mfe_path(t)
+        t["mfe_path_synthetic"] = True
+    out = replay_prove(
+        batch,
+        strategy={
+            "failed_breakout_min_mae_pct": 0.4,
+            "failed_breakout_bars": 2,
+            "min_bank_net_pct": 0.1,
+            "profit_target_pct": 2.5,
+        },
+        proposal={"variable": "failed_breakout_min_mae_pct", "old": 0.4, "new": 0.45},
+        min_paths=5,
+    )
+    assert out["approved"] is True
+    assert out["reason"] in {"path_replay_ok", "path_replay_neutral_ok"}
+
+
+def test_path_replay_fb_deeper_floor_can_improve():
+    """Deeper MAE floor avoids early knife-cut when path recovers."""
+    path = [
+        {"unreal": -0.10, "peak": 0.0},
+        {"unreal": -0.42, "peak": 0.0},  # hits 0.40 floor
+        {"unreal": -0.20, "peak": 0.0},
+        {"unreal": 0.15, "peak": 0.15},
+    ]
+    trades = [
+        {
+            "pnl_pct": 0.15,
+            "fees_pct": 0.22,
+            "mfe_path": path,
+            "mfe_path_synthetic": False,
+        }
+        for _ in range(5)
+    ]
+    out = replay_prove(
+        trades,
+        strategy={"failed_breakout_min_mae_pct": 0.40, "failed_breakout_bars": 3},
+        proposal={"variable": "failed_breakout_min_mae_pct", "old": 0.40, "new": 0.50},
+        min_paths=5,
+    )
+    assert out["approved"] is True
+    assert float(out.get("improvement") or 0) > 0
