@@ -1798,6 +1798,11 @@ def run_reflection_pipeline(
             verify_reflection_candidate,
         )
 
+        try:
+            _min_tr = int((goal or {}).get("reflection_every") or 10)
+        except (TypeError, ValueError):
+            _min_tr = 10
+        _min_tr = max(5, _min_tr)
         vcheck = verify_reflection_candidate(
             pair=pair,
             proposal=prop,
@@ -1805,6 +1810,7 @@ def run_reflection_pipeline(
             trades=trades,
             bot=bot,
             book_n=book_n,
+            min_trades=_min_tr,
         )
         if not vcheck.get("ok"):
             record_verifier_reject(

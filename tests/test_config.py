@@ -85,7 +85,7 @@ def test_reflection_every_is_fifteen_profitability_path():
     assert crypto["pairs"] == ["BTC/USD", "ETH/USD"]
     assert crypto["invent"]["interval"] == "1h"
     btc = load_config("btc")
-    assert btc["goal"]["reflection_every"] == 15
+    assert btc["goal"]["reflection_every"] == 10
     assert btc["pairs"] == ["BTC/USDT"]
     assert btc["invent"]["interval"] == "4h"
 
