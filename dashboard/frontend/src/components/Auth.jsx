@@ -5,9 +5,11 @@ export function useAuth() {
   const [mode, setMode] = useState("loading");
 
   useEffect(() => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000);
     (async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/auth/status`);
+        const res = await fetch(`${API_BASE}/api/auth/status`, { signal: ctrl.signal });
         const data = await res.json();
         if (data.setup_required) {
           setMode("setup");
@@ -20,13 +22,25 @@ export function useAuth() {
         }
         const vres = await fetch(`${API_BASE}/api/auth/verify`, {
           headers: { Authorization: `Bearer ${token}` },
+          signal: ctrl.signal,
         });
         const vdata = await vres.json();
-        setMode(vdata.valid ? "ready" : "login");
+        if (vdata.valid) {
+          setMode("ready");
+        } else {
+          localStorage.removeItem("hermes_token");
+          setMode("login");
+        }
       } catch (e) {
         setMode("login");
+      } finally {
+        clearTimeout(timer);
       }
     })();
+    return () => {
+      clearTimeout(timer);
+      ctrl.abort();
+    };
   }, []);
 
   const setup = async (password, confirm) => {
@@ -35,8 +49,8 @@ export function useAuth() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password, confirm }),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Setup failed");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(_authErr(data, "Setup failed"));
     localStorage.setItem("hermes_token", data.token);
     setMode("ready");
   };
@@ -47,8 +61,8 @@ export function useAuth() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password }),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Login failed");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(_authErr(data, "Login failed"));
     localStorage.setItem("hermes_token", data.token);
     setMode("ready");
   };
@@ -59,6 +73,14 @@ export function useAuth() {
   };
 
   return { mode, setup, login, logout };
+}
+
+function _authErr(data, fallback) {
+  if (!data || typeof data !== "object") return fallback;
+  const d = data.detail ?? data.error ?? data.message;
+  if (typeof d === "string" && d.trim()) return d;
+  if (Array.isArray(d) && d[0]?.msg) return String(d[0].msg);
+  return fallback;
 }
 
 export function SetupScreen({ onSetup }) {

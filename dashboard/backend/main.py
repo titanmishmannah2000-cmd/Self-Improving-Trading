@@ -2589,6 +2589,34 @@ def export_pair(pair_name: str):
 # ───────────────────── Auth ─────────────────────
 
 
+class AuthPasswordBody(BaseModel):
+    password: str = ""
+
+
+class AuthSetupBody(BaseModel):
+    password: str = ""
+    confirm: str = ""
+
+
+def _bootstrap_dashboard_password() -> None:
+    """If ``DASHBOARD_PASSWORD`` is set, sync it into app_config (ops recovery)."""
+    pw = (os.getenv("DASHBOARD_PASSWORD") or "").strip()
+    if len(pw) < 6:
+        return
+    with contextlib.suppress(Exception):
+        conn = get_conn()
+        conn.execute(
+            "INSERT OR REPLACE INTO app_config (key, value) VALUES ('dashboard_password', ?)",
+            (pw,),
+        )
+        conn.commit()
+        conn.close()
+        print("[auth] dashboard password synced from DASHBOARD_PASSWORD", flush=True)
+
+
+_bootstrap_dashboard_password()
+
+
 @app.get("/api/auth/status")
 def auth_status():
     conn = get_conn()
@@ -2598,16 +2626,15 @@ def auth_status():
 
 
 @app.post("/api/auth/setup")
-async def auth_setup(request: Request):
+async def auth_setup(body: AuthSetupBody):
     conn = get_conn()
     row = conn.execute("SELECT value FROM app_config WHERE key='dashboard_password'").fetchone()
     if row:
         conn.close()
         raise HTTPException(400, "Already configured")
 
-    body = await request.json()
-    password = body.get("password", "")
-    confirm = body.get("confirm", "")
+    password = body.password or ""
+    confirm = body.confirm or ""
 
     if password != confirm:
         conn.close()
@@ -2638,17 +2665,17 @@ async def auth_setup(request: Request):
 
 
 @app.post("/api/auth/login")
-async def auth_login(request: Request):
+async def auth_login(body: AuthPasswordBody):
     conn = get_conn()
     row = conn.execute("SELECT value FROM app_config WHERE key='dashboard_password'").fetchone()
     if not row:
         conn.close()
         raise HTTPException(400, "Setup required first")
 
-    body = await request.json()
-    password = body.get("password", "")
+    password = body.password or ""
+    stored = row["value"] if isinstance(row, dict) else row[0]
 
-    if password != row["value"]:
+    if password != stored:
         conn.close()
         raise HTTPException(401, "Incorrect password")
 
