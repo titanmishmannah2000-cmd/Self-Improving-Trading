@@ -1,9 +1,9 @@
 pair: BTC/USDT
-version: "08"
+version: "09"
 # Layered sentient exits L0–L2 + sentient entries (L3+ alts via SENTIENT_ENTRY).
 # require_clean_chart = no avoid/downtrend (wait_for_pullback does not veto Donchian).
 # Frozen from reflect until sleeve_promote_n: entry_conviction_*, pullback_*, mr_*, sleeve_*.
-# v08: raise alt daily cap; green alt closes free a slot (don't lock after winners).
+# v09: probe soft-cut, fee-aware bank floor, shorter pullback clock, chop quality gates.
 strategy_type: donchian_breakout
 regime_split: false
 entry:
@@ -22,11 +22,18 @@ stop_loss_pct: 2.5
 profit_target_pct: 2.5
 trailing_stop_pct: 0.3
 time_exit_cycles: 480
-early_reeval_cycles: 120
+early_reeval_cycles: 90
 time_exit_max_cycles: 720
-min_bank_net_pct: 0.10
+min_bank_net_pct: 0.25
+min_bank_fee_mode: round_trip
 peak_epsilon_pct: 0.05
 mfe_stall_bars: 1
+bank_score_ceiling: 0.45
+probe_soft_cut_enabled: true
+probe_soft_cut_min_cycles: 120
+probe_soft_cut_max_cycles: 180
+probe_soft_cut_mfe_pct: 0.40
+probe_ignore_patience_stall: true
 clock_lock_frac: 0.5
 path_slack: 1.25
 # Donchian-only FB: 2 exit bars + MAE past ~2x fee so noise is not a forced RT.
@@ -58,9 +65,16 @@ pullback_max_dist_pct: 2.0
 pullback_cooldown_cycles: 30
 pullback_stop_pct: 1.5
 pullback_tp_pct: 2.0
+pullback_time_exit_cycles: 240
+pullback_chop_min_wr: 0.45
+pullback_chop_min_n: 5
+pullback_chop_min_avg_mfe: 0.40
+pullback_chop_force_probe: true
 mr_stop_pct: 2.0
 mr_tp_pct: 2.5
 sleeve_promote_n: 8
+sleeve_promote_min_wr: 0.55
+sleeve_promote_fee_aware: true
 max_alt_entries_per_day: 6
 idle_sleeve_cycles: 60
 min_probe_size: 0.05

@@ -31,10 +31,16 @@ _FROZEN_REFLECT_KEYS = frozenset(
         "entry_policy_min_n",
         "pullback_stop_pct",
         "pullback_tp_pct",
+        "pullback_time_exit_cycles",
         "mr_stop_pct",
         "mr_tp_pct",
         "min_probe_size",
         "shadow_horizon_bars",
+        "pullback_chop_min_wr",
+        "pullback_chop_min_n",
+        "pullback_chop_min_avg_mfe",
+        "sleeve_promote_fee_aware",
+        "sleeve_promote_min_wr",
     }
 )
 
@@ -376,7 +382,7 @@ def credit_entry_on_close(
 
 
 def sleeve_risk_overlays(strategy: dict, entry_type: str) -> dict:
-    """Return stop/tp to stamp on position (never mutate validated strategy)."""
+    """Return stop/tp/time overlays to stamp on position (never mutate strategy)."""
     et = (entry_type or "").strip().lower()
     out: dict[str, float] = {}
     try:
@@ -385,11 +391,15 @@ def sleeve_risk_overlays(strategy: dict, entry_type: str) -> dict:
                 out["stop_loss_pct"] = float(strategy["pullback_stop_pct"])
             if strategy.get("pullback_tp_pct") is not None:
                 out["profit_target_pct"] = float(strategy["pullback_tp_pct"])
+            if strategy.get("pullback_time_exit_cycles") is not None:
+                out["time_exit_cycles"] = float(strategy["pullback_time_exit_cycles"])
         elif et == "mean_reversion":
             if strategy.get("mr_stop_pct") is not None:
                 out["stop_loss_pct"] = float(strategy["mr_stop_pct"])
             if strategy.get("mr_tp_pct") is not None:
                 out["profit_target_pct"] = float(strategy["mr_tp_pct"])
+            if strategy.get("mr_time_exit_cycles") is not None:
+                out["time_exit_cycles"] = float(strategy["mr_time_exit_cycles"])
     except (TypeError, ValueError):
         return {}
     return out
@@ -409,8 +419,22 @@ def _playbook_stats(bot: str | None, pair: str, entry_type: str, d1: str) -> dic
         return {}
 
 
-def _sleeve_promoted(st: dict, promote_n: int) -> bool:
-    return int(st.get("n") or 0) >= promote_n and float(st.get("wr") or 0) >= 0.55
+def _sleeve_promoted(st: dict, promote_n: int, *, strategy: dict | None = None) -> bool:
+    """True when sleeve has enough fee-aware evidence to allow full-size takes."""
+    n = int(st.get("n") or 0)
+    if n < int(promote_n):
+        return False
+    strat = strategy or {}
+    try:
+        min_wr = float(strat.get("sleeve_promote_min_wr") or 0.55)
+    except (TypeError, ValueError):
+        min_wr = 0.55
+    fee_aware = strat.get("sleeve_promote_fee_aware") is True
+    if fee_aware and st.get("fee_wr") is not None:
+        wr = float(st.get("fee_wr") or 0.0)
+    else:
+        wr = float(st.get("wr") or 0.0)
+    return wr >= min_wr
 
 
 def compute_entry_conviction(
@@ -653,6 +677,32 @@ def try_pullback_candidate(
         return None
 
     pb = _playbook_stats(bot, pair, "pullback", d1)
+    # Chop quality (opt-in via strategy knobs): skip weak expectancy; else force probe.
+    chop_gate = any(
+        strategy.get(k) is not None
+        for k in (
+            "pullback_chop_min_wr",
+            "pullback_chop_min_n",
+            "pullback_chop_min_avg_mfe",
+            "pullback_chop_force_probe",
+        )
+    )
+    force_probe_chop = strategy.get("pullback_chop_force_probe") is True
+    if chop_gate and d1_lab == br.CHOP:
+        try:
+            min_n = int(strategy.get("pullback_chop_min_n") or 5)
+            min_wr = float(strategy.get("pullback_chop_min_wr") or 0.45)
+            min_mfe = float(strategy.get("pullback_chop_min_avg_mfe") or 0.40)
+        except (TypeError, ValueError):
+            min_n, min_wr, min_mfe = 5, 0.45, 0.40
+        n_pb = int(pb.get("n") or 0)
+        wr_pb = float(
+            pb.get("fee_wr") if pb.get("fee_wr") is not None else (pb.get("wr") or 0.5)
+        )
+        avg_mfe = float(pb.get("avg_mfe") or 0.0)
+        if n_pb >= min_n and (wr_pb < min_wr or avg_mfe < min_mfe):
+            return None
+
     try:
         from hermes_core.engines.playbooks import playbook_patience
 
@@ -670,7 +720,7 @@ def try_pullback_candidate(
         chart_alignment=1.1 if "wait_for_pullback" in soft_actionable else 1.0,
         cost_edge=_cost_edge(tp, float(bundle.get("cost_stressed") or 0.44)),
     )
-    return {
+    out = {
         "entry_type": "pullback",
         "strategy_type": "donchian_breakout",  # schema-safe; identity via entry_type
         "quality": quality,
@@ -685,6 +735,9 @@ def try_pullback_candidate(
         "playbook": pb,
         "source": "sentient_pullback",
     }
+    if d1_lab == br.CHOP and force_probe_chop:
+        out["force_probe"] = True
+    return out
 
 
 def try_mr_candidate(
@@ -843,7 +896,9 @@ def meta_decision(
     if conv_adj < probe_th:
         return "skip"
     if et in {"pullback", "mean_reversion"}:
-        if not _sleeve_promoted(cand.get("playbook") or {}, promote_n):
+        if cand.get("force_probe"):
+            return "probe"
+        if not _sleeve_promoted(cand.get("playbook") or {}, promote_n, strategy=strategy):
             return "probe"
         if conv_adj >= take_th:
             return "take"

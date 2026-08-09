@@ -52,12 +52,14 @@ def update_playbook_on_close(
     mfe: float | None,
     capture: float | None,
     hold_cycles: int | None,
+    fees_pct: float | None = None,
 ) -> dict:
     books = load_playbooks(bot)
     key = setup_key(pair, entry_type, d1)
     st = books.get(key) or {
         "n": 0,
         "wins": 0,
+        "fee_wins": 0,
         "sum_mfe": 0.0,
         "sum_capture": 0.0,
         "sum_hold": 0.0,
@@ -66,6 +68,13 @@ def update_playbook_on_close(
     st["n"] = int(st.get("n") or 0) + 1
     if pnl > 0:
         st["wins"] = int(st.get("wins") or 0) + 1
+    try:
+        fee = float(fees_pct) if fees_pct is not None else 0.0
+    except (TypeError, ValueError):
+        fee = 0.0
+    # Fee-aware win: net clears round-trip (or residual haircut proxy).
+    if float(pnl) > max(0.0, fee):
+        st["fee_wins"] = int(st.get("fee_wins") or 0) + 1
     if mfe is not None:
         st["sum_mfe"] = float(st.get("sum_mfe") or 0) + float(mfe)
     if capture is not None:
@@ -76,6 +85,7 @@ def update_playbook_on_close(
         st["die_in_chop"] = int(st.get("die_in_chop") or 0) + 1
     n = max(1, int(st["n"]))
     st["wr"] = st["wins"] / n
+    st["fee_wr"] = int(st.get("fee_wins") or 0) / n
     st["avg_mfe"] = st["sum_mfe"] / n
     st["avg_capture"] = st["sum_capture"] / n
     st["median_hold"] = st["sum_hold"] / n

@@ -83,7 +83,47 @@ def net_unreal(trade: dict, unreal: float) -> float:
 
 
 def min_net_floor(trade: dict) -> float:
-    return max(_exit_haircut(trade), _f(trade, "min_bank_net_pct", DEFAULT_MIN_BANK_NET_PCT))
+    """Minimum net % to treat as bankable / soft-clock protected.
+
+    Floor is the max of stamped ``min_bank_net_pct``, exit haircut, and (when
+    ``min_bank_fee_mode`` is round_trip) full round-trip fees so we do not
+    bank or hold through fee-killed noise.
+    """
+    floor = max(_exit_haircut(trade), _f(trade, "min_bank_net_pct", DEFAULT_MIN_BANK_NET_PCT))
+    # Default exit_only preserves legacy floor (max of haircut + min_bank).
+    # BTC stamps min_bank_fee_mode=round_trip so floor also clears RT fees.
+    mode = str(trade.get("min_bank_fee_mode") or "exit_only").strip().lower()
+    if mode in {"round_trip", "rt", "fees_rt"}:
+        rt = _f(trade, "fees_pct_rt", 0.0)
+        if rt <= 0:
+            rt = _f(trade, "fees_pct", 0.0)
+        if rt > 0:
+            floor = max(floor, rt)
+    elif mode in {"stressed_rt", "stressed"}:
+        rt = _f(trade, "fees_pct_rt", 0.0)
+        if rt <= 0:
+            rt = _f(trade, "fees_pct", 0.0)
+        if rt > 0:
+            floor = max(floor, rt * 2.0)
+    return floor
+
+
+def _probe_soft_cut_hit(trade: dict, held: int) -> bool:
+    """Dead-probe cut: low peak MFE after soft-cut arm cycles."""
+    if str(trade.get("size_mode") or "").strip().lower() != "probe":
+        return False
+    if trade.get("probe_soft_cut_enabled") is not True:
+        return False
+    lo = _i(trade, "probe_soft_cut_min_cycles", 120)
+    if held < lo:
+        return False
+    # Optional upper bound: still cut after hi if MFE never cleared (default on).
+    thresh = _f(trade, "probe_soft_cut_mfe_pct", 0.40)
+    try:
+        peak = float(trade.get("peak_mfe_pct") or 0.0)
+    except (TypeError, ValueError):
+        peak = 0.0
+    return peak < thresh
 
 
 def _is_donchian_entry(trade: dict) -> bool:
@@ -228,6 +268,11 @@ def patience_mult(trade: dict) -> float:
 
 def effective_stall_bars(trade: dict) -> int:
     base = max(1, _i(trade, "mfe_stall_bars", DEFAULT_MFE_STALL_BARS))
+    if (
+        str(trade.get("size_mode") or "").strip().lower() == "probe"
+        and trade.get("probe_ignore_patience_stall", True) is not False
+    ):
+        return base
     return max(1, int(round(base * patience_mult(trade))))
 
 
@@ -322,6 +367,10 @@ def _layered_hold_bank(
     if is_failed_breakout_cut(trade, unreal):
         return Exit("failed_breakout", current_price)
 
+    # Dead probes: no meaningful MFE after soft-cut arm → cut before 8h clock.
+    if _probe_soft_cut_hit(trade, held):
+        return Exit("probe_soft_cut", current_price)
+
     armed = held >= early
     past_soft = te_i is not None and held >= te_i
     past_hard = held >= hard
@@ -357,6 +406,11 @@ def _layered_hold_bank(
 
     # Bank when score low or path failed / stalled
     bank_bias = 0.35 / max(patience_mult(trade), 0.5)
+    try:
+        score_ceil = float(trade.get("bank_score_ceiling") or 0.55)
+    except (TypeError, ValueError):
+        score_ceil = 0.55
+    score_ceil = max(0.25, min(0.7, score_ceil))
     if past_hard and stalled:
         return Exit("profit_bank", current_price)
     if past_hard and path["path_ok"] and not stalled:
@@ -369,15 +423,15 @@ def _layered_hold_bank(
 
     if (stalled and path["path_fail"]) or score < bank_bias:
         return Exit("profit_bank", current_price)
-    if stalled and score < 0.55:
+    if stalled and score < score_ceil:
         return Exit("profit_bank", current_price)
-    if path["path_fail"] and score < 0.55:
+    if path["path_fail"] and score < score_ceil:
         return Exit("profit_bank", current_price)
 
     # mid score → already protected; hold
-    if score >= 0.55 and path["path_ok"]:
+    if score >= score_ceil and path["path_ok"]:
         return None
-    if 0.35 <= score < 0.55:
+    if 0.35 <= score < score_ceil:
         return None
     return None
 

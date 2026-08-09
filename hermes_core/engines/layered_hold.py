@@ -24,7 +24,12 @@ def sentient_entry_enabled() -> bool:
     return get_env("SENTIENT_ENTRY", "0") == "1"
 
 
-def strategy_hold_knobs(strategy: dict, *, entry_type: str | None = None) -> dict:
+def strategy_hold_knobs(
+    strategy: dict,
+    *,
+    entry_type: str | None = None,
+    fees_rt: float | None = None,
+) -> dict:
     """Extract L0–L1 knobs from strategy YAML for open stamp.
 
     Failed-breakout exits only apply to Donchian breakouts — pullback / MR
@@ -39,10 +44,30 @@ def strategy_hold_knobs(strategy: dict, *, entry_type: str | None = None) -> dic
         fb_bars = 0
     else:
         fb_bars = int(s.get("failed_breakout_bars") or 2)
+    try:
+        min_bank = float(s.get("min_bank_net_pct") or 0.10)
+    except (TypeError, ValueError):
+        min_bank = 0.10
+    mode = str(s.get("min_bank_fee_mode") or "exit_only").strip().lower()
+    if fees_rt is not None:
+        try:
+            rt = float(fees_rt)
+        except (TypeError, ValueError):
+            rt = 0.0
+        if rt > 0:
+            if mode in {"round_trip", "rt", "fees_rt"}:
+                min_bank = max(min_bank, rt)
+            elif mode in {"stressed_rt", "stressed"}:
+                min_bank = max(min_bank, rt * 2.0)
+    try:
+        bank_ceil = float(s["bank_score_ceiling"]) if s.get("bank_score_ceiling") is not None else 0.55
+    except (TypeError, ValueError):
+        bank_ceil = 0.55
     return {
         "early_reeval_cycles": int(s.get("early_reeval_cycles") or 120),
         "time_exit_max_cycles": int(s.get("time_exit_max_cycles") or 720),
-        "min_bank_net_pct": float(s.get("min_bank_net_pct") or 0.10),
+        "min_bank_net_pct": float(min_bank),
+        "min_bank_fee_mode": mode,
         "peak_epsilon_pct": float(s.get("peak_epsilon_pct") or 0.05),
         "mfe_stall_bars": int(s.get("mfe_stall_bars") or 1),
         "clock_lock_frac": float(s.get("clock_lock_frac") or 0.5),
@@ -53,6 +78,12 @@ def strategy_hold_knobs(strategy: dict, *, entry_type: str | None = None) -> dic
             s.get("failed_breakout_min_mae_pct") or 0.40
         ),
         "cycles_per_exit_bar": int(s.get("cycles_per_exit_bar") or 240),
+        "probe_soft_cut_enabled": s.get("probe_soft_cut_enabled") is True,
+        "probe_soft_cut_min_cycles": int(s.get("probe_soft_cut_min_cycles") or 120),
+        "probe_soft_cut_max_cycles": int(s.get("probe_soft_cut_max_cycles") or 180),
+        "probe_soft_cut_mfe_pct": float(s.get("probe_soft_cut_mfe_pct") or 0.40),
+        "probe_ignore_patience_stall": s.get("probe_ignore_patience_stall") is True,
+        "bank_score_ceiling": float(bank_ceil),
         "soft_partial_done": False,
         "exit_bars_since_peak": 0,
         "exit_bars_held": 0,

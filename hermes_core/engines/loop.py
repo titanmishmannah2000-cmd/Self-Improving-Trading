@@ -602,6 +602,7 @@ def _process_exit(
             mfe=_exc.get("mfe_pct"),
             capture=_exc.get("mfe_capture"),
             hold_cycles=pos.get("held_cycles"),
+            fees_pct=float(pos.get("fees_pct_rt") or trade_rec.get("fees_pct") or 0.0),
         )
         _pb = _playbook_stats(bot, pair, str(entry_type), _d1)
         _pb_wr = float(_pb.get("wr") or 0.5) if _pb else 0.5
@@ -2555,6 +2556,8 @@ def run_cycle(
             sl = float(strategy["stop_loss_pct"])
             tp = float(strategy["profit_target_pct"])
             # Sentient sleeve risk: stamp on position knobs only (never mutate strategy).
+            _ov: dict = {}
+            _te_overlay = None
             with contextlib.suppress(Exception):
                 from hermes_core.engines.sentient_entry import sleeve_risk_overlays
 
@@ -2563,6 +2566,8 @@ def run_cycle(
                     sl = float(_ov["stop_loss_pct"])
                 if _ov.get("profit_target_pct") is not None:
                     tp = float(_ov["profit_target_pct"])
+                if _ov.get("time_exit_cycles") is not None:
+                    _te_overlay = int(_ov["time_exit_cycles"])
             _rr_relax = False
             with contextlib.suppress(Exception):
                 _rr_relax = (
@@ -2821,11 +2826,6 @@ def run_cycle(
                 _gb_frac = DEFAULT_MFE_GIVEBACK_FRAC
             _gb_on = strategy.get("mfe_giveback_enabled", True) is not False
             stop = _atr_stop_for(strategy, price, atr)
-            _hold_knobs: dict = {}
-            with contextlib.suppress(Exception):
-                from hermes_core.engines.layered_hold import strategy_hold_knobs
-
-                _hold_knobs = strategy_hold_knobs(strategy, entry_type=_etype)
             _side = str(getattr(sig, "side", None) or strategy.get("entry", {}).get("direction") or "long")
             _entry_mid = float(price)
             _cost = None
@@ -2838,6 +2838,14 @@ def run_cycle(
                     _atr_pct = float(atr) / _entry_mid * 100.0
                 _cost = estimate(pair, atr_pct=_atr_pct)
                 _entry_fill = apply_entry_fill(_entry_mid, _side, _cost.entry_haircut_pct)
+            _hold_knobs: dict = {}
+            with contextlib.suppress(Exception):
+                from hermes_core.engines.layered_hold import strategy_hold_knobs
+
+                _fees_rt = float(_cost.round_trip_pct) if _cost is not None else None
+                _hold_knobs = strategy_hold_knobs(
+                    strategy, entry_type=_etype, fees_rt=_fees_rt
+                )
             # Accurate size_mode for dashboard (sentient probe / chart soft / HIF probe).
             _size_stamp = resolve_size_stamp(
                 size_mode=_probe.get("size_mode"),
@@ -2850,6 +2858,14 @@ def run_cycle(
             _size_mode = _size_stamp["size_mode"]
             _size_reason = _size_stamp["size_reason"]
             _probe_frac = _size_stamp["probe_fraction"]
+            _te = int(
+                strategy.get(
+                    "time_exit_cycles",
+                    DEFAULT_TIME_EXIT_CYCLES,
+                )
+            )
+            if _te_overlay is not None:
+                _te = int(_te_overlay)
             open_positions[pair] = {
                 "id": f"{bot}:{pair}:{int(time.time())}",
                 "entry_ts": _now_iso(),
@@ -2863,12 +2879,7 @@ def run_cycle(
                 "size": min(size, MAX_POSITION_SIZE),
                 "stop_loss_pct": sl,
                 "profit_target_pct": tp,
-                "time_exit_cycles": int(
-                    strategy.get(
-                        "time_exit_cycles",
-                        DEFAULT_TIME_EXIT_CYCLES,
-                    )
-                ),
+                "time_exit_cycles": _te,
                 "held_cycles": 0,
                 "breakeven_set": False,
                 "partial_done": False,
